@@ -91,7 +91,6 @@ fn frame_tx_with_keys(frames: Vec<Frame>, nonce_keys: Vec<U256>) -> FrameTransac
         nonce_seq: 0,
         sender: FUNDED_SENDER,
         frames,
-        signatures: Vec::new(),
         max_fee: U256::from(1_000_000_000_000_000_000u64),
         max_priority_fee_per_gas: U256::from(1),
         blob_versioned_hashes: Vec::new(),
@@ -586,7 +585,7 @@ fn a_first_use_keyed_nonce_halts_the_frame_without_its_state_budget() {
 /// is what consumes the nonce, and it is that frame's `limits.state` that pays.
 mod key_zero_from_a_fresh_sender {
     use super::*;
-    use ethrex_common::types::{FRAME_SIG_SCHEME_SECP256K1, FrameSignature};
+    use ethrex_common::types::FRAME_TX_SECP256K1_VERIFIER;
     use k256::ecdsa::SigningKey;
 
     /// APPROVE(scope=1): payment approval from a paymaster's own code.
@@ -600,27 +599,34 @@ mod key_zero_from_a_fresh_sender {
         (signing_key, Address::from_slice(&pub_hash[12..]))
     }
 
-    fn sign(key: &SigningKey, sig_hash: H256, signer: Address) -> FrameSignature {
-        let (raw_sig, recovery_id) = key.sign_prehash_recoverable(sig_hash.as_bytes()).unwrap();
-        let mut bytes = vec![0u8; 65];
-        bytes[0] = recovery_id.to_byte();
-        bytes[1..].copy_from_slice(&raw_sig.to_bytes());
-        FrameSignature {
-            scheme: FRAME_SIG_SCHEME_SECP256K1,
-            signer: Some(signer),
-            msg: Bytes::new(),
-            signature: Bytes::from(bytes),
+    /// A proof frame claiming that `signer` signed the canonical signature hash,
+    /// with `proof` as its secp256k1 proof.
+    fn proof_frame(signer: Address, proof: &[u8]) -> Frame {
+        let mut data = H256::from(signer).as_bytes().to_vec();
+        data.extend_from_slice(&[0u8; 32]);
+        data.extend_from_slice(proof);
+        Frame {
+            mode: u8::from(FrameMode::Proof),
+            flags: 0,
+            target: Some(FRAME_TX_SECP256K1_VERIFIER),
+            // The verifier's cost plus the access of a warm precompile.
+            gas_limit: 3_100,
+            state_gas_limit: 0,
+            value: U256::zero(),
+            data: Bytes::from(data),
         }
     }
 
-    /// A signed `[VERIFY(exec) on the sender's default code, VERIFY(pay) on the
-    /// paymaster]` transaction from a sender that exists nowhere, with `pay_state`
-    /// as the paymaster frame's state budget.
+    /// A signed `[PROOF of the sender's signature, VERIFY(exec) on the sender's
+    /// default code, VERIFY(pay) on the paymaster]` transaction from a sender that
+    /// exists nowhere, with `pay_state` as the paymaster frame's state budget.
     fn sponsored_tx_from_nowhere(pay_state: u64) -> (FrameTransaction, Address) {
         let (key, sender) = key_and_address(0x5A);
         let mut tx = frame_tx_with_keys(
             vec![
-                frame(FrameMode::Verify, 0x02, sender, 100_000, &[]),
+                proof_frame(sender, &[0u8; 65]),
+                // The default code approves on the proof frame its data names.
+                frame(FrameMode::Verify, 0x02, sender, 100_000, &[0x00]),
                 Frame {
                     state_gas_limit: pay_state,
                     ..frame(FrameMode::Verify, 0x01, PAYMASTER, 100_000, &[])
@@ -629,14 +635,12 @@ mod key_zero_from_a_fresh_sender {
             vec![],
         );
         tx.sender = sender;
-        tx.signatures = vec![FrameSignature {
-            scheme: FRAME_SIG_SCHEME_SECP256K1,
-            signer: Some(sender),
-            msg: Bytes::new(),
-            signature: Bytes::from(vec![0u8; 65]),
-        }];
+        // The proof is elided from the signature hash, so it is signed last.
         let sig_hash = tx.compute_sig_hash();
-        tx.signatures[0] = sign(&key, sig_hash, sender);
+        let (signature, recovery_id) = key.sign_prehash_recoverable(sig_hash.as_bytes()).unwrap();
+        let mut proof = vec![recovery_id.to_byte()];
+        proof.extend_from_slice(&signature.to_bytes());
+        tx.frames[0] = proof_frame(sender, &proof);
         tx.inner_hash = Default::default();
         tx.cached_canonical = Default::default();
         (tx, sender)
@@ -658,11 +662,11 @@ mod key_zero_from_a_fresh_sender {
         let report = result.expect("a sponsored transaction from a fresh sender must be valid");
         let frames = report.frame_results.expect("frame results present");
         assert_eq!(
-            frames[1].2, NEW_ACCOUNT_STATE_GAS,
+            frames[2].2, NEW_ACCOUNT_STATE_GAS,
             "the paymaster frame must be attributed the sender's account creation, got {frames:?}"
         );
         assert_eq!(
-            frames[0].2, 0,
+            frames[1].2, 0,
             "the sender's own VERIFY frame creates nothing"
         );
         assert_eq!(

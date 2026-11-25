@@ -20,11 +20,11 @@ use rustc_hash::FxHashMap;
 use ethrex_common::types::{
     APPROVE_EXECUTION_AND_PAYMENT, AuthorizationTuple, BYTES_PER_BLOB, BlobsBundle, Block,
     BlockBody, BlockHeader, ChainConfig, EIP1559Transaction, EIP4844Transaction,
-    EIP7702Transaction, FRAME_SIG_SCHEME_P256, FRAME_SIG_SCHEME_SECP256K1,
-    FRAME_TX_EXPIRY_DATA_LENGTH, FRAME_TX_MAX_VERIFY_GAS, FRAME_TX_MAX_VERIFY_STATE_GAS,
-    FeeTokenTransaction, Frame, FrameMode, FrameSignature, FrameTransaction, Genesis,
-    GenesisAccount, MAX_TX_SIZE, MempoolTransaction, PrivilegedL2Transaction, Transaction, TxKind,
-    frame_tx_expiry_verifier, kzg_commitment_to_versioned_hash,
+    EIP7702Transaction, FRAME_TX_EXPIRY_DATA_LENGTH, FRAME_TX_MAX_VERIFY_GAS,
+    FRAME_TX_MAX_VERIFY_STATE_GAS, FRAME_TX_SECP256K1_VERIFIER, FeeTokenTransaction, Frame,
+    FrameMode, FrameTransaction, Genesis, GenesisAccount, MAX_TX_SIZE, MempoolTransaction,
+    PrivilegedL2Transaction, Transaction, TxKind, frame_tx_expiry_verifier,
+    kzg_commitment_to_versioned_hash,
 };
 use ethrex_common::{Address, Bytes, H160, H256, U256};
 use ethrex_storage::error::StoreError;
@@ -682,7 +682,6 @@ fn minimal_valid_frame_tx() -> FrameTransaction {
             value: U256::zero(),
             data: Bytes::new(),
         }],
-        signatures: vec![],
         max_fee: U256::zero(),
         max_priority_fee_per_gas: U256::zero(),
         blob_versioned_hashes: vec![],
@@ -692,7 +691,7 @@ fn minimal_valid_frame_tx() -> FrameTransaction {
 
 /// Raise the first frame's gas limit so the transaction reserves its EIP-7623
 /// calldata floor. The minimal fixture carries no data, so tests that add frame
-/// data or signatures need the extra headroom to stay otherwise-valid.
+/// data or proof frames need the extra headroom to stay otherwise-valid.
 fn reserve_calldata_floor(tx: &mut FrameTransaction) {
     let floor = tx.calldata_floor_gas();
     if let Some(frame) = tx.frames.first_mut() {
@@ -700,29 +699,82 @@ fn reserve_calldata_floor(tx: &mut FrameTransaction) {
     }
 }
 
+/// A proof frame for the secp256k1 verifier claiming that `signer` signed the
+/// canonical signature hash, with `proof` as its 65-byte proof.
+fn secp256k1_proof_frame(signer: Address, proof: [u8; 65]) -> Frame {
+    let mut data = H256::from(signer).as_bytes().to_vec();
+    data.extend_from_slice(&[0u8; 32]);
+    data.extend_from_slice(&proof);
+    Frame {
+        mode: FrameMode::Proof as u8,
+        flags: 0,
+        target: Some(FRAME_TX_SECP256K1_VERIFIER),
+        // The verifier's cost plus the access of a warm precompile.
+        gas_limit: 3_100,
+        state_gas_limit: 0,
+        value: U256::zero(),
+        data: Bytes::from(data),
+    }
+}
+
 #[tokio::test]
-async fn mempool_rejects_frame_tx_with_invalid_signature() {
+async fn mempool_rejects_frame_tx_with_a_claim_that_does_not_hold() {
     let store = setup_hegota_store().await;
     let blockchain = Blockchain::default_with_store(store);
 
     let mut frame_tx = minimal_valid_frame_tx();
-    // One secp256k1 signature with the right length (65 bytes) but garbage bytes:
-    // ecrecover will not recover the claimed signer, so admission must reject it.
-    frame_tx.signatures = vec![FrameSignature {
-        scheme: FRAME_SIG_SCHEME_SECP256K1,
-        signer: Some(Address::from_low_u64_be(0xABCD)),
-        msg: Bytes::new(),
-        signature: Bytes::from(vec![0xAB; 65]),
-    }];
-
-    reserve_calldata_floor(&mut frame_tx);
+    // One secp256k1 proof with the right length (65 bytes) but garbage bytes:
+    // it does not recover the claimed signer, so admission must reject it.
+    frame_tx.frames.insert(
+        0,
+        secp256k1_proof_frame(Address::from_low_u64_be(0xABCD), [0xAB; 65]),
+    );
 
     let tx = Transaction::FrameTransaction(frame_tx);
     let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
     assert!(matches!(
         validation.await,
-        Err(MempoolError::InvalidFrameSignature)
+        Err(MempoolError::InvalidFrameProof)
     ));
+}
+
+#[tokio::test]
+async fn mempool_accepts_frame_tx_with_a_claim_that_holds() {
+    use k256::ecdsa::SigningKey;
+    let store = setup_hegota_store().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    // The sender's code approves unconditionally, so the proof frame is what
+    // admission adds: a claim the secp256k1 verifier accepts, checked before
+    // any state is read.
+    let signing_key = SigningKey::from_bytes(&[0x42; 32].into()).unwrap();
+    let uncompressed = signing_key.verifying_key().to_encoded_point(false);
+    let public_key_hash = ethrex_crypto::keccak::keccak_hash(&uncompressed.as_bytes()[1..]);
+    let signer = Address::from_slice(&public_key_hash[12..]);
+
+    let mut frame_tx = minimal_valid_frame_tx();
+    frame_tx
+        .frames
+        .insert(0, secp256k1_proof_frame(signer, [0u8; 65]));
+    reserve_calldata_floor(&mut frame_tx);
+    let proof_gas_limit = frame_tx.frames[0].gas_limit;
+    // The proof is elided from the signature hash, so it is signed last.
+    let sig_hash = frame_tx.compute_sig_hash();
+    let (signature, recovery_id) = signing_key
+        .sign_prehash_recoverable(sig_hash.as_bytes())
+        .unwrap();
+    let mut proof = [0u8; 65];
+    proof[0] = recovery_id.to_byte();
+    proof[1..].copy_from_slice(&signature.to_bytes());
+    frame_tx.frames[0] = Frame {
+        gas_limit: proof_gas_limit,
+        ..secp256k1_proof_frame(signer, proof)
+    };
+
+    let tx = Transaction::FrameTransaction(frame_tx);
+    let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
+    let result = validation.await;
+    assert!(result.is_ok(), "got {result:?}");
 }
 
 #[tokio::test]
@@ -747,8 +799,8 @@ async fn mempool_accepts_small_frame_tx() {
     let store = setup_hegota_store().await;
     let blockchain = Blockchain::default_with_store(store);
 
-    // Empty signature list passes signature validation (nothing to reject), and
-    // the tx otherwise satisfies static constraints + nonce/fee checks.
+    // A transaction without proof frames has no claim to verify, and the tx
+    // otherwise satisfies static constraints + nonce/fee checks.
     let frame_tx = minimal_valid_frame_tx();
     let tx = Transaction::FrameTransaction(frame_tx);
     let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
@@ -896,25 +948,17 @@ async fn mempool_rejects_frame_tx_exceeding_max_verify_gas() {
     let store = setup_hegota_store().await;
     let blockchain = Blockchain::default_with_store(store);
 
-    // EIP-8141 §Mempool rule #6: signature validation counts against
-    // MAX_VERIFY_GAS (100_000). P256 sigs cost 6700 each, so 15 sigs cost
-    // 100_500 > MAX_VERIFY_GAS and the tx must be rejected at admission BEFORE
-    // any per-signature crypto runs. The signature bytes need not be valid:
-    // the cap rejects first. Static constraints only require a known scheme and
-    // an empty-or-32-byte msg, which these satisfy.
-    let n_sigs = (FRAME_TX_MAX_VERIFY_GAS / 6700) as usize + 1; // 15
+    // EIP-8141 §Mempool rule #6: the proof frames count against MAX_VERIFY_GAS
+    // (100_000) through their execution limits. Two that declare 60,000 each
+    // exceed it, so the tx must be rejected at admission BEFORE any proof is
+    // verified. The proofs need not be valid: the cap rejects first.
     let mut frame_tx = minimal_valid_frame_tx();
-    frame_tx.signatures = (0..n_sigs)
-        .map(|_| FrameSignature {
-            scheme: FRAME_SIG_SCHEME_P256,
-            signer: Some(Address::from_low_u64_be(0xABCD)),
-            msg: Bytes::new(),
-            signature: Bytes::from(vec![0u8; 128]),
-        })
-        .collect();
-    assert!(frame_tx.signature_verification_cost() > FRAME_TX_MAX_VERIFY_GAS);
-
-    reserve_calldata_floor(&mut frame_tx);
+    for _ in 0..2 {
+        let mut proof = secp256k1_proof_frame(Address::from_low_u64_be(0xABCD), [0u8; 65]);
+        proof.gas_limit = 60_000;
+        frame_tx.frames.insert(0, proof);
+    }
+    assert!(frame_tx.proof_frames_gas() > FRAME_TX_MAX_VERIFY_GAS);
 
     let tx = Transaction::FrameTransaction(frame_tx);
     let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
@@ -1125,7 +1169,6 @@ fn frame_tx_with_expiry(deadline: u64) -> FrameTransaction {
                 data: Bytes::new(),
             },
         ],
-        signatures: vec![],
         max_fee: U256::zero(),
         max_priority_fee_per_gas: U256::zero(),
         blob_versioned_hashes: vec![],
@@ -1859,7 +1902,6 @@ fn funded_frame_tx(max_fee_per_gas: u64, max_priority_fee_per_gas: u64) -> Frame
             value: U256::zero(),
             data: Bytes::new(),
         }],
-        signatures: vec![],
         max_priority_fee_per_gas: U256::from(max_priority_fee_per_gas),
         blob_versioned_hashes: vec![],
         ..Default::default()
@@ -1960,7 +2002,6 @@ async fn mempool_rejects_underfunded_paymaster() {
             value: U256::zero(),
             data: Bytes::new(),
         }],
-        signatures: vec![],
         max_fee: U256::zero(),
         max_priority_fee_per_gas: U256::zero(),
         blob_versioned_hashes: vec![],
@@ -2039,7 +2080,6 @@ async fn mempool_enforces_noncanonical_paymaster_limit() {
             value: U256::zero(),
             data: Bytes::new(),
         }],
-        signatures: vec![],
         max_fee: U256::zero(),
         max_priority_fee_per_gas: U256::zero(),
         blob_versioned_hashes: vec![],
@@ -2116,7 +2156,6 @@ async fn mempool_rejects_second_frame_tx_same_sender_new_nonce() {
             value: U256::zero(),
             data: Bytes::new(),
         }],
-        signatures: vec![],
         max_fee: U256::zero(),
         max_priority_fee_per_gas: U256::zero(),
         blob_versioned_hashes: vec![],
@@ -2361,7 +2400,6 @@ async fn mempool_fee_bump_rejected_leaves_original_intact() {
             value: U256::zero(),
             data: Bytes::new(),
         }],
-        signatures: vec![],
         max_fee: U256::zero(),
         max_priority_fee_per_gas: U256::zero(),
         blob_versioned_hashes: vec![],
@@ -3353,8 +3391,8 @@ async fn l1_validate_transaction_rejects_privileged_l2() {
 mod p2p_serve_tests {
     use ethrex_blockchain::Blockchain;
     use ethrex_common::types::{
-        FRAME_SIG_SCHEME_SECP256K1, Frame, FrameMode, FrameSignature, FrameTransaction,
-        MempoolTransaction, P2PTransaction, Transaction,
+        FRAME_TX_SECP256K1_VERIFIER, Frame, FrameMode, FrameTransaction, MempoolTransaction,
+        P2PTransaction, Transaction,
     };
     use ethrex_common::{Address, U256};
     use ethrex_crypto::NativeCrypto;
@@ -3366,21 +3404,27 @@ mod p2p_serve_tests {
             nonce_keys: vec![],
             nonce_seq: 7,
             sender: Address::from_low_u64_be(0xABCD),
-            frames: vec![Frame {
-                mode: FrameMode::Sender as u8,
-                flags: 0x00,
-                target: Some(Address::from_low_u64_be(0x1234)),
-                gas_limit: 100_000,
-                state_gas_limit: 1_000_000,
-                value: U256::zero(),
-                data: bytes::Bytes::from_static(b"call_data"),
-            }],
-            signatures: vec![FrameSignature {
-                scheme: FRAME_SIG_SCHEME_SECP256K1,
-                signer: Some(Address::from_low_u64_be(0xABCD)),
-                msg: bytes::Bytes::new(),
-                signature: bytes::Bytes::from(vec![0u8; 65]),
-            }],
+            frames: vec![
+                // A proof frame travels in the transaction like any other frame.
+                Frame {
+                    mode: FrameMode::Proof as u8,
+                    flags: 0x00,
+                    target: Some(FRAME_TX_SECP256K1_VERIFIER),
+                    gas_limit: 3_100,
+                    state_gas_limit: 0,
+                    value: U256::zero(),
+                    data: bytes::Bytes::from(vec![0x01u8; 64 + 65]),
+                },
+                Frame {
+                    mode: FrameMode::Sender as u8,
+                    flags: 0x00,
+                    target: Some(Address::from_low_u64_be(0x1234)),
+                    gas_limit: 100_000,
+                    state_gas_limit: 1_000_000,
+                    value: U256::zero(),
+                    data: bytes::Bytes::from_static(b"call_data"),
+                },
+            ],
             max_fee: U256::from(10_000_000_000_000_000u64),
             max_priority_fee_per_gas: U256::from(1_000_000_000u64),
             blob_versioned_hashes: vec![],

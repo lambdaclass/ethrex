@@ -1,8 +1,8 @@
 use bytes::Bytes;
 use ethrex_common::types::{
     Account as ethrexAccount, AccountInfo, Block as CoreBlock, BlockBody, Code, EIP1559Transaction,
-    EIP2930Transaction, EIP4844Transaction, EIP7702Transaction, Frame, FrameSignature,
-    FrameTransaction, LegacyTransaction, Transaction as ethrexTransaction, TxKind, code_hash,
+    EIP2930Transaction, EIP4844Transaction, EIP7702Transaction, Frame, FrameTransaction,
+    LegacyTransaction, Transaction as ethrexTransaction, TxKind, code_hash,
 };
 use ethrex_common::types::{Genesis, GenesisAccount, Withdrawal};
 use ethrex_common::{Address, Bloom, H64, H256, U256, types::BlockHeader};
@@ -279,22 +279,7 @@ pub struct FrameItem {
     pub data: Bytes,
 }
 
-/// One entry of an EIP-8141 frame transaction's `signatures` list. `signer` is
-/// absent for an `ARBITRARY` entry, which the protocol assigns no signer.
-#[derive(Debug, PartialEq, Eq, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct FrameSignatureItem {
-    pub scheme: U256,
-    #[serde(default, deserialize_with = "deserialize_empty_as_none_address")]
-    pub signer: Option<Address>,
-    #[serde(with = "ethrex_common::serde_utils::bytes")]
-    pub msg: Bytes,
-    #[serde(with = "ethrex_common::serde_utils::bytes")]
-    pub signature: Bytes,
-}
-
 pub type FrameList = Vec<FrameItem>;
-pub type FrameSignatureList = Vec<FrameSignatureItem>;
 
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -428,10 +413,9 @@ pub struct Transaction {
     pub hash: Option<H256>,
     pub sender: Option<Address>,
     pub to: TxKind,
-    /// EIP-8141 only: a type-0x06 transaction carries frames and an outer
-    /// signature list in place of a single ECDSA signature.
+    /// EIP-8141 only: a type-0x06 transaction carries frames in place of a single
+    /// ECDSA signature. Its signatures are proofs, carried by proof frames.
     pub frames: Option<FrameList>,
-    pub signatures: Option<FrameSignatureList>,
     /// EIP-8250: the nonce keys of a frame transaction, whose `nonce` then carries
     /// the shared sequence. Absent means the empty key set, the account nonce.
     pub nonce_keys: Option<Vec<U256>>,
@@ -652,17 +636,6 @@ impl From<Transaction> for FrameTransaction {
                     state_gas_limit: f.state_gas_limit.try_into().unwrap_or(u64::MAX),
                     value: f.value,
                     data: f.data,
-                })
-                .collect(),
-            signatures: val
-                .signatures
-                .unwrap_or_default()
-                .into_iter()
-                .map(|s| FrameSignature {
-                    scheme: s.scheme.try_into().unwrap(),
-                    signer: s.signer,
-                    msg: s.msg,
-                    signature: s.signature,
                 })
                 .collect(),
             max_fee: val.max_fee.unwrap_or_default(),

@@ -430,8 +430,8 @@ pub struct BlockchainOptions {
     /// through `PrewarmHandle` to join it. See `for_test_harness`.
     pub mempool_prewarm_enabled: bool,
     /// EIP-8141 §Mempool `MAX_VERIFY_GAS`: the maximum gas this node expends
-    /// validating signatures and simulating a frame transaction's validation
-    /// prefix. Mempool policy (SHOULD), not consensus, so it is operator-tunable.
+    /// simulating a frame transaction's validation prefix, its proof frames
+    /// included. Mempool policy (SHOULD), not consensus, so it is operator-tunable.
     pub max_verify_gas: u64,
 }
 
@@ -3883,35 +3883,31 @@ impl Blockchain {
             // (MAX_TX_SIZE over encode_canonical_len), which covers the
             // frames' payloads since they are part of the canonical encoding.
 
-            // EIP-8141 §Mempool (rule #6): signature validation counts against
-            // MAX_VERIFY_GAS. Reject before any per-signature crypto runs when the
-            // signature-verification cost alone exceeds the budget — such a tx can
+            // EIP-8141 §Mempool (rule #6): the proof frames count against
+            // MAX_VERIFY_GAS through their execution limits. Reject before any
+            // proof is verified when they alone exceed the budget — such a tx can
             // never satisfy the validation-prefix gas limit, and this bounds the
-            // crypto work done by validate_frame_signatures below. (The full
+            // crypto work done by validate_precompile_claims below. (The full
             // validation-prefix simulation runs below over a throwaway head-state
             // VM and is the authoritative gas-budget check.)
-            if frame_tx.signature_verification_cost() > self.options.max_verify_gas {
+            if frame_tx.proof_frames_gas() > self.options.max_verify_gas {
                 return Err(MempoolError::FrameTxVerifyGasExceeded);
             }
 
-            // Authenticate the signature list BEFORE admission: without this the
+            // Verify the claims a precompile verifies BEFORE admission and before
+            // any state is read (§Acceptance Algorithm, step 5): without this the
             // unauthenticated `sender` field lets fabricated senders flood the
-            // pool for free (no balance is charged at admission).
-            let sig_hash = frame_tx.compute_sig_hash();
-            if !ethrex_vm::validate_frame_signatures(
-                &frame_tx.signatures,
-                sig_hash,
-                frame_tx.sender,
-                fork,
-                &NativeCrypto,
-            ) {
-                return Err(MempoolError::InvalidFrameSignature);
+            // pool for free (no balance is charged at admission). These claims
+            // depend on no state, so this is the only time they are verified:
+            // the prefix simulation and later revalidations skip them.
+            if !ethrex_vm::validate_precompile_claims(frame_tx, fork, &NativeCrypto) {
+                return Err(MempoolError::InvalidFrameProof);
             }
 
             // EIP-8141 §Mempool: validate the prefix shape and structural rules.
-            // The full gas-budget check (prefix frame gas limits + sig cost ≤
-            // MAX_VERIFY_GAS) is the authoritative superset of the cheap
-            // sig-cost pre-filter above; both are kept for defence-in-depth.
+            // The full gas-budget check (prefix frame gas limits, proof frames
+            // included, ≤ MAX_VERIFY_GAS) is the authoritative superset of the
+            // cheap pre-filter above; both are kept for defence-in-depth.
             let prefix = frame_tx.validation_prefix().map_err(MempoolError::from)?;
             frame_tx
                 .validate_prefix_structure(&prefix, self.options.max_verify_gas)

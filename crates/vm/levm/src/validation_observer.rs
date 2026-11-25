@@ -102,6 +102,11 @@ pub struct ValidationObserver {
     pub recent_root_frame: Option<usize>,
     /// `RECENT_ROOT_ADDRESS`.
     pub recent_root_address: Address,
+    /// Whether the claims of the proof frames a precompile verifies were already
+    /// checked, at admission and before any state was read (EIP-8141 §Acceptance
+    /// Algorithm, step 5). They depend on no state, so the simulation then records
+    /// those frames without verifying them again.
+    pub precompile_claims_verified: bool,
     /// The opcode byte executed on the previous dispatch-loop iteration. Used to
     /// enforce the `GAS` sequential rule (`GAS` is allowed only immediately
     /// before a `*CALL`). Reset each iteration.
@@ -127,6 +132,7 @@ impl ValidationObserver {
             canonical_paymaster_pay_frame: None,
             recent_root_frame: None,
             recent_root_address: Address::zero(),
+            precompile_claims_verified: false,
             last_opcode: 0,
             touched_sender_slots: Vec::new(),
             violation: None,
@@ -151,6 +157,7 @@ impl ValidationObserver {
             canonical_paymaster_pay_frame: None,
             recent_root_frame: None,
             recent_root_address: ethrex_common::types::frame_tx_recent_root(),
+            precompile_claims_verified: false,
             last_opcode: 0,
             touched_sender_slots: Vec::new(),
             violation: None,

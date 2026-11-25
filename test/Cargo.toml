@@ -68,6 +68,8 @@ libssz-merkle.workspace = true
 libssz-types.workspace = true
 ethrex-crypto.workspace = true
 ethrex-metrics = { workspace = true, features = ["metrics"] }
+# Signs the leanSPHINCS claims the EIP-8141 proof frame tests verify.
+lean_sphincs.workspace = true
 serial_test = "3"
 
 [[test]]

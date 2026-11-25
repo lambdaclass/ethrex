@@ -9,10 +9,9 @@ use bytes::Bytes;
 use ethrex_common::constants::GAS_PER_BLOB;
 use ethrex_common::types::{
     APPROVE_EXECUTION, APPROVE_EXECUTION_AND_PAYMENT, APPROVE_PAYMENT, Block, BlockBody,
-    BlockHeader, ChainConfig, EIP4844Transaction, FRAME_SIG_SCHEME_ARBITRARY,
-    FRAME_SIG_SCHEME_SECP256K1, FRAME_TX_KEYED_NONCE_ACCESS_COST, FRAME_TX_MAX_VERIFY_GAS, Frame,
-    FrameMode, FrameSignature, FrameTransaction, FrameValidationError, PrefixShape, Transaction,
-    frame_tx_expiry_verifier,
+    BlockHeader, ChainConfig, EIP4844Transaction, FRAME_TX_KEYED_NONCE_ACCESS_COST,
+    FRAME_TX_MAX_VERIFY_GAS, FRAME_TX_SECP256K1_VERIFIER, Frame, FrameMode, FrameTransaction,
+    FrameValidationError, PrefixShape, Transaction, frame_tx_expiry_verifier,
 };
 
 /// EIP-4844 `VERSIONED_HASH_VERSION_KZG`. The constant itself lives in a private
@@ -50,7 +49,6 @@ fn frame_tx_with_blobs(n_blobs: usize) -> FrameTransaction {
             value: Default::default(),
             data: Bytes::new(),
         }],
-        signatures: vec![],
         max_fee: U256::zero(),
         max_priority_fee_per_gas: U256::zero(),
         blob_versioned_hashes: (0..n_blobs).map(|_| H256::zero()).collect(),
@@ -132,6 +130,24 @@ fn expiry_verifier_frame() -> Frame {
         state_gas_limit: 0,
         value: U256::zero(),
         data: Bytes::from(vec![0u8; 8]),
+    }
+}
+
+/// A proof frame for the secp256k1 verifier claiming that `signer` signed the
+/// canonical signature hash, with `proof` as its proof.
+fn secp256k1_proof_frame(signer: Address, proof: &[u8]) -> Frame {
+    let mut data = ethrex_common::H256::from(signer).as_bytes().to_vec();
+    data.extend_from_slice(&[0u8; 32]);
+    data.extend_from_slice(proof);
+    Frame {
+        mode: FrameMode::Proof as u8,
+        flags: 0,
+        target: Some(FRAME_TX_SECP256K1_VERIFIER),
+        // The verifier's cost plus the access of a warm precompile.
+        gas_limit: 3_100,
+        state_gas_limit: 0,
+        value: U256::zero(),
+        data: Bytes::from(data),
     }
 }
 
@@ -461,20 +477,16 @@ fn prefix_rejection_atomic_batch_in_prefix() {
 
 #[test]
 fn prefix_rejection_gas_budget_exceeded() {
-    // Give the self_verify frame a gas_limit that, combined with sig cost,
-    // exceeds MAX_VERIFY_GAS (100_000). Sig cost for one SECP256K1 = 2800.
+    // Give the self_verify frame a gas_limit that, combined with the execution
+    // limit of a proof frame ahead of it, exceeds MAX_VERIFY_GAS (100_000).
     let mut frame = self_verify_frame();
     frame.gas_limit = FRAME_TX_MAX_VERIFY_GAS; // 100_000 alone already == limit
-    let mut tx = base_frame_tx_with_frames(vec![frame]);
-    // Ensure exactly one SECP256K1 sig so sig cost = 2800.
-    tx.signatures = vec![FrameSignature {
-        scheme: FRAME_SIG_SCHEME_SECP256K1,
-        signer: Some(sender_addr()),
-        msg: Bytes::new(),
-        signature: Bytes::from(vec![0u8; 65]),
-    }];
+    let tx = base_frame_tx_with_frames(vec![
+        secp256k1_proof_frame(sender_addr(), &[0u8; 65]),
+        frame,
+    ]);
     let prefix = tx.validation_prefix().expect("SelfVerify recognized");
-    // 100_000 + 2_800 > 100_000 → budget exceeded.
+    // 100_000 + 3_100 > 100_000 → budget exceeded.
     assert!(matches!(
         tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
             .unwrap_err(),
@@ -514,12 +526,6 @@ fn make_test_frame_tx() -> FrameTransaction {
                 data: Bytes::from_static(b"call_data"),
             },
         ],
-        signatures: vec![FrameSignature {
-            scheme: FRAME_SIG_SCHEME_SECP256K1,
-            signer: Some(Address::from_low_u64_be(0xABCD)),
-            msg: Bytes::new(),
-            signature: Bytes::from(vec![0u8; 65]),
-        }],
         max_fee: U256::from(10_000_000_000_000_000u64),
         max_priority_fee_per_gas: U256::from(1_000_000_000u64),
         blob_versioned_hashes: vec![],
@@ -767,7 +773,7 @@ fn static_validation_enforces_the_eip_7906_assert_rules() {
             ],
             "followed by an ASSERT frame",
         ),
-        ("mode 4", vec![verify, (4, 0)], "reserved execution mode"),
+        ("mode 5", vec![verify, (5, 0)], "reserved execution mode"),
     ] {
         let err = with(&frames).expect_err(label);
         assert!(err.contains(reason), "{label}: unexpected reason {err:?}");
@@ -775,27 +781,27 @@ fn static_validation_enforces_the_eip_7906_assert_rules() {
 }
 
 #[test]
-fn data_cost_covers_frame_signature_and_nonce_data() {
-    // 4 gas per zero byte, 16 per non-zero, over frame.data, each signature's
-    // signer/msg/signature, and EIP-8250's `rlp(nonce_keys) || rlp(nonce_seq)` --
-    // no other RLP framing, no other scalar fields.
+fn data_cost_covers_frame_proof_and_nonce_data() {
+    // 4 gas per zero byte, 16 per non-zero, over frame.data and EIP-8250's
+    // `rlp(nonce_keys) || rlp(nonce_seq)` -- no other RLP framing, no other scalar
+    // fields. A proof frame's claim is priced the same way, and its proof by
+    // length alone.
     let mut tx = make_test_frame_tx();
     // nonce_keys [], nonce_seq 42: `c0` || `2a`, two non-zero bytes -> 32.
     assert_eq!(tx.nonce_calldata(), vec![0xc0, 0x2a]);
     tx.frames[0].data = Bytes::from(vec![0u8; 3]); // 3 zero bytes -> 12
     tx.frames[1].data = Bytes::from(vec![0xAAu8; 2]); // 2 non-zero -> 32
-    tx.signatures = vec![FrameSignature {
-        scheme: FRAME_SIG_SCHEME_ARBITRARY,
-        signer: None, // empty signer contributes nothing
-        msg: Bytes::new(),
-        // The signature hash commits only to the length of an empty-msg signature,
-        // so its bytes are priced as if all non-zero: 16 + 16, not 16 + 4.
-        signature: Bytes::from(vec![0xAAu8, 0x00]),
-    }];
-    assert_eq!(tx.data_cost(), 12 + 32 + 16 + 16 + 32);
-    // Floor tokens are unweighted: 9 bytes * 4 tokens * 16 gas = 576.
-    assert_eq!(tx.calldata_tokens(), 9 * 4);
-    assert_eq!(tx.calldata_floor_gas(), 9 * 64);
+    // The claim: a key with one non-zero byte (31 * 4 + 16 = 140) and a zero msg
+    // (32 * 4 = 128). The signature hash commits only to the length of the proof,
+    // so its bytes are priced as if all non-zero: 16 + 16, not 16 + 4.
+    tx.frames.insert(
+        0,
+        secp256k1_proof_frame(Address::from_low_u64_be(1), &[0xAA, 0x00]),
+    );
+    assert_eq!(tx.data_cost(), 12 + 32 + 140 + 128 + 16 + 16 + 32);
+    // Floor tokens are unweighted: 73 bytes * 4 tokens * 16 gas.
+    assert_eq!(tx.calldata_tokens(), 73 * 4);
+    assert_eq!(tx.calldata_floor_gas(), 73 * 64);
 }
 
 #[test]
@@ -804,7 +810,6 @@ fn max_gas_takes_the_calldata_floor_when_it_exceeds_the_standard_limit() {
     // transaction whose data floor exceeds what it declared for execution
     // reserves the floor; it is valid, not rejected.
     let mut tx = make_test_frame_tx();
-    tx.signatures.clear();
     tx.frames[0].data = Bytes::from(vec![0xAAu8; 64]);
     tx.frames[1].data = Bytes::new();
     tx.frames[0].gas_limit = 100;
@@ -908,64 +913,40 @@ fn prefix_accepts_expiry_frame_as_first_frame() {
         .expect("a leading expiry verifier frame is valid");
 }
 
-/// A frame transaction filled by the reference implementation for EIP-8250
-/// (execution-specs `eips/bogota/eip-8250`, `test_block_access_list[used_key]`):
-/// nonce key `0xbeef` at sequence 1, one VERIFY frame, one SECP256K1 signature by
-/// the sender over the canonical signature hash, and EIP-8141's
-/// `fees = [max_fee, max_priority_fee_per_gas]`.
-const REFERENCE_KEYED_TX: &str = "06f89501c382beef0194f6c3a9edc1afa0ad5b720e4d42e1437c43d3b3ffcfce010380c8830186a083061a808080f85cf85a0194f6c3a9edc1afa0ad5b720e4d42e1437c43d3b3ff80b84101710a020d4f90c3144f1847d37461853fc105172b956f697ac334db968f71744d6a3ba412b16006ea1f274e3ffd32e07f1946cc7a4053de1142dccba6e1d37de6ca880de0b6b3a764000080c0";
-
-/// Cross-check ethrex's frame-transaction encoder against bytes produced by the
-/// reference implementation.
-///
-/// A self round-trip (encode then decode) cannot catch a layout disagreement,
-/// since both halves would share the same mistake. Decoding foreign bytes and
-/// requiring the re-encode to reproduce them exactly does catch it: this pins
-/// EIP-8250's `nonce_keys` list and `nonce_seq` in place of EIP-8141's single
-/// `nonce`, EIP-8141's `limits = [execution, state]` frame tuple, and the nested
-/// `fees` list.
+/// A proof over the canonical signature hash holds only for the transaction it
+/// was made for: the hash commits to EIP-8250's nonce fields, so changing either
+/// of them must invalidate the claim.
 #[test]
-fn reference_frame_tx_reencodes_byte_identically() {
-    let raw = hex::decode(REFERENCE_KEYED_TX).expect("valid hex");
-    let tx = Transaction::decode_canonical(&raw).expect("the reference bytes must decode");
-    let Transaction::FrameTransaction(frame_tx) = &tx else {
-        panic!("the reference bytes are a frame transaction");
-    };
-    assert_eq!(frame_tx.nonce_keys, vec![U256::from(0xbeef)]);
-    assert_eq!(frame_tx.nonce_seq, 1);
+fn proof_over_the_signature_hash_binds_the_nonce_fields() {
+    use k256::ecdsa::SigningKey;
+    let signing_key = SigningKey::from_bytes(&[0x42; 32].into()).unwrap();
+    let uncompressed = signing_key.verifying_key().to_encoded_point(false);
+    let public_key_hash = ethrex_crypto::keccak::keccak_hash(&uncompressed.as_bytes()[1..]);
+    let signer = Address::from_slice(&public_key_hash[12..]);
 
-    let reencoded = tx.encode_canonical_to_vec();
-    assert_eq!(
-        hex::encode(&reencoded),
-        REFERENCE_KEYED_TX,
-        "re-encoding must reproduce the reference bytes exactly"
-    );
-}
+    let mut frame_tx = base_frame_tx_with_frames(vec![
+        secp256k1_proof_frame(signer, &[0u8; 65]),
+        self_verify_frame(),
+    ]);
+    frame_tx.nonce_keys = vec![U256::from(0xbeef)];
+    frame_tx.nonce_seq = 1;
+    let (signature, recovery_id) = signing_key
+        .sign_prehash_recoverable(frame_tx.compute_sig_hash().as_bytes())
+        .unwrap();
+    let mut proof = vec![recovery_id.to_byte()];
+    proof.extend_from_slice(&signature.to_bytes());
+    frame_tx.frames[0] = secp256k1_proof_frame(signer, &proof);
 
-/// The reference transaction's SECP256K1 signature was made over the reference
-/// implementation's canonical signature hash, so it validates against ethrex's only
-/// if the two hashes agree -- including the EIP-8250 nonce fields, which the hash
-/// must commit to. Changing either field must invalidate the signature.
-#[test]
-fn reference_frame_tx_signature_binds_the_nonce_fields() {
-    let raw = hex::decode(REFERENCE_KEYED_TX).expect("valid hex");
-    let Transaction::FrameTransaction(frame_tx) =
-        Transaction::decode_canonical(&raw).expect("the reference bytes must decode")
-    else {
-        panic!("the reference bytes are a frame transaction");
-    };
     let validates = |tx: &FrameTransaction| {
-        ethrex_levm::vm::validate_frame_signatures(
-            &tx.signatures,
-            tx.compute_sig_hash(),
-            tx.sender,
+        ethrex_levm::vm::validate_precompile_claims(
+            tx,
             ethrex_common::types::Fork::Hegota,
             &ethrex_crypto::NativeCrypto,
         )
     };
     assert!(
         validates(&frame_tx),
-        "ethrex's signature hash must match the one the reference signed"
+        "the claim holds for the signed transaction"
     );
 
     let mut other_seq = frame_tx.clone();

@@ -61,7 +61,10 @@ mod tests {
     #[test]
     fn verifies_the_reference_vectors() {
         let mut cases = 0;
-        for line in VECTORS.lines().filter(|l| !l.is_empty() && !l.starts_with('#')) {
+        for line in VECTORS
+            .lines()
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        {
             let fields: Vec<&str> = line.split(' ').collect();
             let [name, pk, msg, signature, expected] = fields[..] else {
                 panic!("malformed vector line: {line}");
@@ -69,7 +72,11 @@ mod tests {
             let pk: [u8; 32] = hex(pk).try_into().expect("public key is 32 bytes");
             let msg: [u8; 32] = hex(msg).try_into().expect("message is 32 bytes");
             let expected = expected == "true";
-            assert_eq!(leansphincs_verify(&pk, &msg, &hex(signature)), expected, "{name}");
+            assert_eq!(
+                leansphincs_verify(&pk, &msg, &hex(signature)),
+                expected,
+                "{name}"
+            );
             cases += 1;
         }
         assert_eq!(cases, 8);
@@ -80,7 +87,15 @@ mod tests {
         let pk = [0u8; 32];
         let msg = [0u8; 32];
         assert!(!leansphincs_verify(&pk, &msg, &[]));
-        assert!(!leansphincs_verify(&pk, &msg, &[0u8; LEANSPHINCS_SIGNATURE_SIZE - 1]));
-        assert!(!leansphincs_verify(&pk, &msg, &[0u8; LEANSPHINCS_SIGNATURE_SIZE + 1]));
+        assert!(!leansphincs_verify(
+            &pk,
+            &msg,
+            &[0u8; LEANSPHINCS_SIGNATURE_SIZE - 1]
+        ));
+        assert!(!leansphincs_verify(
+            &pk,
+            &msg,
+            &[0u8; LEANSPHINCS_SIGNATURE_SIZE + 1]
+        ));
     }
 }

@@ -147,9 +147,9 @@ pub enum MempoolError {
     FrameTxExpired,
     #[error("Invalid frame transaction: {0}")]
     InvalidFrameTransaction(String),
-    #[error("Invalid frame transaction signature")]
-    InvalidFrameSignature,
-    #[error("Frame transaction signature verification cost exceeds MAX_VERIFY_GAS")]
+    #[error("Invalid frame transaction: the claim of a proof frame does not hold")]
+    InvalidFrameProof,
+    #[error("Frame transaction proof frames exceed MAX_VERIFY_GAS")]
     FrameTxVerifyGasExceeded,
     #[error("Frame transaction validation prefix does not match any recognized shape")]
     FrameTxUnrecognizedPrefix,

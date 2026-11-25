@@ -145,7 +145,7 @@ Node options:
           [default: 64]
 
       --mempool.max-verify-gas <GAS>
-          EIP-8141 MAX_VERIFY_GAS: maximum gas spent validating signatures and simulating a frame transaction's validation prefix at mempool admission. Mempool policy, not consensus.
+          EIP-8141 MAX_VERIFY_GAS: maximum gas spent simulating a frame transaction's validation prefix, its proof frames included, at mempool admission. Mempool policy, not consensus.
 
           [env: ETHREX_MEMPOOL_MAX_VERIFY_GAS=]
           [default: 100000]
@@ -425,7 +425,7 @@ Node options:
           [default: 90]
 
       --mempool.max-verify-gas <GAS>
-          EIP-8141 MAX_VERIFY_GAS: maximum gas spent validating signatures and simulating a frame transaction's validation prefix at mempool admission. Mempool policy, not consensus.
+          EIP-8141 MAX_VERIFY_GAS: maximum gas spent simulating a frame transaction's validation prefix, its proof frames included, at mempool admission. Mempool policy, not consensus.
 
           [env: ETHREX_MEMPOOL_MAX_VERIFY_GAS=]
           [default: 100000]

@@ -145,7 +145,6 @@ fn frame_tx(frames: Vec<Frame>, nonce_seq: u64) -> FrameTransaction {
         nonce_seq,
         sender: SENDER,
         frames,
-        signatures: Vec::new(),
         max_fee: U256::from(1_000_000_000_000_000_000u64),
         max_priority_fee_per_gas: U256::from(1),
         ..Default::default()

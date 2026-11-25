@@ -329,7 +329,7 @@ pub struct Options {
     )]
     pub mempool_max_queued_txs_per_account: usize,
     #[arg(
-        help = "EIP-8141 MAX_VERIFY_GAS: maximum gas spent validating signatures and simulating a frame transaction's validation prefix at mempool admission. Mempool policy, not consensus.",
+        help = "EIP-8141 MAX_VERIFY_GAS: maximum gas spent simulating a frame transaction's validation prefix, its proof frames included, at mempool admission. Mempool policy, not consensus.",
         long = "mempool.max-verify-gas",
         default_value_t = DEFAULT_MAX_VERIFY_GAS,
         value_name = "GAS",

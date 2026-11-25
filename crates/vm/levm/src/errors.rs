@@ -168,8 +168,8 @@ pub enum TxValidationError {
     TxMaxGasLimitExceeded { tx_hash: H256, tx_gas_limit: u64 },
     #[error("Invalid frame transaction format: {0}")]
     InvalidFrameTransactionFormat(String),
-    #[error("Invalid frame transaction: signature validation failed")]
-    InvalidFrameSignature,
+    #[error("Invalid frame transaction: the claim of a proof frame does not hold")]
+    InvalidFrameProof,
     #[error("Invalid frame transaction: VERIFY frame did not call APPROVE or payer not approved")]
     InvalidFrameTransaction,
 }
@@ -237,6 +237,10 @@ pub enum PrecompileError {
     ModExpModulusTooLarge,
     #[error("Coordinate Exceeds Field Modulus")]
     CoordinateExceedsFieldModulus,
+    /// A verifier precompile (EIP-8141) was given an input that does not prove
+    /// its claim: a malformed input or an invalid signature.
+    #[error("The proof does not prove the claim")]
+    InvalidClaim,
     /// EXECUTE precompile: the L1-submitted block failed stateless validation.
     /// Attacker-controllable: tx continues, forwarded gas is consumed, tx is includable.
     #[error("EXECUTE: stateless validation failed")]

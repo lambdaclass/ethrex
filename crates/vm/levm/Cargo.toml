@@ -39,6 +39,9 @@ risc0 = ["c-kzg"]
 zisk = []
 rayon = ["dep:rayon"]
 secp256k1 = []
+# Links the native leanSPHINCS verifier behind the EIP-8141 `LEANSPHINCS_VERIFIER`
+# precompile. Without it the precompile fails every call.
+leansphincs = ["ethrex-crypto/leansphincs"]
 
 [lints.rust]
 unsafe_code = "warn"

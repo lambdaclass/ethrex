@@ -1984,17 +1984,23 @@ pub enum FrameMode {
     /// `TXTRACE` and `EVENTDATACOPY` are valid. One that fails reverts
     /// the execution body without invalidating the transaction.
     Assert = 3,
+    /// `PROOF`: the frame asserts a claim `(verifier, key, msg)` and carries the
+    /// proof its verifier checks. Proof frames lead the frame list, run their
+    /// verifier in a pure context, and invalidate the transaction when the claim
+    /// does not hold.
+    Proof = 4,
 }
 
 impl FrameMode {
     /// Convert from the lower 8 bits of the mode field.
-    /// Returns None for reserved values (4-255).
+    /// Returns None for reserved values (5-255).
     pub fn from_u8(val: u8) -> Option<Self> {
         match val {
             0 => Some(FrameMode::Default),
             1 => Some(FrameMode::Verify),
             2 => Some(FrameMode::Sender),
             3 => Some(FrameMode::Assert),
+            4 => Some(FrameMode::Proof),
             _ => None,
         }
     }
@@ -2007,15 +2013,18 @@ impl From<FrameMode> for u8 {
             FrameMode::Verify => 1,
             FrameMode::Sender => 2,
             FrameMode::Assert => 3,
+            FrameMode::Proof => 4,
         }
     }
 }
 
 /// EIP-8141 Frame: a single execution step within a frame transaction.
 ///
-/// `mode` is the execution mode (0=DEFAULT, 1=VERIFY, 2=SENDER; 3-255 reserved).
+/// `mode` is the execution mode (0=DEFAULT, 1=VERIFY, 2=SENDER, 3=ASSERT,
+/// 4=PROOF; 5-255 reserved).
 /// `flags` bits: 0-1 = APPROVE scope restriction, 2 = atomic batch flag (valid
-/// on DEFAULT and SENDER frames only), 3-7 reserved (must be zero).
+/// on DEFAULT and SENDER frames only), 3 = committed proof and 4 = readable
+/// proof (valid on PROOF frames only), 5-7 reserved (must be zero).
 #[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub struct Frame {
     pub mode: u8,
@@ -2051,6 +2060,52 @@ impl Frame {
     /// Check if the atomic batch flag (bit 2 of `flags`) is set.
     pub fn is_atomic_batch(&self) -> bool {
         (self.flags >> 2) & 1 == 1
+    }
+
+    /// Whether this is a proof frame (`mode == PROOF`).
+    pub fn is_proof(&self) -> bool {
+        self.mode == FrameMode::Proof as u8
+    }
+
+    /// The claim a proof frame's data opens with, `key || msg`. Shorter than
+    /// `PROOF_CLAIM_LENGTH` only for a frame static validation rejects.
+    pub fn proof_claim(&self) -> &[u8] {
+        self.data.get(..PROOF_CLAIM_LENGTH).unwrap_or(&self.data)
+    }
+
+    /// The proof of a proof frame: its data after the claim.
+    pub fn proof_bytes(&self) -> &[u8] {
+        self.data.get(PROOF_CLAIM_LENGTH..).unwrap_or(&[])
+    }
+
+    /// The `key` of a proof frame's claim. Zero when the data cannot hold one,
+    /// which static validation rejects.
+    pub fn proof_key(&self) -> H256 {
+        self.data
+            .get(..32)
+            .map(H256::from_slice)
+            .unwrap_or_default()
+    }
+
+    /// The `msg` of a proof frame's claim as it is encoded: zero stands for the
+    /// canonical signature hash.
+    pub fn proof_msg(&self) -> H256 {
+        self.data
+            .get(32..PROOF_CLAIM_LENGTH)
+            .map(H256::from_slice)
+            .unwrap_or_default()
+    }
+
+    /// Whether the canonical signature hash commits to this proof frame's proof
+    /// through its digest (`PROOF_COMMIT_FLAG`).
+    pub fn commits_proof(&self) -> bool {
+        self.flags & PROOF_COMMIT_FLAG != 0
+    }
+
+    /// Whether `VERIFY` frames may read this proof frame's data
+    /// (`PROOF_READ_FLAG`).
+    pub fn proof_is_readable(&self) -> bool {
+        self.flags & PROOF_READ_FLAG != 0
     }
 
     /// An expiry verifier frame is a VERIFY frame targeting EXPIRY_VERIFIER
@@ -2140,61 +2195,40 @@ impl RLPDecode for Frame {
     }
 }
 
-/// EIP-8141 transaction signature. RLP: `[scheme, signer, msg, signature]`.
-/// `scheme`: 0 = ARBITRARY (`signer` MUST be empty; `signature` is arbitrary bytes),
-/// 1 = SECP256K1 (sig = v||r||s, 65 bytes), 2 = P256 (sig = r||s||qx||qy, 128 bytes).
-/// `signer`: `None` (empty) is required for ARBITRARY and allowed for SECP256K1/P256
-/// (empty ⇒ the resolved signer is `tx.sender`, for introspection too); `Some(addr)` pins it.
-/// `msg`: empty = signs compute_sig_hash(tx); 32 bytes = signs that explicit digest.
-/// Raw `signature` bytes are intentionally not EVM-introspectable.
-#[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
-pub struct FrameSignature {
-    pub scheme: u8,
-    #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::H160Wrapper>)]
-    pub signer: Option<Address>,
-    #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
-    pub msg: Bytes,
-    #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
-    pub signature: Bytes,
-}
+/// A frame as the canonical signature hash sees it (EIP-8141 §Signature Hash).
+/// Every frame is encoded as it is, except a proof frame, whose `data` becomes the
+/// list `[claim, len(proof)]`, extended with `keccak256(proof)` when the frame sets
+/// `PROOF_COMMIT_FLAG`. A proof over the signature hash cannot commit to its own
+/// bytes, but committing to their length fixes what the payer is charged for them.
+struct SigHashFrame<'a>(&'a Frame);
 
-impl RLPEncode for FrameSignature {
+impl RLPEncode for SigHashFrame<'_> {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        // `signer` encodes as an address or RLP null (empty) for `None`, mirroring
-        // `Frame.target`; an empty signer is required for ARBITRARY signatures.
-        let signer_kind = match self.signer {
+        let frame = self.0;
+        if !frame.is_proof() {
+            frame.encode(buf);
+            return;
+        }
+        let target_kind = match frame.target {
             Some(addr) => TxKind::Call(addr),
             None => TxKind::Create,
         };
-        Encoder::new(buf)
-            .encode_field(&self.scheme)
-            .encode_field(&signer_kind)
-            .encode_field(&self.msg)
-            .encode_field(&self.signature)
-            .finish();
-    }
-}
-
-impl RLPDecode for FrameSignature {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(FrameSignature, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (scheme, decoder) = decoder.decode_field("scheme")?;
-        let (signer_kind, decoder): (TxKind, _) = decoder.decode_field("signer")?;
-        let signer = match signer_kind {
-            TxKind::Call(addr) => Some(addr),
-            TxKind::Create => None,
-        };
-        let (msg, decoder) = decoder.decode_field("msg")?;
-        let (signature, decoder) = decoder.decode_field("signature")?;
-        Ok((
-            FrameSignature {
-                scheme,
-                signer,
-                msg,
-                signature,
-            },
-            decoder.finish()?,
-        ))
+        let claim = Bytes::copy_from_slice(frame.proof_claim());
+        let proof = frame.proof_bytes();
+        let proof_len = proof.len() as u64;
+        let encoder = Encoder::new(buf)
+            .encode_field(&(frame.mode as u64))
+            .encode_field(&(frame.flags as u64))
+            .encode_field(&target_kind)
+            .encode_field(&(frame.gas_limit, frame.state_gas_limit))
+            .encode_field(&frame.value);
+        if frame.commits_proof() {
+            encoder
+                .encode_field(&(claim, proof_len, keccak(proof)))
+                .finish();
+        } else {
+            encoder.encode_field(&(claim, proof_len)).finish();
+        }
     }
 }
 
@@ -2215,9 +2249,6 @@ pub struct FrameTransaction {
     #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
     pub sender: Address,
     pub frames: Vec<Frame>,
-    /// EIP-8141 outer signature list. Validated
-    /// before any frame executes; referenced by VERIFY frames and SIGPARAM.
-    pub signatures: Vec<FrameSignature>,
     /// EIP-8141 `fees.max_fee`: one budget, in wei, for all of the transaction's
     /// execution, state and blob gas. The fee fields are bounded at 2**256, not
     /// 2**64: a frame transaction may legitimately name a fee no balance could
@@ -2244,7 +2275,6 @@ impl Default for FrameTransaction {
             nonce_seq: 0,
             sender: Address::zero(),
             frames: Vec::new(),
-            signatures: Vec::new(),
             max_fee: U256::zero(),
             max_priority_fee_per_gas: U256::zero(),
             blob_versioned_hashes: Vec::new(),
@@ -2283,14 +2313,42 @@ pub const FRAME_TX_RECENT_ROOT_TUPLE_BYTES: usize = 72;
 /// raised EIP-7976 floor always applies and neither needs a fork parameter.
 const FRAME_TX_STANDARD_TOKEN_COST: u64 = 4;
 const FRAME_TX_TOTAL_COST_FLOOR_PER_TOKEN: u64 = 16;
-/// EIP-8141 signature schemes: ARBITRARY=0, SECP256K1=1, P256=2.
-pub const FRAME_SIG_SCHEME_ARBITRARY: u8 = 0;
-pub const FRAME_SIG_SCHEME_SECP256K1: u8 = 1;
-pub const FRAME_SIG_SCHEME_P256: u8 = 2;
+/// EIP-8141 `ATOMIC_BATCH_FLAG` (bit 2 of `flags`): the frame is in a batch with
+/// the frame that follows it. Valid on DEFAULT and SENDER frames.
+pub const ATOMIC_BATCH_FLAG: u8 = 0x04;
+/// EIP-8141 `PROOF_COMMIT_FLAG` (bit 3 of `flags`, proof frames only): the
+/// canonical signature hash commits to the frame's proof through its digest.
+pub const PROOF_COMMIT_FLAG: u8 = 0x08;
+/// EIP-8141 `PROOF_READ_FLAG` (bit 4 of `flags`, proof frames only): `VERIFY`
+/// frames may read the frame's data with `FRAMEDATALOAD` and `FRAMEDATACOPY`.
+pub const PROOF_READ_FLAG: u8 = 0x10;
+/// Length of the claim a proof frame's data opens with:
+/// `key (32 bytes) || msg (32 bytes)`.
+pub const PROOF_CLAIM_LENGTH: usize = 64;
+/// EIP-8141 `SECP256K1_VERIFIER`. The EIP has yet to assign the verifier
+/// precompile addresses; these continue the contiguous precompile range, outside
+/// the range EIP-7587 reserves for RIPs.
+pub const FRAME_TX_SECP256K1_VERIFIER: Address = ethereum_types::H160(hex_literal::hex!(
+    "0000000000000000000000000000000000000012"
+));
+/// EIP-8141 `P256_VERIFIER` (see [`FRAME_TX_SECP256K1_VERIFIER`]).
+pub const FRAME_TX_P256_VERIFIER: Address = ethereum_types::H160(hex_literal::hex!(
+    "0000000000000000000000000000000000000013"
+));
+/// EIP-8141 `LEANSPHINCS_VERIFIER` (see [`FRAME_TX_SECP256K1_VERIFIER`]).
+pub const FRAME_TX_LEANSPHINCS_VERIFIER: Address = ethereum_types::H160(hex_literal::hex!(
+    "0000000000000000000000000000000000000014"
+));
+/// Gas the `SECP256K1_VERIFIER` precompile requires on every input.
+pub const SECP256K1_VERIFIER_GAS: u64 = 3000;
+/// Gas the `P256_VERIFIER` precompile requires on every input.
+pub const P256_VERIFIER_GAS: u64 = 6900;
+/// Gas the `LEANSPHINCS_VERIFIER` precompile requires on every input.
+pub const LEANSPHINCS_VERIFIER_GAS: u64 = 13200;
 /// EIP-8141 §Mempool `MAX_VERIFY_GAS`: the maximum gas
-/// a public-mempool node should expend validating signatures and simulating the
-/// validation prefix. Signature validation counts against this budget (rule #6),
-/// so a frame tx whose `signature_verification_cost()` alone exceeds it can never
+/// a public-mempool node should expend simulating the validation prefix,
+/// including its proof frames. Their `limits.execution` count against this budget
+/// (rule #6), so a frame tx whose proof frames alone exceed it can never
 /// satisfy the prefix budget and must be rejected at admission.
 pub const FRAME_TX_MAX_VERIFY_GAS: u64 = 100_000;
 /// EIP-8141 `MAX_VERIFY_STATE_GAS`: the most state gas the frames of a validation
@@ -2487,100 +2545,71 @@ impl FrameFeeBudget {
 }
 
 impl FrameTransaction {
-    /// Canonical signature hash (EIP-8141): the raw `signature` bytes of every
-    /// signature with empty `msg` are replaced by their byte length, RLP-encoded
-    /// as an unsigned integer. A signature over this hash cannot commit to its own
-    /// bytes, but committing to their length fixes what the payer is charged for
-    /// them. Frame data is fully covered. Signatures with an explicit 32-byte
-    /// `msg` keep their bytes (they sign that digest, not this hash).
+    /// Canonical signature hash (EIP-8141): the proof of every proof frame is
+    /// elided and replaced by its byte length and, for a frame with
+    /// `PROOF_COMMIT_FLAG`, also by its keccak256 digest (see [`SigHashFrame`]).
+    /// The claim of a proof frame and the data of every other frame are fully
+    /// covered, and so are the flags.
     pub fn compute_sig_hash(&self) -> H256 {
         let mut buf = vec![TxType::Frame as u8];
-        let elided_signatures: Vec<FrameSignature> = self
-            .signatures
-            .iter()
-            .map(|s| {
-                if s.msg.is_empty() {
-                    // An unsigned integer RLP-encodes as its minimal big-endian
-                    // bytes, so the length can stand in the bytes field directly.
-                    let length = (s.signature.len() as u64).to_be_bytes();
-                    let first_nonzero = length.iter().position(|b| *b != 0).unwrap_or(8);
-                    FrameSignature {
-                        scheme: s.scheme,
-                        signer: s.signer,
-                        msg: s.msg.clone(),
-                        signature: Bytes::copy_from_slice(&length[first_nonzero..]),
-                    }
-                } else {
-                    s.clone()
-                }
-            })
-            .collect();
-        // RLP-encode the tx with elided signature bytes, frames verbatim.
+        let elided_frames: Vec<SigHashFrame> = self.frames.iter().map(SigHashFrame).collect();
         Encoder::new(&mut buf)
             .encode_field(&self.chain_id)
             .encode_field(&self.nonce_keys)
             .encode_field(&self.nonce_seq)
             .encode_field(&self.sender)
-            .encode_field(&self.frames)
-            .encode_field(&elided_signatures)
+            .encode_field(&elided_frames)
             .encode_field(&(self.max_fee, self.max_priority_fee_per_gas))
             .encode_field(&self.blob_versioned_hashes)
             .finish();
         keccak(&buf)
     }
 
-    /// Per EIP-8141: 100 gas per ARBITRARY signature, 2800 per SECP256K1, 6700
-    /// per P256. Unknown schemes are rejected by static validation, so they are
-    /// treated as 0 here (validation runs first).
-    pub fn signature_verification_cost(&self) -> u64 {
-        self.signatures
-            .iter()
-            .map(|s| match s.scheme {
-                FRAME_SIG_SCHEME_ARBITRARY => 100u64,
-                FRAME_SIG_SCHEME_SECP256K1 => 2800u64,
-                FRAME_SIG_SCHEME_P256 => 6700u64,
-                _ => 0,
-            })
-            .sum()
+    /// Number of proof frames. Static validation makes them the first frames.
+    pub fn proof_frame_count(&self) -> usize {
+        self.frames.iter().take_while(|f| f.is_proof()).count()
     }
 
-    /// Iterate the EIP-8141 data fields priced by their content: each frame's
-    /// `data`, each signature's `signer` and `msg`, and the `signature` bytes of
-    /// signatures with an explicit `msg`. The `signature` bytes of an empty-`msg`
-    /// signature are priced by length alone (see [`Self::elided_signature_len`]).
-    /// The RLP framing and the remaining scalar fields are not included.
-    fn data_fields(&self) -> impl Iterator<Item = &[u8]> {
-        const EMPTY: &[u8] = &[];
+    /// Σ(`limits.execution`) over the proof frames: what verifying the
+    /// transaction's claims is charged, and what it counts toward
+    /// `MAX_VERIFY_GAS`.
+    pub fn proof_frames_gas(&self) -> u64 {
         self.frames
             .iter()
-            .map(|f| f.data.as_ref())
-            .chain(self.signatures.iter().flat_map(|s| {
-                [
-                    s.signer.as_ref().map_or(EMPTY, |a| a.as_bytes()),
-                    s.msg.as_ref(),
-                    if s.msg.is_empty() {
-                        EMPTY
-                    } else {
-                        s.signature.as_ref()
-                    },
-                ]
-            }))
+            .filter(|f| f.is_proof())
+            .fold(0u64, |acc, f| acc.saturating_add(f.gas_limit))
     }
 
-    /// Total length of the `signature` bytes of signatures with an empty `msg`.
-    /// EIP-8141's canonical signature hash commits only to their length, so the
-    /// intrinsic cost prices them as if all non-zero: the payer's charge then
-    /// depends only on what the signature hash covers.
-    fn elided_signature_len(&self) -> u64 {
-        self.signatures
+    /// Iterate the data priced by its content: each frame's `data`, except that a
+    /// proof frame contributes only its claim. Its proof is priced by length alone
+    /// (see [`Self::elided_proof_len`]). The RLP framing and the remaining scalar
+    /// fields are not included.
+    fn data_fields(&self) -> impl Iterator<Item = &[u8]> {
+        self.frames.iter().map(|f| {
+            if f.is_proof() {
+                f.proof_claim()
+            } else {
+                f.data.as_ref()
+            }
+        })
+    }
+
+    /// Total length of the proofs of the proof frames. EIP-8141's canonical
+    /// signature hash commits only to their length, so the intrinsic cost prices
+    /// them as if all non-zero: the payer's charge then depends only on what the
+    /// signature hash covers.
+    fn elided_proof_len(&self) -> u64 {
+        self.frames
             .iter()
-            .filter(|s| s.msg.is_empty())
-            .fold(0u64, |acc, s| acc.saturating_add(s.signature.len() as u64))
+            .filter(|f| f.is_proof())
+            .fold(0u64, |acc, f| {
+                acc.saturating_add(f.proof_bytes().len() as u64)
+            })
     }
 
-    /// EIP-7623 calldata cost over the frame and signature data and EIP-8250's
-    /// nonce calldata: 4 gas per zero byte, 16 per non-zero byte, and 16 per byte
-    /// of an empty-`msg` signature whatever its value.
+    /// EIP-7623 calldata cost over the frame data and EIP-8250's nonce calldata:
+    /// 4 gas per zero byte, 16 per non-zero byte, and 16 per byte of a proof
+    /// whatever its value.
     pub fn data_cost(&self) -> u64 {
         let nonce_calldata = self.nonce_calldata();
         self.data_fields()
@@ -2589,24 +2618,24 @@ impl FrameTransaction {
             .fold(0u64, |acc, byte| {
                 acc.saturating_add(if *byte == 0 { 4 } else { 16 })
             })
-            .saturating_add(self.elided_signature_len().saturating_mul(16))
+            .saturating_add(self.elided_proof_len().saturating_mul(16))
     }
 
-    /// EIP-7623 token count over the frame and signature data and EIP-8250's nonce
+    /// EIP-7623 token count over the frame data and EIP-8250's nonce
     /// calldata, used for the calldata floor. Frame transactions exist only from
     /// Hegota onward, which is after Amsterdam, so EIP-7976's unweighted count
     /// (every byte costs `STANDARD_TOKEN_COST`) always applies.
     pub fn calldata_tokens(&self) -> u64 {
         self.data_fields()
             .fold(0u64, |acc, field| acc.saturating_add(field.len() as u64))
-            .saturating_add(self.elided_signature_len())
+            .saturating_add(self.elided_proof_len())
             .saturating_add(self.nonce_calldata().len() as u64)
             .saturating_mul(FRAME_TX_STANDARD_TOKEN_COST)
     }
 
     /// EIP-8250 `nonce_calldata`: `rlp(nonce_keys) || rlp(nonce_seq)`, the bytes the
-    /// keyed nonce fields add to the payload. They are priced exactly as frame and
-    /// signature data, so they enter both [`Self::data_cost`] and
+    /// keyed nonce fields add to the payload. They are priced exactly as frame
+    /// data, so they enter both [`Self::data_cost`] and
     /// [`Self::calldata_tokens`]. A single-use key set (keyed, at `MAX_NONCE_SEQ`)
     /// is exempt from pricing its `nonce_seq`, so the single-use form never costs
     /// more than first use at sequence zero; the field is still encoded and signed.
@@ -2648,12 +2677,14 @@ impl FrameTransaction {
     /// frame. A matching frame anywhere else is not the protocol verifier and fails
     /// the structural rules ([`FrameValidationError::RecentRootFrameMisplaced`]).
     pub fn recent_root_verifier_index(&self) -> Option<usize> {
-        match self.frames.as_slice() {
-            [first, ..] if first.is_recent_root_verifier() => Some(0),
+        // Proof frames lead the frame list; the position is counted after them.
+        let proofs = self.proof_frame_count();
+        match self.frames.get(proofs..)? {
+            [first, ..] if first.is_recent_root_verifier() => Some(proofs),
             [first, second, ..]
                 if first.is_expiry_verifier() && second.is_recent_root_verifier() =>
             {
-                Some(1)
+                Some(proofs.saturating_add(1))
             }
             _ => None,
         }
@@ -2668,21 +2699,19 @@ impl FrameTransaction {
             .unwrap_or_default()
     }
 
-    /// The EIP-7623 calldata floor: the least the frame and signature data may
-    /// cost, whatever execution actually consumes.
+    /// The EIP-7623 calldata floor: the least the frame data may cost, whatever
+    /// execution actually consumes.
     pub fn calldata_floor_gas(&self) -> u64 {
         self.calldata_tokens()
             .saturating_mul(FRAME_TX_TOTAL_COST_FLOOR_PER_TOKEN)
     }
 
     /// The mandatory costs, always charged in full: the intrinsic cost, the
-    /// per-frame cost, signature verification, value transfers, and EIP-8250's
-    /// keyed-nonce access. They are the terms EIP-8141's `frame_tx_intrinsic_gas` and
+    /// per-frame cost, value transfers, and EIP-8250's keyed-nonce access. They are the terms EIP-8141's `frame_tx_intrinsic_gas` and
     /// `calldata_floor_gas` share, so each is charged once on either side.
     pub fn mandatory_gas(&self) -> u64 {
         FRAME_TX_INTRINSIC_COST
             .saturating_add((self.frames.len() as u64).saturating_mul(FRAME_TX_PER_FRAME_COST))
-            .saturating_add(self.signature_verification_cost())
             .saturating_add(self.value_transfer_gas())
             .saturating_add(self.keyed_nonce_access_cost())
     }
@@ -2856,47 +2885,13 @@ impl FrameTransaction {
                 return Err(format!("Blob versioned hash {i}: wrong version byte"));
             }
         }
-        // EIP-8141 signature list validation: scheme must be a known value; msg
-        // must be empty or a non-zero 32-byte digest.
-        for (i, sig) in self.signatures.iter().enumerate() {
-            match sig.scheme {
-                // ARBITRARY (0) carries no recoverable signer; per EIP-8141 the
-                // signer MUST be empty.
-                FRAME_SIG_SCHEME_ARBITRARY => {
-                    if sig.signer.is_some() {
-                        return Err(format!(
-                            "Signature {i}: ARBITRARY signatures must not name a signer"
-                        ));
-                    }
-                }
-                FRAME_SIG_SCHEME_SECP256K1 | FRAME_SIG_SCHEME_P256 => {}
-                other => {
-                    return Err(format!("Signature {i}: unsupported scheme {other}"));
-                }
-            }
-            match sig.msg.len() {
-                0 => {}
-                32 => {
-                    if sig.msg.iter().all(|&b| b == 0) {
-                        return Err(format!(
-                            "Signature {i}: explicit msg must not be zero digest"
-                        ));
-                    }
-                }
-                other => {
-                    return Err(format!(
-                        "Signature {i}: msg must be empty or 32 bytes, got {other}"
-                    ));
-                }
-            }
-        }
         // Tracked as u128 so the running addition itself cannot overflow; the
         // bound below rejects tx-level totals that don't fit in signed i64.
         let mut total_frame_gas: u128 = 0;
         let mut expiry_frame_count: usize = 0;
         let mut seen_assert = false;
         for (i, frame) in self.frames.iter().enumerate() {
-            // Reject reserved execution modes (4-255). EIP-7906 adds ASSERT (3) to
+            // Reject reserved execution modes (5-255). EIP-7906 adds ASSERT (3) to
             // the modes EIP-8141 accepts.
             if FrameMode::from_u8(frame.mode).is_none() {
                 return Err(format!("Frame {i}: reserved execution mode {}", frame.mode));
@@ -2910,12 +2905,53 @@ impl FrameTransaction {
                     "Frame {i}: only ASSERT frames may follow an ASSERT frame"
                 ));
             }
-            // Reserved flag bits 3-7 must be zero
-            if frame.flags >= 8 {
+            // A flag is valid only under its mode: a proof frame may set the two
+            // proof flags, every other frame the approval scope and the atomic
+            // batch flag. Bits 5-7 are reserved.
+            let valid_flags = if frame.is_proof() {
+                PROOF_COMMIT_FLAG | PROOF_READ_FLAG
+            } else {
+                APPROVE_EXECUTION_AND_PAYMENT | ATOMIC_BATCH_FLAG
+            };
+            if frame.flags & !valid_flags != 0 {
                 return Err(format!(
                     "Frame {i}: reserved flag bits must be zero (flags={:#04x})",
                     frame.flags
                 ));
+            }
+            if frame.is_proof() {
+                // Proof frames lead the frame list, so every claim is verified
+                // before any other frame executes.
+                let leads = i
+                    .checked_sub(1)
+                    .and_then(|prev| self.frames.get(prev))
+                    .is_none_or(Frame::is_proof);
+                if !leads {
+                    return Err(format!(
+                        "Frame {i}: proof frames must precede every other frame"
+                    ));
+                }
+                if frame.state_gas_limit != 0 {
+                    return Err(format!(
+                        "Frame {i}: proof frame must have state_gas_limit == 0 (got {})",
+                        frame.state_gas_limit
+                    ));
+                }
+                if frame.data.len() < PROOF_CLAIM_LENGTH {
+                    return Err(format!(
+                        "Frame {i}: proof frame data must hold a {PROOF_CLAIM_LENGTH}-byte claim, got {} bytes",
+                        frame.data.len()
+                    ));
+                }
+                if frame.proof_key().is_zero() {
+                    return Err(format!("Frame {i}: proof frame key must not be zero"));
+                }
+                // A proof over the canonical signature hash cannot commit to itself.
+                if frame.commits_proof() && frame.proof_msg().is_zero() {
+                    return Err(format!(
+                        "Frame {i}: PROOF_COMMIT_FLAG requires an explicit msg"
+                    ));
+                }
             }
             // Expiry verifier frames (EIP-8141): VERIFY
             // frames targeting EXPIRY_VERIFIER must have flags == 0, value == 0
@@ -3052,7 +3088,9 @@ impl FrameTransaction {
     /// Identify and return the validation prefix of this frame transaction.
     ///
     /// The validation prefix is the minimal leading subsequence of frames (ignoring
-    /// expiry-verifier frames) that establishes who pays for the transaction.
+    /// proof frames and expiry-verifier frames) that establishes who pays for the
+    /// transaction. Proof frames precede every recognized shape and always belong
+    /// to the prefix; they are not listed in `frame_indices`.
     /// Four shapes are recognized (per EIP-8141 §Mempool):
     ///
     /// - `SelfVerify`: one VERIFY frame targeting `tx.sender` with scope `APPROVE_EXECUTION_AND_PAYMENT`.
@@ -3075,7 +3113,9 @@ impl FrameTransaction {
             .frames
             .iter()
             .enumerate()
-            .filter(|(idx, f)| !f.is_expiry_verifier() && Some(*idx) != recent_root_index)
+            .filter(|(idx, f)| {
+                !f.is_proof() && !f.is_expiry_verifier() && Some(*idx) != recent_root_index
+            })
             .map(|(i, _)| i)
             .collect();
 
@@ -3168,9 +3208,9 @@ impl FrameTransaction {
     ///   self_verify → `APPROVE_EXECUTION_AND_PAYMENT`, only_verify → `APPROVE_EXECUTION`,
     ///   pay → `APPROVE_PAYMENT`.
     /// - No frame in the prefix has the atomic-batch flag set.
-    /// - An expiry verifier frame, if present, is the first frame of the transaction.
+    /// - An expiry verifier frame, if present, is the first frame after the proof frames.
     /// - No VERIFY frame follows the validation prefix.
-    /// - Total gas budget: Σ(prefix frame gas_limits) + signature_verification_cost() ≤ `max_verify_gas`.
+    /// - Total gas budget: Σ(prefix frame gas_limits), proof frames included, ≤ `max_verify_gas`.
     ///
     /// `max_verify_gas` is the node's `MAX_VERIFY_GAS` budget; the spec value is
     /// [`FRAME_TX_MAX_VERIFY_GAS`], but it is mempool policy and therefore
@@ -3268,14 +3308,14 @@ impl FrameTransaction {
         }
 
         // EIP-8141 §Expiry Verifier Frame: an expiry verifier frame may appear
-        // only as the first frame of the frame list. Expiry frames are otherwise
+        // only as the first frame after the proof frames. Expiry frames are otherwise
         // transparent to prefix matching, so a misplaced one would silently pin
         // the transaction's validity to a deadline outside the recognized shapes.
         if let Some((frame_index, _)) = self
             .frames
             .iter()
             .enumerate()
-            .skip(1)
+            .skip(self.proof_frame_count().saturating_add(1))
             .find(|(_, frame)| frame.is_expiry_verifier())
         {
             return Err(FrameValidationError::ExpiryFrameNotFirst { frame_index });
@@ -3307,7 +3347,7 @@ impl FrameTransaction {
             return Err(FrameValidationError::VerifyFrameAfterPrefix { frame_index });
         }
 
-        // Gas budget: prefix frame gas limits + signature cost ≤ MAX_VERIFY_GAS.
+        // Gas budget: prefix frame gas limits, proof frames included, ≤ MAX_VERIFY_GAS.
         // EIP-8272 counts the recent root verifier frame's `limits.execution` too.
         let prefix_gas: u64 = prefix
             .frame_indices
@@ -3315,7 +3355,7 @@ impl FrameTransaction {
             .chain(prefix.recent_root_index.iter())
             .map(|&i| self.frames[i].gas_limit)
             .fold(0u64, |acc, g| acc.saturating_add(g));
-        let total_verify_gas = prefix_gas.saturating_add(self.signature_verification_cost());
+        let total_verify_gas = prefix_gas.saturating_add(self.proof_frames_gas());
         if total_verify_gas > max_verify_gas {
             return Err(FrameValidationError::VerifyGasBudgetExceeded {
                 actual: total_verify_gas,
@@ -3399,7 +3439,9 @@ pub enum FrameValidationError {
     },
     #[error("frame {frame_index}: prefix frame has atomic-batch flag set")]
     AtomicBatchInPrefix { frame_index: usize },
-    #[error("frame {frame_index}: expiry verifier frame must be the first frame")]
+    #[error(
+        "frame {frame_index}: expiry verifier frame must be the first frame after the proof frames"
+    )]
     ExpiryFrameNotFirst { frame_index: usize },
     #[error("frame {frame_index}: VERIFY frame follows the validation prefix")]
     VerifyFrameAfterPrefix { frame_index: usize },
@@ -3421,7 +3463,6 @@ impl RLPEncode for FrameTransaction {
             .encode_field(&self.nonce_seq)
             .encode_field(&self.sender)
             .encode_field(&self.frames)
-            .encode_field(&self.signatures)
             .encode_field(&(self.max_fee, self.max_priority_fee_per_gas))
             .encode_field(&self.blob_versioned_hashes)
             .finish();
@@ -3440,7 +3481,6 @@ impl RLPDecode for FrameTransaction {
         let (nonce_seq, decoder) = decoder.decode_field("nonce_seq")?;
         let (sender, decoder) = decoder.decode_field("sender")?;
         let (frames, decoder) = decoder.decode_field("frames")?;
-        let (signatures, decoder) = decoder.decode_field("signatures")?;
         // Decode the nested `fees` list, `[max_fee, max_priority_fee_per_gas]`,
         // field by field rather than as one tuple. A fee wider than 256 bits is
         // rejected here, during decoding, and the field name is the only thing that
@@ -3459,7 +3499,6 @@ impl RLPDecode for FrameTransaction {
             nonce_seq,
             sender,
             frames,
-            signatures,
             max_fee,
             max_priority_fee_per_gas,
             blob_versioned_hashes,
@@ -3827,30 +3866,6 @@ mod serde_impl {
         pub data: Bytes,
     }
 
-    /// JSON shape of an EIP-8141 outer signature.
-    #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
-    #[serde(rename_all = "camelCase")]
-    pub struct SignatureEntry {
-        #[serde(with = "crate::serde_utils::u64::hex_str")]
-        pub scheme: u64,
-        pub signer: Option<Address>,
-        #[serde(with = "crate::serde_utils::bytes")]
-        pub msg: Bytes,
-        #[serde(with = "crate::serde_utils::bytes")]
-        pub signature: Bytes,
-    }
-
-    impl From<&FrameSignature> for SignatureEntry {
-        fn from(value: &FrameSignature) -> SignatureEntry {
-            SignatureEntry {
-                scheme: value.scheme as u64,
-                signer: value.signer,
-                msg: value.msg.clone(),
-                signature: value.signature.clone(),
-            }
-        }
-    }
-
     fn serialize_u256_hex<S: serde::Serializer>(value: &U256, s: S) -> Result<S::Ok, S::Error> {
         s.serialize_str(&format!("{value:#x}"))
     }
@@ -4149,7 +4164,7 @@ mod serde_impl {
         where
             S: serde::Serializer,
         {
-            let mut s = serializer.serialize_struct("FrameTransaction", 10)?;
+            let mut s = serializer.serialize_struct("FrameTransaction", 9)?;
             s.serialize_field("type", &TxType::Frame)?;
             s.serialize_field("chainId", &format!("{:#x}", self.chain_id))?;
             // EIP-8250, named as in the execution-apis frame transaction schema:
@@ -4168,14 +4183,6 @@ mod serde_impl {
             s.serialize_field(
                 "frames",
                 &self.frames.iter().map(FrameEntry::from).collect::<Vec<_>>(),
-            )?;
-            s.serialize_field(
-                "signatures",
-                &self
-                    .signatures
-                    .iter()
-                    .map(SignatureEntry::from)
-                    .collect::<Vec<_>>(),
             )?;
             // EIP-8141 `fees`: one `max_fee` budget for all execution, state and
             // blob gas, and the priority fee per gas.
@@ -5955,12 +5962,6 @@ mod tests {
                     data: Bytes::from_static(b"call_data"),
                 },
             ],
-            signatures: vec![FrameSignature {
-                scheme: FRAME_SIG_SCHEME_SECP256K1,
-                signer: Some(Address::from_low_u64_be(0xABCD)),
-                msg: Bytes::new(),
-                signature: Bytes::from(vec![0u8; 65]),
-            }],
             // 0.01 ETH: a budget of 30 gwei over ~330k gas.
             max_fee: U256::from(10_000_000_000_000_000u64),
             max_priority_fee_per_gas: U256::from(1_000_000_000u64),
@@ -6206,20 +6207,23 @@ mod tests {
     }
 
     #[test]
-    fn frame_transaction_serializes_signatures_as_array() {
-        // RPC must expose the full signature objects, not just a count.
-        let tx = make_test_frame_tx();
+    fn frame_transaction_serializes_proof_frames_among_its_frames() {
+        // A proof travels in its frame's data: the RPC object has no separate
+        // signature list, and the proof frame is serialized like any other frame.
+        let tx = make_test_frame_tx_with_proof();
         let json = serde_json::to_value(&tx).unwrap();
-        let sigs = json
-            .get("signatures")
-            .expect("signatures field present")
+        assert!(json.get("signatures").is_none());
+        let frames = json
+            .get("frames")
+            .expect("frames field present")
             .as_array()
-            .expect("signatures serialized as an array");
-        assert_eq!(sigs.len(), tx.signatures.len());
-        assert_eq!(sigs[0].get("scheme").unwrap(), "0x1");
-        assert!(sigs[0].get("signer").is_some());
-        assert!(sigs[0].get("signature").is_some());
-        assert!(sigs[0].get("msg").is_some());
+            .expect("frames serialized as an array");
+        assert_eq!(frames.len(), tx.frames.len());
+        assert_eq!(frames[0].get("mode").unwrap(), "0x4");
+        assert_eq!(
+            frames[0].get("data").unwrap().as_str().unwrap().len(),
+            2 + 2 * tx.frames[0].data.len()
+        );
     }
 
     fn make_frame_tx_with_gas_limits(limits: Vec<u64>) -> FrameTransaction {
@@ -6241,7 +6245,6 @@ mod tests {
             nonce_seq: 0,
             sender: Address::from_low_u64_be(0xABCD),
             frames,
-            signatures: vec![],
             max_fee: U256::from(10_000_000_000_000_000u64),
             max_priority_fee_per_gas: U256::from(1_000_000_000u64),
             blob_versioned_hashes: vec![],
@@ -6325,7 +6328,6 @@ mod tests {
             nonce_seq: 0,
             sender: Address::from_low_u64_be(0xABCD),
             frames,
-            signatures: vec![],
             max_fee: U256::from(10_000_000_000_000_000u64),
             max_priority_fee_per_gas: U256::from(1_000_000_000u64),
             blob_versioned_hashes: vec![],
@@ -6435,7 +6437,6 @@ mod tests {
                 value: U256::from(1u64),
                 data: Bytes::new(),
             }],
-            signatures: vec![],
             max_fee: U256::from(10_000_000_000_000_000u64),
             max_priority_fee_per_gas: U256::from(1_000_000_000u64),
             blob_versioned_hashes: vec![],
@@ -6624,30 +6625,53 @@ mod tests {
         assert_eq!(tx.expiry_deadline(), Some(1_700_000_123));
     }
 
-    #[test]
-    fn signature_rlp_roundtrip() {
-        let sig = FrameSignature {
-            scheme: FRAME_SIG_SCHEME_P256,
-            signer: Some(Address::from_low_u64_be(0x1234)),
-            msg: Bytes::from(vec![7u8; 32]),
-            signature: Bytes::from(vec![9u8; 128]),
-        };
-        let mut buf = Vec::new();
-        sig.encode(&mut buf);
-        let (decoded, rest) = FrameSignature::decode_unfinished(&buf).unwrap();
-        assert!(rest.is_empty());
-        assert_eq!(decoded, sig);
+    /// A proof frame claiming that the key `0xABCD` authorizes the canonical
+    /// signature hash, with a 65-byte proof for the secp256k1 verifier.
+    fn make_test_proof_frame() -> Frame {
+        let mut data = vec![0u8; 12];
+        data.extend_from_slice(Address::from_low_u64_be(0xABCD).as_bytes());
+        data.extend_from_slice(&[0u8; 32]);
+        data.extend_from_slice(&[0x01u8; 65]);
+        Frame {
+            mode: FrameMode::Proof as u8,
+            flags: 0,
+            target: Some(FRAME_TX_SECP256K1_VERIFIER),
+            gas_limit: 3_100,
+            state_gas_limit: 0,
+            value: U256::zero(),
+            data: Bytes::from(data),
+        }
+    }
+
+    /// `make_test_frame_tx` behind a leading proof frame.
+    fn make_test_frame_tx_with_proof() -> FrameTransaction {
+        let mut tx = make_test_frame_tx();
+        tx.frames.insert(0, make_test_proof_frame());
+        tx
+    }
+
+    /// Replace the `msg` of the proof frame at index 0.
+    fn set_proof_msg(tx: &mut FrameTransaction, msg: [u8; 32]) {
+        let mut data = tx.frames[0].data.to_vec();
+        data[32..64].copy_from_slice(&msg);
+        tx.frames[0].data = Bytes::from(data);
+    }
+
+    /// Replace the proof of the proof frame at index 0.
+    fn set_proof(tx: &mut FrameTransaction, proof: &[u8]) {
+        let mut data = tx.frames[0].proof_claim().to_vec();
+        data.extend_from_slice(proof);
+        tx.frames[0].data = Bytes::from(data);
     }
 
     #[test]
-    fn frame_tx_with_signatures_rlp_roundtrip() {
-        let tx = make_test_frame_tx();
-        assert!(!tx.signatures.is_empty());
+    fn frame_tx_with_proof_frame_rlp_roundtrip() {
+        let tx = make_test_frame_tx_with_proof();
+        assert_eq!(tx.proof_frame_count(), 1);
         let mut buf = Vec::new();
         tx.encode(&mut buf);
         let (decoded, rest) = FrameTransaction::decode_unfinished(&buf).unwrap();
         assert!(rest.is_empty());
-        assert_eq!(decoded.signatures, tx.signatures);
         assert_eq!(decoded.frames, tx.frames);
         assert_eq!(decoded.nonce_keys, tx.nonce_keys);
         assert_eq!(decoded.nonce_seq, tx.nonce_seq);
@@ -6657,8 +6681,7 @@ mod tests {
     fn p2p_frame_transaction_rlp_roundtrip() {
         // A frame tx (EIP-8141) must survive a full P2PTransaction RLP
         // encode/decode round-trip so it can be served over the wire on request.
-        let ft = make_test_frame_tx();
-        assert!(!ft.signatures.is_empty());
+        let ft = make_test_frame_tx_with_proof();
         assert!(!ft.frames.is_empty());
         let original = P2PTransaction::FrameTransaction(ft);
 
@@ -6675,69 +6698,197 @@ mod tests {
     }
 
     #[test]
-    fn static_validation_rejects_unknown_scheme() {
-        let mut tx = make_test_frame_tx();
-        tx.signatures[0].scheme = 3;
-        assert!(
-            tx.validate_static_constraints()
-                .unwrap_err()
-                .contains("unsupported scheme"),
+    fn proof_frame_accessors_split_the_claim_from_the_proof() {
+        let frame = make_test_proof_frame();
+        assert!(frame.is_proof());
+        assert_eq!(
+            frame.proof_key(),
+            H256::from(Address::from_low_u64_be(0xABCD))
         );
+        assert!(frame.proof_msg().is_zero());
+        assert_eq!(frame.proof_claim().len(), PROOF_CLAIM_LENGTH);
+        assert_eq!(frame.proof_bytes(), &[0x01u8; 65]);
+        assert!(!frame.commits_proof());
+        assert!(!frame.proof_is_readable());
     }
 
     #[test]
-    fn static_validation_accepts_arbitrary_with_empty_signer() {
-        let mut tx = make_test_frame_tx();
-        // ARBITRARY (scheme 0) requires an empty signer and costs 100 verify gas.
-        tx.signatures[0].scheme = FRAME_SIG_SCHEME_ARBITRARY;
-        tx.signatures[0].signer = None;
+    fn static_validation_accepts_leading_proof_frames() {
+        let mut tx = make_test_frame_tx_with_proof();
         assert!(tx.validate_static_constraints().is_ok());
-        assert_eq!(tx.signature_verification_cost(), 100);
+        // Any number of them, as long as they all come first.
+        tx.frames.insert(0, make_test_proof_frame());
+        assert!(tx.validate_static_constraints().is_ok());
+        assert_eq!(tx.proof_frame_count(), 2);
+        // Either or both proof flags, the commitment given an explicit `msg`.
+        set_proof_msg(&mut tx, [7u8; 32]);
+        for flags in [
+            PROOF_READ_FLAG,
+            PROOF_COMMIT_FLAG,
+            PROOF_COMMIT_FLAG | PROOF_READ_FLAG,
+        ] {
+            tx.frames[0].flags = flags;
+            assert!(tx.validate_static_constraints().is_ok(), "flags {flags:#x}");
+        }
     }
 
     #[test]
-    fn static_validation_rejects_arbitrary_with_signer() {
+    fn static_validation_rejects_a_proof_frame_behind_another_frame() {
         let mut tx = make_test_frame_tx();
-        tx.signatures[0].scheme = FRAME_SIG_SCHEME_ARBITRARY;
-        tx.signatures[0].signer = Some(Address::from_low_u64_be(0xABCD));
+        tx.frames.insert(1, make_test_proof_frame());
         assert!(
             tx.validate_static_constraints()
                 .unwrap_err()
-                .contains("ARBITRARY signatures must not name a signer"),
+                .contains("proof frames must precede every other frame"),
         );
     }
 
     #[test]
-    fn static_validation_rejects_bad_msg_length() {
-        let mut tx = make_test_frame_tx();
-        tx.signatures[0].msg = Bytes::from(vec![1u8; 16]);
+    fn static_validation_rejects_a_proof_frame_with_state_gas() {
+        let mut tx = make_test_frame_tx_with_proof();
+        tx.frames[0].state_gas_limit = 1;
         assert!(
             tx.validate_static_constraints()
                 .unwrap_err()
-                .contains("32 bytes"),
+                .contains("proof frame must have state_gas_limit == 0"),
         );
     }
 
     #[test]
-    fn static_validation_rejects_zero_explicit_msg() {
-        let mut tx = make_test_frame_tx();
-        tx.signatures[0].msg = Bytes::from(vec![0u8; 32]);
+    fn static_validation_rejects_a_proof_frame_with_value() {
+        let mut tx = make_test_frame_tx_with_proof();
+        tx.frames[0].value = U256::one();
         assert!(
             tx.validate_static_constraints()
                 .unwrap_err()
-                .contains("zero digest"),
+                .contains("non-zero value only allowed in SENDER mode"),
         );
     }
 
     #[test]
-    fn sig_hash_elides_empty_msg_signature_bytes() {
-        let mut a = make_test_frame_tx();
-        let mut b = make_test_frame_tx();
-        // empty-msg signature: changing raw bytes must NOT change the hash.
-        assert!(a.signatures[0].msg.is_empty());
-        a.signatures[0].signature = Bytes::from(vec![1u8; 65]);
-        b.signatures[0].signature = Bytes::from(vec![2u8; 65]);
+    fn static_validation_rejects_a_proof_frame_without_a_whole_claim() {
+        let mut tx = make_test_frame_tx_with_proof();
+        tx.frames[0].data = Bytes::from(vec![1u8; PROOF_CLAIM_LENGTH - 1]);
+        assert!(
+            tx.validate_static_constraints()
+                .unwrap_err()
+                .contains("must hold a 64-byte claim"),
+        );
+        // A claim with an empty proof is well formed: whether it holds is up to
+        // its verifier.
+        tx.frames[0].data = Bytes::from(vec![1u8; PROOF_CLAIM_LENGTH]);
+        assert!(tx.validate_static_constraints().is_ok());
+    }
+
+    #[test]
+    fn static_validation_rejects_a_zero_proof_key() {
+        let mut tx = make_test_frame_tx_with_proof();
+        let mut data = tx.frames[0].data.to_vec();
+        data[..32].fill(0);
+        tx.frames[0].data = Bytes::from(data);
+        assert!(
+            tx.validate_static_constraints()
+                .unwrap_err()
+                .contains("proof frame key must not be zero"),
+        );
+    }
+
+    #[test]
+    fn static_validation_rejects_a_committed_proof_over_the_signature_hash() {
+        // A proof over the canonical signature hash cannot commit to itself.
+        let mut tx = make_test_frame_tx_with_proof();
+        tx.frames[0].flags = PROOF_COMMIT_FLAG;
+        assert!(
+            tx.validate_static_constraints()
+                .unwrap_err()
+                .contains("PROOF_COMMIT_FLAG requires an explicit msg"),
+        );
+    }
+
+    #[test]
+    fn static_validation_rejects_a_flag_under_the_wrong_mode() {
+        // Approval scope and the atomic batch flag are not valid on a proof frame.
+        for flags in [APPROVE_PAYMENT, APPROVE_EXECUTION, ATOMIC_BATCH_FLAG, 0x20] {
+            let mut tx = make_test_frame_tx_with_proof();
+            tx.frames[0].flags = flags;
+            assert!(
+                tx.validate_static_constraints()
+                    .unwrap_err()
+                    .contains("reserved flag bits must be zero"),
+                "proof frame flags {flags:#x}"
+            );
+        }
+        // The proof flags are not valid on any other frame.
+        for flags in [PROOF_COMMIT_FLAG, PROOF_READ_FLAG] {
+            let mut tx = make_test_frame_tx_with_proof();
+            tx.frames[2].flags = flags;
+            assert!(
+                tx.validate_static_constraints()
+                    .unwrap_err()
+                    .contains("reserved flag bits must be zero"),
+                "sender frame flags {flags:#x}"
+            );
+        }
+    }
+
+    #[test]
+    fn sig_hash_elides_proof_bytes() {
+        // Changing a proof must not change the hash, whatever message it proves:
+        // the hash commits to the claim and to the proof's length.
+        let mut a = make_test_frame_tx_with_proof();
+        let mut b = make_test_frame_tx_with_proof();
+        set_proof(&mut a, &[1u8; 65]);
+        set_proof(&mut b, &[2u8; 65]);
         assert_eq!(a.compute_sig_hash(), b.compute_sig_hash());
+        set_proof_msg(&mut a, [9u8; 32]);
+        set_proof_msg(&mut b, [9u8; 32]);
+        assert_eq!(a.compute_sig_hash(), b.compute_sig_hash());
+    }
+
+    #[test]
+    fn sig_hash_commits_to_the_proof_length() {
+        let mut a = make_test_frame_tx_with_proof();
+        let mut b = make_test_frame_tx_with_proof();
+        set_proof(&mut a, &[1u8; 65]);
+        set_proof(&mut b, &[1u8; 66]);
+        assert_ne!(a.compute_sig_hash(), b.compute_sig_hash());
+    }
+
+    #[test]
+    fn sig_hash_covers_the_claim_and_the_flags() {
+        let base = make_test_frame_tx_with_proof();
+        let mut other_msg = base.clone();
+        set_proof_msg(&mut other_msg, [9u8; 32]);
+        assert_ne!(base.compute_sig_hash(), other_msg.compute_sig_hash());
+
+        let mut other_key = base.clone();
+        let mut data = other_key.frames[0].data.to_vec();
+        data[31] ^= 1;
+        other_key.frames[0].data = Bytes::from(data);
+        assert_ne!(base.compute_sig_hash(), other_key.compute_sig_hash());
+
+        // Setting `PROOF_READ_FLAG` changes the hash without committing to the proof.
+        let mut readable = base.clone();
+        readable.frames[0].flags = PROOF_READ_FLAG;
+        assert_ne!(base.compute_sig_hash(), readable.compute_sig_hash());
+        let mut readable_other_proof = readable.clone();
+        set_proof(&mut readable_other_proof, &[2u8; 65]);
+        assert_eq!(
+            readable.compute_sig_hash(),
+            readable_other_proof.compute_sig_hash()
+        );
+    }
+
+    #[test]
+    fn sig_hash_covers_a_committed_proof() {
+        let mut a = make_test_frame_tx_with_proof();
+        set_proof_msg(&mut a, [9u8; 32]);
+        a.frames[0].flags = PROOF_COMMIT_FLAG;
+        let mut b = a.clone();
+        set_proof(&mut a, &[1u8; 65]);
+        set_proof(&mut b, &[2u8; 65]);
+        // The commitment is to the proof's digest, so replacing it changes the hash.
+        assert_ne!(a.compute_sig_hash(), b.compute_sig_hash());
     }
 
     #[test]
@@ -6751,47 +6902,109 @@ mod tests {
     }
 
     #[test]
-    fn sig_hash_covers_explicit_msg_signature_bytes() {
-        let mut a = make_test_frame_tx();
-        let mut b = make_test_frame_tx();
-        a.signatures[0].msg = Bytes::from(vec![9u8; 32]);
-        b.signatures[0].msg = Bytes::from(vec![9u8; 32]);
-        a.signatures[0].signature = Bytes::from(vec![1u8; 65]);
-        b.signatures[0].signature = Bytes::from(vec![2u8; 65]);
-        // explicit-msg signatures keep their bytes -> different hash.
-        assert_ne!(a.compute_sig_hash(), b.compute_sig_hash());
+    fn a_proof_is_priced_by_its_length_and_its_claim_by_its_content() {
+        // The standard cost prices a proof as if all its bytes were non-zero, so
+        // the payer's charge depends only on what the signature hash covers.
+        let mut zeros = make_test_frame_tx_with_proof();
+        let mut ones = make_test_frame_tx_with_proof();
+        set_proof(&mut zeros, &[0u8; 65]);
+        set_proof(&mut ones, &[1u8; 65]);
+        assert_eq!(zeros.data_cost(), ones.data_cost());
+        assert_eq!(zeros.max_gas(), ones.max_gas());
+
+        // The claim is priced like any other data: 4 per zero byte, 16 per non-zero.
+        let without_proof_frame = make_test_frame_tx().data_cost();
+        let claim_cost = (12 + 32 + 18) * 4 + 2 * 16;
+        assert_eq!(ones.data_cost(), without_proof_frame + claim_cost + 65 * 16);
+
+        // The floor counts every byte once, the proof's included.
+        assert_eq!(
+            ones.calldata_tokens(),
+            make_test_frame_tx().calldata_tokens() + (64 + 65) * 4
+        );
     }
 
     #[test]
-    fn max_gas_includes_signature_costs() {
-        let mut tx = make_test_frame_tx();
-        let base = tx.max_gas();
-        // Add a P256 signature; cost must rise by at least 6700 + its calldata.
-        tx.signatures.push(FrameSignature {
-            scheme: FRAME_SIG_SCHEME_P256,
-            signer: Some(Address::from_low_u64_be(1)),
-            msg: Bytes::new(),
-            signature: Bytes::from(vec![0u8; 128]),
-        });
-        assert!(tx.max_gas() >= base + 6700);
-        assert_eq!(tx.signature_verification_cost(), 2800 + 6700);
+    fn a_proof_frame_adds_no_cost_beyond_a_frame() {
+        // Verification is charged through the frame's execution limit, like any
+        // other execution: the mandatory costs only grow by the per-frame cost.
+        let without = make_test_frame_tx();
+        let with = make_test_frame_tx_with_proof();
+        assert_eq!(
+            with.mandatory_gas(),
+            without.mandatory_gas() + FRAME_TX_PER_FRAME_COST
+        );
+        assert_eq!(with.proof_frames_gas(), 3_100);
+        assert_eq!(without.proof_frames_gas(), 0);
     }
 
     #[test]
-    fn golden_frame_tx_rlp_and_sig_hash() {
-        // Regression lock for the EIP-8141 wire format: the `limits = [execution,
-        // state]` frame tuple, the nested `fees` list, and the signatures list.
-        // The layout itself is pinned against reference-produced bytes by
-        // `reference_frame_tx_reencodes_byte_identically`; this test locks the
-        // exact bytes and signature hash for a transaction that exercises a
-        // non-zero state budget, and must only change with a deliberate,
-        // reviewed format change.
-        let tx = FrameTransaction {
+    fn validation_prefix_looks_past_the_proof_frames() {
+        let mut tx = make_test_frame_tx_with_proof();
+        tx.frames[1].target = None;
+        let prefix = tx.validation_prefix().unwrap();
+        assert_eq!(prefix.shape, PrefixShape::SelfVerify);
+        // The proof frame belongs to the prefix but is not one of its shape frames.
+        assert_eq!(prefix.frame_indices, vec![1]);
+
+        // Its execution limit counts toward MAX_VERIFY_GAS all the same.
+        let prefix_gas = tx.frames[0].gas_limit + tx.frames[1].gas_limit;
+        assert!(tx.validate_prefix_structure(&prefix, prefix_gas).is_ok());
+        assert_eq!(
+            tx.validate_prefix_structure(&prefix, prefix_gas - 1),
+            Err(FrameValidationError::VerifyGasBudgetExceeded {
+                actual: prefix_gas,
+                limit: prefix_gas - 1,
+            })
+        );
+    }
+
+    #[test]
+    fn expiry_verifier_frame_follows_the_proof_frames() {
+        // An expiry verifier frame may appear only as the first frame after the
+        // proof frames.
+        let mut tx = make_test_frame_tx_with_proof();
+        tx.frames[1].target = None;
+        tx.frames.insert(1, expiry_frame(1_000));
+        let prefix = tx.validation_prefix().unwrap();
+        assert_eq!(prefix.frame_indices, vec![2]);
+        assert!(
+            tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS * 10)
+                .is_ok()
+        );
+
+        let mut misplaced = make_test_frame_tx_with_proof();
+        misplaced.frames[1].target = None;
+        misplaced.frames.insert(3, expiry_frame(1_000));
+        let prefix = misplaced.validation_prefix().unwrap();
+        assert_eq!(
+            misplaced.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS * 10),
+            Err(FrameValidationError::ExpiryFrameNotFirst { frame_index: 3 })
+        );
+    }
+
+    /// The transaction the golden values below were derived for, independently of
+    /// this crate, from the pseudocode of EIP-8141.
+    fn golden_frame_tx(proof_flags: u8, msg: [u8; 32], proof: &[u8]) -> FrameTransaction {
+        let mut proof_data = vec![0u8; 12];
+        proof_data.extend_from_slice(Address::from_low_u64_be(0xABCD).as_bytes());
+        proof_data.extend_from_slice(&msg);
+        proof_data.extend_from_slice(proof);
+        FrameTransaction {
             chain_id: 1,
             nonce_keys: vec![U256::zero()],
             nonce_seq: 7,
             sender: Address::from_low_u64_be(0xABCD),
             frames: vec![
+                Frame {
+                    mode: 4,
+                    flags: proof_flags,
+                    target: Some(FRAME_TX_SECP256K1_VERIFIER),
+                    gas_limit: 3_100,
+                    state_gas_limit: 0,
+                    value: U256::zero(),
+                    data: Bytes::from(proof_data),
+                },
                 Frame {
                     mode: 1,
                     flags: 3,
@@ -6799,7 +7012,7 @@ mod tests {
                     gas_limit: 0x5208,
                     state_gas_limit: 0x1e8480,
                     value: U256::zero(),
-                    data: Bytes::from_static(&[0x11, 0x22]),
+                    data: Bytes::from_static(&[0x00]),
                 },
                 Frame {
                     mode: 2,
@@ -6811,28 +7024,31 @@ mod tests {
                     data: Bytes::new(),
                 },
             ],
-            signatures: vec![FrameSignature {
-                scheme: FRAME_SIG_SCHEME_SECP256K1,
-                signer: Some(Address::from_low_u64_be(0xABCD)),
-                msg: Bytes::new(),
-                signature: Bytes::from(vec![0x01u8; 65]),
-            }],
             max_fee: U256::from(0x6fc23ac00u64),
             max_priority_fee_per_gas: U256::from(0x3b9aca00u64),
             blob_versioned_hashes: vec![],
             inner_hash: OnceCell::new(),
             cached_canonical: OnceCell::new(),
-        };
+        }
+    }
+
+    #[test]
+    fn golden_frame_tx_rlp_and_sig_hash() {
+        // Regression lock for the EIP-8141 wire format: the `limits = [execution,
+        // state]` frame tuple, the nested `fees` list, no signature list, and a
+        // proof frame carrying its claim and proof in its data. The bytes and the
+        // hashes were computed outside this crate with a few lines of Python
+        // written from the EIP's pseudocode, and must only change with a
+        // deliberate, reviewed format change.
+        let tx = golden_frame_tx(0, [0u8; 32], &[0x01u8; 65]);
 
         let mut buf = Vec::new();
         tx.encode(&mut buf);
-        let rlp_hex = hex::encode(&buf);
         // GOLDEN_RLP: EIP-8250 layout, `nonce_keys = [0]` (`c180`) then `nonce_seq`,
-        // and `fees = [max_fee, max_priority_fee_per_gas]`. Computed with the
-        // execution-specs Bogota frame transaction.
+        // the three frames, and `fees = [max_fee, max_priority_fee_per_gas]`.
         assert_eq!(
-            rlp_hex,
-            "f8b401c1800794000000000000000000000000000000000000abcdefcf010380c7825208831e848080821122de0280940000000000000000000000000000000000001234c4829c40808080f85cf85a0194000000000000000000000000000000000000abcd80b8410101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101cb8506fc23ac00843b9aca00c0"
+            hex::encode(&buf),
+            "f8f701c1800794000000000000000000000000000000000000abcdf8cff8a00480940000000000000000000000000000000000000012c4820c1c8080b881000000000000000000000000000000000000000000000000000000000000abcd00000000000000000000000000000000000000000000000000000000000000000101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101cd010380c7825208831e84808000de0280940000000000000000000000000000000000001234c4829c40808080cb8506fc23ac00843b9aca00c0"
         );
 
         // Round-trips losslessly.
@@ -6840,29 +7056,48 @@ mod tests {
         assert!(rest.is_empty());
         assert_eq!(decoded, tx);
 
-        let sig_hash = tx.compute_sig_hash();
-        // GOLDEN_SIG_HASH: computed with the execution-specs Bogota frame
-        // transaction, which replaces the empty-msg signature by its length.
+        // GOLDEN_SIG_HASH: the proof frame's data is replaced by the list
+        // `[claim, len(proof)]`.
         assert_eq!(
-            format!("{:#x}", sig_hash),
-            "0x333553372a297d192dfe71c852fd03b83823647cd4f7c813f3bc21c252edc7ec",
+            format!("{:#x}", tx.compute_sig_hash()),
+            "0xe1b313810031f80b44727870a534e350b5f79507b403a8dda4b50ecff21e1b56",
         );
-
-        // Elision invariant: changing empty-msg signature bytes must NOT change sig_hash.
-        let mut tx2 = tx.clone();
-        tx2.signatures[0].signature = Bytes::from(vec![0x02u8; 65]);
+        // Elision invariant: other proof bytes of the same length, same hash.
         assert_eq!(
+            golden_frame_tx(0, [0u8; 32], &[0x02u8; 65]).compute_sig_hash(),
             tx.compute_sig_hash(),
-            tx2.compute_sig_hash(),
-            "sig_hash must be independent of empty-msg signature bytes",
+            "sig_hash must be independent of the proof bytes",
         );
-
         // ...but it commits to their length, which fixes what the payer is charged.
-        let mut tx3 = tx.clone();
-        tx3.signatures[0].signature = Bytes::from(vec![0x01u8; 66]);
         assert_eq!(
-            format!("{:#x}", tx3.compute_sig_hash()),
-            "0x10ec6d45726bafe828f1d303cd8b6f2ff1bcb5a133ca00bfa67de4b018c925c9",
+            format!(
+                "{:#x}",
+                golden_frame_tx(0, [0u8; 32], &[0x01u8; 66]).compute_sig_hash()
+            ),
+            "0xed4ba6e3b27ce0083ce551c86849ed583d8b5ad8eb932442cb7893130f5ee181",
+        );
+        // The flags are covered unchanged.
+        assert_eq!(
+            format!(
+                "{:#x}",
+                golden_frame_tx(PROOF_READ_FLAG, [0u8; 32], &[0x01u8; 65]).compute_sig_hash()
+            ),
+            "0xcad4a2e9871aec54afb7ab114d9afa2d292448355b5f217e02934fcda66c7679",
+        );
+        // A committed proof adds its keccak256 digest to the list.
+        assert_eq!(
+            format!(
+                "{:#x}",
+                golden_frame_tx(PROOF_COMMIT_FLAG, [0x09u8; 32], &[0x01u8; 65]).compute_sig_hash()
+            ),
+            "0xf9fd18ebbac494f80ae3291eadf6776ff5ab662d9dadebd67afe041bac977328",
+        );
+        assert_eq!(
+            format!(
+                "{:#x}",
+                golden_frame_tx(PROOF_COMMIT_FLAG, [0x09u8; 32], &[0x02u8; 65]).compute_sig_hash()
+            ),
+            "0xa2d7751d31ea575d4e0154e578cf0d7cde7b11bfdb071ea5dfa0248b0f17b6fc",
         );
     }
 

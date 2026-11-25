@@ -3374,6 +3374,7 @@ dependencies = [
  "hex-literal",
  "k256 0.13.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "kzg-rs",
+ "lean_sphincs",
  "malachite",
  "num-bigint 0.4.6",
  "p256",
@@ -5309,6 +5310,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "keccak256"
+version = "0.1.0"
+source = "git+https://github.com/leanEthereum/leanVM?rev=92a97c919b2f2d6fe09853090b6b23f781ecec07#92a97c919b2f2d6fe09853090b6b23f781ecec07"
+
+[[package]]
 name = "kzg-rs"
 version = "0.2.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5381,6 +5387,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 dependencies = [
  "spin",
+]
+
+[[package]]
+name = "lean_sphincs"
+version = "0.1.0"
+source = "git+https://github.com/leanEthereum/leanVM?rev=92a97c919b2f2d6fe09853090b6b23f781ecec07#92a97c919b2f2d6fe09853090b6b23f781ecec07"
+dependencies = [
+ "keccak256",
 ]
 
 [[package]]

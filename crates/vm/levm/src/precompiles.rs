@@ -28,6 +28,8 @@ pub const BLAKE2F_ELEMENT_SIZE: usize = 8;
 pub const SIZE_PRECOMPILES_PRE_CANCUN: u64 = 9;
 pub const SIZE_PRECOMPILES_CANCUN: u64 = 10;
 pub const SIZE_PRECOMPILES_PRAGUE: u64 = 17;
+/// Hegota adds the three EIP-8141 verifier precompiles at `0x12..=0x14`.
+pub const SIZE_PRECOMPILES_HEGOTA: u64 = 20;
 
 pub const BLS12_381_G1_MSM_PAIR_LENGTH: usize = 160;
 pub const BLS12_381_G2_MSM_PAIR_LENGTH: usize = 288;
@@ -246,7 +248,29 @@ pub const EXECUTE: Precompile = Precompile {
     active_since_fork: LStar,
 };
 
-pub const PRECOMPILES: [Precompile; 18] = [
+/// EIP-8141 `SECP256K1_VERIFIER`: verifies a claim proved by a secp256k1 signature.
+pub const SECP256K1_VERIFIER: Precompile = Precompile {
+    address: ethrex_common::types::FRAME_TX_SECP256K1_VERIFIER,
+    name: "SECP256K1_VERIFIER",
+    active_since_fork: Hegota,
+};
+
+/// EIP-8141 `P256_VERIFIER`: verifies a claim proved by a P-256 signature.
+pub const P256_VERIFIER: Precompile = Precompile {
+    address: ethrex_common::types::FRAME_TX_P256_VERIFIER,
+    name: "P256_VERIFIER",
+    active_since_fork: Hegota,
+};
+
+/// EIP-8141 `LEANSPHINCS_VERIFIER`: verifies a claim proved by a leanSPHINCS
+/// signature.
+pub const LEANSPHINCS_VERIFIER: Precompile = Precompile {
+    address: ethrex_common::types::FRAME_TX_LEANSPHINCS_VERIFIER,
+    name: "LEANSPHINCS_VERIFIER",
+    active_since_fork: Hegota,
+};
+
+pub const PRECOMPILES: [Precompile; 21] = [
     ECRECOVER,
     SHA2_256,
     RIPEMD_160,
@@ -265,6 +289,9 @@ pub const PRECOMPILES: [Precompile; 18] = [
     BLS12_MAP_FP_TO_G1,
     BLS12_MAP_FP2_TO_G2,
     P256VERIFY,
+    SECP256K1_VERIFIER,
+    P256_VERIFIER,
+    LEANSPHINCS_VERIFIER,
 ];
 
 pub fn precompiles_for_fork(fork: Fork) -> impl Iterator<Item = Precompile> {
@@ -478,6 +505,11 @@ pub fn execute_precompile(
         precompiles
             [u16::from_be_bytes([P256VERIFY.address.0[18], P256VERIFY.address.0[19]]) as usize] =
             Some(p_256_verify as PrecompileFn);
+        precompiles[SECP256K1_VERIFIER.address.0[19] as usize] =
+            Some(secp256k1_verifier as PrecompileFn);
+        precompiles[P256_VERIFIER.address.0[19] as usize] = Some(p256_verifier as PrecompileFn);
+        precompiles[LEANSPHINCS_VERIFIER.address.0[19] as usize] =
+            Some(leansphincs_verifier as PrecompileFn);
         precompiles
     };
 
@@ -1200,6 +1232,191 @@ pub fn p_256_verify(
     } else {
         Ok(Bytes::new())
     }
+}
+
+/// secp256k1 group order `n`.
+const SECP256K1_N: [u8; 32] = [
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfe,
+    0xba, 0xae, 0xdc, 0xe6, 0xaf, 0x48, 0xa0, 0x3b, 0xbf, 0xd2, 0x5e, 0x8c, 0xd0, 0x36, 0x41, 0x41,
+];
+/// secp256k1 `n / 2`.
+const SECP256K1_N_HALF: [u8; 32] = [
+    0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0x5d, 0x57, 0x6e, 0x73, 0x57, 0xa4, 0x50, 0x1d, 0xdf, 0xe9, 0x2f, 0x46, 0x68, 0x1b, 0x20, 0xa0,
+];
+/// P-256 (secp256r1) group order `n`.
+const SECP256R1_N: [u8; 32] = [
+    0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xbc, 0xe6, 0xfa, 0xad, 0xa7, 0x17, 0x9e, 0x84, 0xf3, 0xb9, 0xca, 0xc2, 0xfc, 0x63, 0x25, 0x51,
+];
+/// P-256 (secp256r1) `n / 2`.
+const SECP256R1_N_HALF: [u8; 32] = [
+    0x7f, 0xff, 0xff, 0xff, 0x80, 0x00, 0x00, 0x00, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xde, 0x73, 0x7d, 0x56, 0xd3, 0x8b, 0xcf, 0x42, 0x79, 0xdc, 0xe5, 0x61, 0x7e, 0x31, 0x92, 0xa8,
+];
+
+/// True when the big-endian 32-byte scalar is in `(0, upper)`.
+fn scalar_below(scalar: &[u8], upper: &[u8; 32]) -> bool {
+    scalar.iter().any(|&b| b != 0) && scalar < &upper[..]
+}
+
+/// True when the big-endian 32-byte scalar is in `(0, upper]`.
+fn scalar_at_most(scalar: &[u8], upper: &[u8; 32]) -> bool {
+    scalar.iter().any(|&b| b != 0) && scalar <= &upper[..]
+}
+
+/// The 32-byte word 1 a verifier precompile returns when the claim holds. It lets
+/// EVM code that calls one tell its success from a call to an address without code.
+const VERIFIER_SUCCESS: [u8; 32] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+];
+
+/// Whether `key` is `address` left-padded to 32 bytes.
+fn key_is_address(key: &[u8], address: &[u8]) -> bool {
+    key.len() == 32
+        && address.len() == 20
+        && key.iter().take(12).all(|&b| b == 0)
+        && key.get(12..) == Some(address)
+}
+
+/// EIP-8141 `SECP256K1_VERIFIER`.
+///
+/// Input: `key (32 bytes) || msg (32 bytes) || v (1 byte) || r (32 bytes) || s (32
+/// bytes)`, where `key` is the signer's address left-padded to 32 bytes. Returns
+/// the word 1 if the signature is a canonical one of `msg` by `key`: `v` is the
+/// bare recovery id (0 or 1), `0 < r < n` and `0 < s <= n / 2`, so each signature
+/// has one encoding.
+///
+/// Like every verifier precompile it requires its gas cost on every input. A call
+/// that succeeds consumes exactly that cost, and a call that fails, because it is
+/// given less gas, its input is malformed or the signature is invalid, consumes
+/// all the gas given to it, which is what returning an error does.
+pub fn secp256k1_verifier(
+    calldata: &Bytes,
+    gas_remaining: &mut u64,
+    _fork: Fork,
+    crypto: &dyn Crypto,
+) -> Result<Bytes, VMError> {
+    increase_precompile_consumed_gas(ethrex_common::types::SECP256K1_VERIFIER_GAS, gas_remaining)?;
+
+    if calldata.len() != 129 {
+        return Err(PrecompileError::InvalidClaim.into());
+    }
+    #[expect(clippy::indexing_slicing, reason = "length checked")]
+    let (key, msg, v, r, s) = (
+        &calldata[0..32],
+        &calldata[32..64],
+        calldata[64],
+        &calldata[65..97],
+        &calldata[97..129],
+    );
+    if v > 1 || !scalar_below(r, &SECP256K1_N) || !scalar_at_most(s, &SECP256K1_N_HALF) {
+        return Err(PrecompileError::InvalidClaim.into());
+    }
+
+    let msg: [u8; 32] = msg.try_into().map_err(|_| InternalError::TypeConversion)?;
+    let mut signature = [0u8; 64];
+    signature[..32].copy_from_slice(r);
+    signature[32..].copy_from_slice(s);
+    let Ok(public_key_hash) = crypto.secp256k1_ecrecover(&signature, v, &msg) else {
+        return Err(PrecompileError::InvalidClaim.into());
+    };
+    // The signer's address is the last 20 bytes of the hash of its public key.
+    if !key_is_address(key, &public_key_hash[12..32]) {
+        return Err(PrecompileError::InvalidClaim.into());
+    }
+
+    Ok(Bytes::from_static(&VERIFIER_SUCCESS))
+}
+
+/// EIP-8141 `P256_VERIFIER`.
+///
+/// Input: `key (32 bytes) || msg (32 bytes) || r || s || qx || qy` (32 bytes
+/// each), where `key` is the public key's address, `keccak256(qx || qy)[12:]`,
+/// left-padded to 32 bytes. Returns the word 1 if the signature is a canonical one
+/// of `msg` under that public key (`0 < r < n`, `0 < s <= n / 2`). `P256VERIFY`
+/// itself accepts a high `s`, so a signer that produces one normalizes it first.
+/// Gas is consumed as for [`secp256k1_verifier`].
+pub fn p256_verifier(
+    calldata: &Bytes,
+    gas_remaining: &mut u64,
+    _fork: Fork,
+    crypto: &dyn Crypto,
+) -> Result<Bytes, VMError> {
+    increase_precompile_consumed_gas(ethrex_common::types::P256_VERIFIER_GAS, gas_remaining)?;
+
+    if calldata.len() != 192 {
+        return Err(PrecompileError::InvalidClaim.into());
+    }
+    #[expect(clippy::indexing_slicing, reason = "length checked")]
+    let (key, msg, r, s, public_key) = (
+        &calldata[0..32],
+        &calldata[32..64],
+        &calldata[64..96],
+        &calldata[96..128],
+        &calldata[128..192],
+    );
+    if !scalar_below(r, &SECP256R1_N) || !scalar_at_most(s, &SECP256R1_N_HALF) {
+        return Err(PrecompileError::InvalidClaim.into());
+    }
+    let public_key_hash = ethrex_crypto::keccak::keccak_hash(public_key);
+    if !key_is_address(key, &public_key_hash[12..32]) {
+        return Err(PrecompileError::InvalidClaim.into());
+    }
+
+    let msg: [u8; 32] = msg.try_into().map_err(|_| InternalError::TypeConversion)?;
+    let mut signature = [0u8; 64];
+    signature[..32].copy_from_slice(r);
+    signature[32..].copy_from_slice(s);
+    let public_key: [u8; 64] = public_key
+        .try_into()
+        .map_err(|_| InternalError::TypeConversion)?;
+    if !crypto.secp256r1_verify(&msg, &signature, &public_key) {
+        return Err(PrecompileError::InvalidClaim.into());
+    }
+
+    Ok(Bytes::from_static(&VERIFIER_SUCCESS))
+}
+
+/// Length of the input of [`leansphincs_verifier`]: the 64-byte claim followed by
+/// a 7740-byte signature.
+pub const LEANSPHINCS_VERIFIER_INPUT_LENGTH: usize = 7804;
+
+/// EIP-8141 `LEANSPHINCS_VERIFIER`.
+///
+/// Input: `key (32 bytes) || msg (32 bytes) || signature (7740 bytes)`, where
+/// `key` is the leanSPHINCS public key itself, its 16-byte `PK.seed` followed by
+/// its 16-byte `PK.root`. Returns the word 1 if `signature` is a valid signature of
+/// `msg` under `key`. Gas is consumed as for [`secp256k1_verifier`].
+///
+/// The verifier is linked only into native builds (the `leansphincs` feature). A
+/// build without it, such as a zkVM guest, fails every call, so it never vouches
+/// for a signature it did not check.
+pub fn leansphincs_verifier(
+    calldata: &Bytes,
+    gas_remaining: &mut u64,
+    _fork: Fork,
+    _crypto: &dyn Crypto,
+) -> Result<Bytes, VMError> {
+    increase_precompile_consumed_gas(
+        ethrex_common::types::LEANSPHINCS_VERIFIER_GAS,
+        gas_remaining,
+    )?;
+
+    if calldata.len() != LEANSPHINCS_VERIFIER_INPUT_LENGTH {
+        return Err(PrecompileError::InvalidClaim.into());
+    }
+    #[cfg(feature = "leansphincs")]
+    {
+        #[expect(clippy::indexing_slicing, reason = "length checked")]
+        let (key, msg, signature) = (&calldata[0..32], &calldata[32..64], &calldata[64..]);
+        let key: &[u8; 32] = key.try_into().map_err(|_| InternalError::TypeConversion)?;
+        let msg: &[u8; 32] = msg.try_into().map_err(|_| InternalError::TypeConversion)?;
+        if ethrex_crypto::leansphincs::leansphincs_verify(key, msg, signature) {
+            return Ok(Bytes::from_static(&VERIFIER_SUCCESS));
+        }
+    }
+    Err(PrecompileError::InvalidClaim.into())
 }
 
 /// Parse a 64-byte padded BLS12-381 field element into a 48-byte unpadded element.
