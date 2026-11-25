@@ -460,14 +460,20 @@ impl ContactTable {
         self.connected.remove(node_id);
     }
 
-    /// How far along the consumer is towards the connection count it wants.
-    /// Feeds the lookup interval: a node with no peers looks hard, a full one
-    /// coasts.
+    /// How far along the consumer is towards the connection count it wants, in
+    /// `0.0..=1.0`. Feeds the lookup interval: a node with no peers looks hard, a
+    /// full one coasts.
+    ///
+    /// Saturates at 1.0. Nothing stops a consumer from reporting more connections
+    /// than its target (one without a connection cap of its own, say), and the
+    /// easing curve in `lookup_interval_function` is only meant for that range:
+    /// past 1 it keeps climbing, to about five times the interval's upper limit at
+    /// twice the target and over a hundred times at four.
     pub fn peer_completion(&self) -> f64 {
         if self.target_peers == 0 {
             return 1.0;
         }
-        self.connected.len() as f64 / self.target_peers as f64
+        (self.connected.len() as f64 / self.target_peers as f64).min(1.0)
     }
 
     /// Backdates the last use of every stored session by `by`, so a test can drive the
@@ -1642,6 +1648,21 @@ mod tests {
 
         // `table_with` targets 10 peers.
         assert_eq!(table.peer_completion(), 0.5);
+    }
+
+    #[test]
+    fn peer_completion_saturates_at_one() {
+        // A consumer with no connection cap of its own can report more peers than
+        // it asked for. The lookup-interval curve extrapolates past 1, so an
+        // unclamped ratio would push the next lookup well beyond the upper limit.
+        let mut table = table_with(FixedAnswer(true));
+
+        // `table_with` targets 10 peers.
+        for seed in 0..15u64 {
+            table.mark_connected(H256::from_low_u64_be(seed + 1));
+        }
+
+        assert_eq!(table.peer_completion(), 1.0);
     }
 
     #[test]
