@@ -668,6 +668,7 @@ impl From<Transaction> for FrameTransaction {
                 .map(|s| FrameSignature {
                     scheme: s.scheme.try_into().unwrap(),
                     signer: s.signer,
+                    signer_key: None,
                     msg: s.msg,
                     signature: s.signature,
                 })

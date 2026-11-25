@@ -471,6 +471,7 @@ fn prefix_rejection_gas_budget_exceeded() {
     tx.signatures = vec![FrameSignature {
         scheme: FRAME_SIG_SCHEME_SECP256K1,
         signer: Some(sender_addr()),
+        signer_key: None,
         msg: Bytes::new(),
         signature: Bytes::from(vec![0u8; 65]),
     }];
@@ -484,111 +485,51 @@ fn prefix_rejection_gas_budget_exceeded() {
 }
 
 // ---------------------------------------------------------------------------
-// EIP-8504: proof frames and the validation prefix
+// LEANSPHINCS signature entries and the validation prefix
 // ---------------------------------------------------------------------------
 
-/// A proof frame declaring `triples` dependencies on the transaction's own
-/// signature hash, each under a different key.
-fn proof_frame(triples: usize) -> Frame {
-    use ethrex_common::types::{
-        LEANSPHINCS_SCHEME, LEANSPHINCS_VERIFICATION_GAS, PROOF_FRAME_MODE,
-    };
-    let mut data = Vec::new();
-    for key in 0..triples {
-        data.extend_from_slice(&[0u8; 31]);
-        data.push(LEANSPHINCS_SCHEME);
-        data.extend_from_slice(&[0u8; 32]);
-        data.extend_from_slice(H256::from_low_u64_be(key as u64 + 1).as_bytes());
-    }
-    Frame {
-        mode: PROOF_FRAME_MODE,
-        flags: 0,
-        target: None,
-        gas_limit: triples as u64 * LEANSPHINCS_VERIFICATION_GAS,
-        state_gas_limit: 0,
-        value: U256::zero(),
-        data: Bytes::from(data),
-    }
+/// `count` signature list entries, each declaring a dependency on the
+/// transaction's own signature hash under a different key.
+fn leansphincs_entries(count: usize) -> Vec<FrameSignature> {
+    (0..count)
+        .map(|key| FrameSignature {
+            scheme: ethrex_common::types::FRAME_SIG_SCHEME_LEANSPHINCS,
+            signer: None,
+            signer_key: Some(H256::from_low_u64_be(key as u64 + 1)),
+            msg: Bytes::new(),
+            signature: Bytes::new(),
+        })
+        .collect()
 }
 
 #[test]
-fn proof_frames_are_skipped_when_matching_the_validation_prefix() {
-    // [proof, self_verify] is recognized as [self_verify].
-    let tx = base_frame_tx_with_frames(vec![proof_frame(1), self_verify_frame()]);
-    let prefix = tx.validation_prefix().expect("recognized");
-    assert_eq!(prefix.shape, PrefixShape::SelfVerify);
-    assert_eq!(prefix.frame_indices, vec![1]);
-    tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
-        .expect("the structure is valid");
-
-    // [only_verify, proof, pay] is recognized as [only_verify, pay].
-    let tx = base_frame_tx_with_frames(vec![only_verify_frame(), proof_frame(2), pay_frame()]);
+fn leansphincs_entries_leave_the_validation_prefix_as_it_is() {
+    // The declarations are not frames, so the prefix is matched as written.
+    let mut tx = base_frame_tx_with_frames(vec![only_verify_frame(), pay_frame()]);
+    tx.signatures = leansphincs_entries(2);
     let prefix = tx.validation_prefix().expect("recognized");
     assert_eq!(prefix.shape, PrefixShape::OnlyVerifyPay);
-    assert_eq!(prefix.frame_indices, vec![0, 2]);
+    assert_eq!(prefix.frame_indices, vec![0, 1]);
     tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
         .expect("the structure is valid");
-
-    // [deploy, proof, self_verify]: the deploy frame is still the first of the prefix.
-    let tx = base_frame_tx_with_frames(vec![deploy_frame(), proof_frame(1), self_verify_frame()]);
-    let prefix = tx.validation_prefix().expect("recognized");
-    assert_eq!(prefix.shape, PrefixShape::DeploySelfVerify);
-    assert_eq!(prefix.frame_indices, vec![0, 2]);
-    tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
-        .expect("the structure is valid");
-
-    // A proof frame after the prefix changes nothing either.
-    let tx = base_frame_tx_with_frames(vec![self_verify_frame(), proof_frame(1)]);
-    let prefix = tx.validation_prefix().expect("recognized");
-    assert_eq!(prefix.frame_indices, vec![0]);
-    tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
-        .expect("the structure is valid");
+    assert_eq!(tx.dependencies().len(), 2);
 }
 
 #[test]
-fn proof_frames_are_skipped_by_the_expiry_frame_position_rule() {
-    // [proof, expiry_verify, self_verify] is recognized as [self_verify]: the
-    // expiry frame is first among the frames that are not proof frames.
-    let tx = base_frame_tx_with_frames(vec![
-        proof_frame(1),
-        expiry_verifier_frame(),
-        self_verify_frame(),
-    ]);
-    let prefix = tx.validation_prefix().expect("recognized");
-    assert_eq!(prefix.shape, PrefixShape::SelfVerify);
-    assert_eq!(prefix.frame_indices, vec![2]);
-    tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
-        .expect("the expiry frame counts as first");
-
-    // An expiry frame behind another frame is still misplaced.
-    let tx = base_frame_tx_with_frames(vec![
-        proof_frame(1),
-        self_verify_frame(),
-        expiry_verifier_frame(),
-    ]);
-    let prefix = tx.validation_prefix().expect("recognized");
-    assert_eq!(
-        tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
-            .unwrap_err(),
-        FrameValidationError::ExpiryFrameNotFirst { frame_index: 2 }
-    );
-}
-
-#[test]
-fn proof_frame_gas_stays_out_of_the_validation_budget() {
-    // The self_verify frame takes the whole budget. Sixteen dependencies declare
-    // 48,000 gas more in a proof frame that sits inside the prefix, and the
-    // structure is still within MAX_VERIFY_GAS.
+fn leansphincs_entries_count_toward_the_validation_budget() {
+    use ethrex_common::types::LEANSPHINCS_VERIFICATION_GAS;
+    // Like any signature, each entry counts through its verification cost: with
+    // sixteen of them the self_verify frame can take what is left of the budget
+    // and nothing more.
     let mut verify = self_verify_frame();
-    verify.gas_limit = FRAME_TX_MAX_VERIFY_GAS;
-    let mut tx = base_frame_tx_with_frames(vec![proof_frame(16), verify]);
-    tx.signatures = Vec::new();
+    verify.gas_limit = FRAME_TX_MAX_VERIFY_GAS - 16 * LEANSPHINCS_VERIFICATION_GAS;
+    let mut tx = base_frame_tx_with_frames(vec![verify]);
+    tx.signatures = leansphincs_entries(16);
     let prefix = tx.validation_prefix().expect("recognized");
     tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
-        .expect("the proof frame's gas is not validation work");
+        .expect("exactly the budget");
 
-    // One more unit of gas on the validation frame does exceed it.
-    tx.frames[1].gas_limit += 1;
+    tx.frames[0].gas_limit += 1;
     let prefix = tx.validation_prefix().expect("recognized");
     assert!(matches!(
         tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
@@ -632,6 +573,7 @@ fn make_test_frame_tx() -> FrameTransaction {
         signatures: vec![FrameSignature {
             scheme: FRAME_SIG_SCHEME_SECP256K1,
             signer: Some(Address::from_low_u64_be(0xABCD)),
+            signer_key: None,
             msg: Bytes::new(),
             signature: Bytes::from(vec![0u8; 65]),
         }],
@@ -902,6 +844,7 @@ fn data_cost_covers_frame_signature_and_nonce_data() {
     tx.signatures = vec![FrameSignature {
         scheme: FRAME_SIG_SCHEME_ARBITRARY,
         signer: None, // empty signer contributes nothing
+        signer_key: None,
         msg: Bytes::new(),
         // The signature hash commits only to the length of an empty-msg signature,
         // so its bytes are priced as if all non-zero: 16 + 16, not 16 + 4.

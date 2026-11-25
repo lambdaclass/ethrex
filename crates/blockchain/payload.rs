@@ -1274,7 +1274,7 @@ impl Blockchain {
         let Transaction::FrameTransaction(frame_tx) = tx else {
             return Ok(Vec::new());
         };
-        if !frame_tx.has_proof_frames() {
+        if !frame_tx.has_dependencies() {
             return Ok(Vec::new());
         }
         let dependencies = frame_tx.dependencies();

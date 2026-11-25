@@ -74,10 +74,10 @@ Commands:
 
 - **Accounts.** The key of account `i` is `keccak256(seed || i)`, and its address is the last 20
   bytes of `keccak256(public_key)`. Each account runs validation code that approves execution and
-  payment when the transaction has a proof frame with the triple `(0x10, 0, public_key)`: a
+  payment when the transaction's signature list has the entry `[0x10, public_key, "", ""]`: a
   leanSPHINCS signature of the transaction's own signature hash under the account's key.
-- **Transactions.** Each one has three frames: `VERIFY` runs the account's validation code,
-  `PROOF` declares the dependency, and `SENDER` calls the recipient.
+- **Transactions.** Each one has two frames: `VERIFY` runs the account's validation code and
+  `SENDER` calls the recipient. The signature list declares the dependency.
 - **Submission.** The tool signs the signature hash and submits
   `0x06 || rlp([tx_payload_body, [signature]])` through `eth_sendRawTransaction`. The signature is
   7,740 bytes, so a submission is about 8 KB.

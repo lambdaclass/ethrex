@@ -4147,7 +4147,7 @@ impl Blockchain {
             // EIP-8504: a transaction with proof frames is admitted only together
             // with a witness for each of its dependencies. It can never be included
             // without them, so one that arrives alone is rejected here.
-            if frame_tx.has_proof_frames() && !dependency_witnesses_verified {
+            if frame_tx.has_dependencies() && !dependency_witnesses_verified {
                 return Err(MempoolError::DependencyTransactionWithoutWitnesses);
             }
 

@@ -1637,6 +1637,7 @@ mod frame_tx_opcode_handler_tests {
         let sig = FrameSignature {
             scheme: 0x01,
             signer: Some(signer),
+            signer_key: None,
             msg: msg_bytes,
             signature: sig_bytes,
         };
@@ -1697,6 +1698,7 @@ mod frame_tx_opcode_handler_tests {
             // SECP256K1 (scheme 1); scheme 0 is now ARBITRARY (requires empty signer).
             scheme: 0x01,
             signer: Some(signer),
+            signer_key: None,
             msg: Bytes::new(),
             signature: Bytes::from(vec![0xAAu8; 65]),
         };
@@ -3270,6 +3272,7 @@ mod frame_sig_validation_tests {
         FrameSignature {
             scheme,
             signer: Some(Address::from_low_u64_be(0xBEEF)),
+            signer_key: None,
             msg: Bytes::new(),
             signature: Bytes::from(vec![0u8; sig_len]),
         }
@@ -3310,6 +3313,7 @@ mod frame_sig_validation_tests {
         FrameSignature {
             scheme: FRAME_SIG_SCHEME_SECP256K1,
             signer: Some(Address::from_low_u64_be(0xBEEF)),
+            signer_key: None,
             msg: Bytes::new(),
             signature: Bytes::from(bytes),
         }
@@ -3327,6 +3331,7 @@ mod frame_sig_validation_tests {
         FrameSignature {
             scheme: FRAME_SIG_SCHEME_P256,
             signer: Some(Address::from_low_u64_be(0xBEEF)),
+            signer_key: None,
             msg: Bytes::new(),
             signature: Bytes::from(bytes),
         }
@@ -3436,6 +3441,7 @@ mod frame_sig_validation_tests {
         let sig = FrameSignature {
             scheme: FRAME_SIG_SCHEME_ARBITRARY,
             signer: None,
+            signer_key: None,
             msg: Bytes::new(),
             signature: Bytes::from(vec![0xAAu8; 10]),
         };
@@ -3448,6 +3454,7 @@ mod frame_sig_validation_tests {
         let sig = FrameSignature {
             scheme: FRAME_SIG_SCHEME_ARBITRARY,
             signer: Some(Address::from_low_u64_be(0xBEEF)),
+            signer_key: None,
             msg: Bytes::new(),
             signature: Bytes::from(vec![0xAAu8; 10]),
         };
@@ -3465,6 +3472,7 @@ mod frame_sig_validation_tests {
         let sig = FrameSignature {
             scheme: FRAME_SIG_SCHEME_SECP256K1,
             signer: Some(Address::from_low_u64_be(0xBEEF)),
+            signer_key: None,
             msg: Bytes::from(vec![0u8; 32]),
             signature: Bytes::from(vec![0u8; 65]),
         };
@@ -3482,6 +3490,7 @@ mod frame_sig_validation_tests {
         let sig = FrameSignature {
             scheme: FRAME_SIG_SCHEME_SECP256K1,
             signer: Some(Address::from_low_u64_be(0xBEEF)),
+            signer_key: None,
             msg: Bytes::from(vec![0xAAu8; 16]),
             signature: Bytes::from(vec![0u8; 65]),
         };
@@ -3532,6 +3541,7 @@ mod frame_sig_validation_tests {
         let valid_sig = FrameSignature {
             scheme: FRAME_SIG_SCHEME_SECP256K1,
             signer: Some(expected_signer),
+            signer_key: None,
             msg: Bytes::new(), // empty → use sig_hash
             signature: Bytes::from(sig_bytes.clone()),
         };
@@ -3552,6 +3562,7 @@ mod frame_sig_validation_tests {
         let wrong_addr = Address::from_low_u64_be(0xDEAD);
         let tampered = FrameSignature {
             signer: Some(wrong_addr),
+            signer_key: None,
             ..valid_sig.clone()
         };
         assert!(
@@ -3569,6 +3580,7 @@ mod frame_sig_validation_tests {
         let empty_signer_sig = FrameSignature {
             scheme: FRAME_SIG_SCHEME_SECP256K1,
             signer: None,
+            signer_key: None,
             msg: Bytes::new(),
             signature: Bytes::from(sig_bytes.clone()),
         };
@@ -3614,6 +3626,7 @@ mod frame_sig_validation_tests {
         let sig = FrameSignature {
             scheme: FRAME_SIG_SCHEME_P256,
             signer: Some(Address::from_low_u64_be(0xDEAD)),
+            signer_key: None,
             msg: Bytes::new(),
             signature: Bytes::from(vec![0xAAu8; 128]),
         };
@@ -3690,6 +3703,7 @@ mod frame_sig_validation_tests {
         let valid_sig = FrameSignature {
             scheme: FRAME_SIG_SCHEME_P256,
             signer: Some(signer),
+            signer_key: None,
             // Explicit 32-byte msg: sig_hash arg to validate_frame_signatures
             // is irrelevant for this entry.
             msg: Bytes::copy_from_slice(&digest),
@@ -3729,6 +3743,7 @@ mod frame_sig_validation_tests {
         // Wrong signer: signer-derivation check fires.
         let wrong_signer = FrameSignature {
             signer: Some(Address::from_low_u64_be(0xDEAD)),
+            signer_key: None,
             ..valid_sig
         };
         assert!(
@@ -3875,6 +3890,7 @@ mod sigparam_execution_tests {
         FrameSignature {
             scheme: FRAME_SIG_SCHEME_ARBITRARY,
             signer: None,
+            signer_key: None,
             msg: Bytes::new(),
             signature: Bytes::from(bytes),
         }
@@ -3917,37 +3933,85 @@ mod sigparam_execution_tests {
         assert_eq!(storage_of(&db, reader, U256::zero()), U256::zero());
     }
 
+    /// Account code for a VERIFY frame: `SIGDATACOPY(memOffset, dataOffset,
+    /// length, index 0)`, then approve both scopes if the word at `memOffset` is
+    /// `expected`, and revert otherwise. A VERIFY frame cannot store what it
+    /// read, so the transaction's validity reports it.
+    fn approve_if_sigdatacopy_reads(
+        length: u8,
+        data_offset: u8,
+        mem_offset: u8,
+        expected: [u8; 32],
+    ) -> Bytes {
+        let mut code = vec![
+            0x60,
+            0x00, // PUSH1 signatureIndex
+            0x60,
+            length, // PUSH1 length
+            0x60,
+            data_offset, // PUSH1 dataOffset
+            0x60,
+            mem_offset, // PUSH1 memOffset
+            0xB5,       // SIGDATACOPY
+            0x60,
+            mem_offset, // PUSH1 memOffset
+            0x51,       // MLOAD
+            0x7F,       // PUSH32 expected
+        ];
+        code.extend_from_slice(&expected);
+        let approve = u8::try_from(code.len() + 9).unwrap();
+        code.extend_from_slice(&[
+            0x14, // EQ
+            0x60, approve, 0x57, // PUSH1 approve; JUMPI
+            0x60, 0x00, 0x60, 0x00, 0xFD, // REVERT(0, 0)
+            0x5B, // JUMPDEST (approve)
+            0x60, 0x03, 0x60, 0x00, 0x60, 0x00, 0xAA, // APPROVE(0, 0, 3)
+        ]);
+        assert_eq!(code[usize::from(approve)], 0x5B);
+        Bytes::from(code)
+    }
+
+    /// One VERIFY frame on the sender running `code`, with `signature` as the
+    /// bytes of an ARBITRARY entry.
+    fn run_verify_reader(code: Bytes, signature: Vec<u8>) -> Result<ExecutionReport, VMError> {
+        let mut tx = frame_tx_with_frames(vec![verify_frame(FUNDED_SENDER)]);
+        tx.signatures = vec![arbitrary_sig(signature)];
+        run_frame_tx(&[(FUNDED_SENDER, AUTO_SEED_SENDER_BALANCE, 0, code)], tx).0
+    }
+
     #[test]
     fn sigdatacopy_copies_arbitrary_signature_bytes() {
         // 4 payload bytes copied into memory at 0; MLOAD reads them left-aligned
         // in the word, with the rest zero-filled.
-        let (result, db, reader) = run_reader(
-            sigdatacopy_code(0, 4, 0, 0),
-            vec![arbitrary_sig(vec![0xDE, 0xAD, 0xBE, 0xEF])],
-        );
-        result.expect("valid tx");
         let mut expected = [0u8; 32];
         expected[..4].copy_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
-        assert_eq!(
-            storage_of(&db, reader, U256::zero()),
-            U256::from_big_endian(&expected),
+        run_verify_reader(
+            approve_if_sigdatacopy_reads(4, 0, 0, expected),
+            vec![0xDE, 0xAD, 0xBE, 0xEF],
+        )
+        .expect("the VERIFY frame read the bytes it expected");
+        // The same frame expecting other bytes reverts, which invalidates the
+        // transaction: the check above is not vacuous.
+        expected[0] = 0x00;
+        assert!(
+            run_verify_reader(
+                approve_if_sigdatacopy_reads(4, 0, 0, expected),
+                vec![0xDE, 0xAD, 0xBE, 0xEF],
+            )
+            .is_err()
         );
     }
 
     #[test]
     fn sigdatacopy_zero_fills_past_the_end() {
         // Asking for 8 bytes of a 2-byte signature zero-fills the remainder.
-        let (result, db, reader) = run_reader(
-            sigdatacopy_code(0, 8, 0, 0),
-            vec![arbitrary_sig(vec![0x11, 0x22])],
-        );
-        result.expect("valid tx");
         let mut expected = [0u8; 32];
         expected[..2].copy_from_slice(&[0x11, 0x22]);
-        assert_eq!(
-            storage_of(&db, reader, U256::zero()),
-            U256::from_big_endian(&expected),
-        );
+        run_verify_reader(
+            approve_if_sigdatacopy_reads(8, 0, 0, expected),
+            vec![0x11, 0x22],
+        )
+        .expect("the VERIFY frame read the bytes it expected");
     }
 
     #[test]
@@ -3956,17 +4020,69 @@ mod sigparam_execution_tests {
         // above length. Distinct values for all three, and a destination past the
         // first word, pin the order — reading them in any other order lands the
         // bytes somewhere else (or copies a different count).
-        let (result, db, reader) = run_reader(
-            sigdatacopy_code(0, 3, 1, 0x20),
-            vec![arbitrary_sig(vec![0xAA, 0xBB, 0xCC, 0xDD])],
-        );
-        result.expect("valid tx");
         let mut expected = [0u8; 32];
         expected[..3].copy_from_slice(&[0xBB, 0xCC, 0xDD]);
+        run_verify_reader(
+            approve_if_sigdatacopy_reads(3, 1, 0x20, expected),
+            vec![0xAA, 0xBB, 0xCC, 0xDD],
+        )
+        .expect("the VERIFY frame read the bytes it expected");
+    }
+
+    #[test]
+    fn sigdatacopy_outside_a_verify_frame_halts() {
+        // The bytes of an entry with an empty `msg` are outside the signature
+        // hash, so anyone can change them. Only a VERIFY frame may read them: a
+        // DEFAULT frame that tries halts, and writes nothing.
+        let (result, db, reader) = run_reader(
+            sigdatacopy_code(0, 4, 0, 0),
+            vec![arbitrary_sig(vec![0xDE, 0xAD, 0xBE, 0xEF])],
+        );
+        let report = result.expect("the tx itself stays valid; only the reader frame halts");
+        let frame_results = report.frame_results.expect("per-frame results");
+        assert_eq!(frame_results[1].0, FRAME_RECEIPT_STATUS_FAILURE);
+        assert_eq!(storage_of(&db, reader, U256::zero()), U256::zero());
+    }
+
+    #[test]
+    fn sigparam_0x04_returns_the_key_of_a_leansphincs_entry() {
+        // The raw 32-byte signer is what an account compares with the key it
+        // stores. It is defined only for an entry whose signer is a key.
+        let key = H256::repeat_byte(0x5A);
+        let entry = FrameSignature {
+            scheme: ethrex_common::types::FRAME_SIG_SCHEME_LEANSPHINCS,
+            signer: None,
+            signer_key: Some(key),
+            msg: Bytes::new(),
+            signature: Bytes::new(),
+        };
+        let (result, db, reader) = run_reader(sigparam_metadata_code(0x04, 0), vec![entry.clone()]);
+        result.expect("valid tx");
         assert_eq!(
             storage_of(&db, reader, U256::zero()),
-            U256::from_big_endian(&expected),
+            U256::from_big_endian(key.as_bytes())
         );
+        // The scheme reads back as 0x10.
+        let (result, db, reader) = run_reader(sigparam_metadata_code(0x01, 0), vec![entry.clone()]);
+        result.expect("valid tx");
+        assert_eq!(storage_of(&db, reader, U256::zero()), U256::from(0x10u64));
+
+        // It has no address to resolve and no bytes to measure, and an entry
+        // whose signer is not a key has no raw signer.
+        for (param, signatures) in [
+            (0x00, vec![entry.clone()]),
+            (0x03, vec![entry]),
+            (0x04, vec![arbitrary_sig(vec![0xAA; 4])]),
+        ] {
+            let (result, db, reader) = run_reader(sigparam_metadata_code(param, 0), signatures);
+            let report = result.expect("only the reader frame halts");
+            let frame_results = report.frame_results.expect("per-frame results");
+            assert_eq!(
+                frame_results[1].0, FRAME_RECEIPT_STATUS_FAILURE,
+                "param {param:#x}"
+            );
+            assert_eq!(storage_of(&db, reader, U256::zero()), U256::zero());
+        }
     }
 }
 
@@ -4001,6 +4117,7 @@ mod default_code_sig_index_tests {
         FrameSignature {
             scheme: FRAME_SIG_SCHEME_SECP256K1,
             signer: Some(signer),
+            signer_key: None,
             msg: Bytes::new(),
             signature: Bytes::from(bytes),
         }
@@ -4010,6 +4127,7 @@ mod default_code_sig_index_tests {
         FrameSignature {
             scheme: FRAME_SIG_SCHEME_ARBITRARY,
             signer: None,
+            signer_key: None,
             msg: Bytes::new(),
             signature: Bytes::from(vec![0xAAu8; 4]),
         }
@@ -4030,6 +4148,7 @@ mod default_code_sig_index_tests {
         entries[sig_at] = FrameSignature {
             scheme: FRAME_SIG_SCHEME_SECP256K1,
             signer: Some(payer),
+            signer_key: None,
             msg: Bytes::new(),
             signature: Bytes::from(vec![0u8; 65]),
         };

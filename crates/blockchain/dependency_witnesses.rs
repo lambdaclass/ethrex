@@ -99,8 +99,8 @@ mod tests {
     use ethrex_common::{
         Address, H256, U256,
         types::{
-            BlockBody, BlockHeader, Frame, FrameMode, FrameTransaction,
-            LEANSPHINCS_VERIFICATION_GAS, PROOF_FRAME_MODE, Transaction,
+            BlockBody, BlockHeader, FRAME_SIG_SCHEME_LEANSPHINCS, Frame, FrameMode, FrameSignature,
+            FrameTransaction, Transaction,
         },
     };
 
@@ -134,40 +134,37 @@ mod tests {
         )
     }
 
-    /// A frame transaction whose proof frame declares the given
-    /// `(data_hash, public key)` pairs.
+    /// A frame transaction whose signature list declares the given
+    /// `(message, public key)` pairs, a zero message standing for its own
+    /// signature hash.
     fn dependency_tx(nonce: u64, declarations: &[(H256, H256)]) -> FrameTransaction {
-        let mut data = Vec::new();
-        for (data_hash, public_key) in declarations {
-            data.extend_from_slice(&[0u8; 31]);
-            data.push(LEANSPHINCS_SCHEME);
-            data.extend_from_slice(data_hash.as_bytes());
-            data.extend_from_slice(public_key.as_bytes());
-        }
         FrameTransaction {
             chain_id: 1,
             nonce_seq: nonce,
             sender: Address::repeat_byte(0xAA),
-            frames: vec![
-                Frame {
-                    mode: FrameMode::Verify as u8,
-                    flags: 0x03,
-                    target: None,
-                    gas_limit: 50_000,
-                    state_gas_limit: 0,
-                    value: U256::zero(),
-                    data: Bytes::new(),
-                },
-                Frame {
-                    mode: PROOF_FRAME_MODE,
-                    flags: 0,
-                    target: None,
-                    gas_limit: declarations.len() as u64 * LEANSPHINCS_VERIFICATION_GAS,
-                    state_gas_limit: 0,
-                    value: U256::zero(),
-                    data: Bytes::from(data),
-                },
-            ],
+            frames: vec![Frame {
+                mode: FrameMode::Verify as u8,
+                flags: 0x03,
+                target: None,
+                gas_limit: 50_000,
+                state_gas_limit: 0,
+                value: U256::zero(),
+                data: Bytes::new(),
+            }],
+            signatures: declarations
+                .iter()
+                .map(|(message, public_key)| FrameSignature {
+                    scheme: FRAME_SIG_SCHEME_LEANSPHINCS,
+                    signer: None,
+                    signer_key: Some(*public_key),
+                    msg: if message.is_zero() {
+                        Bytes::new()
+                    } else {
+                        Bytes::copy_from_slice(message.as_bytes())
+                    },
+                    signature: Bytes::new(),
+                })
+                .collect(),
             ..Default::default()
         }
     }

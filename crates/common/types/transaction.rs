@@ -2229,21 +2229,17 @@ pub enum FrameMode {
     /// `TXTRACE` and `EVENTDATACOPY` are valid. One that fails reverts
     /// the execution body without invalidating the transaction.
     Assert = 3,
-    /// EIP-8504 proof frame: it declares the transaction's dependencies, which
-    /// are satisfied outside the EVM, and executes no code.
-    Proof = 4,
 }
 
 impl FrameMode {
     /// Convert from the lower 8 bits of the mode field.
-    /// Returns None for reserved values (5-255).
+    /// Returns None for reserved values (4-255).
     pub fn from_u8(val: u8) -> Option<Self> {
         match val {
             0 => Some(FrameMode::Default),
             1 => Some(FrameMode::Verify),
             2 => Some(FrameMode::Sender),
             3 => Some(FrameMode::Assert),
-            4 => Some(FrameMode::Proof),
             _ => None,
         }
     }
@@ -2256,7 +2252,6 @@ impl From<FrameMode> for u8 {
             FrameMode::Verify => 1,
             FrameMode::Sender => 2,
             FrameMode::Assert => 3,
-            FrameMode::Proof => 4,
         }
     }
 }
@@ -2264,7 +2259,7 @@ impl From<FrameMode> for u8 {
 /// EIP-8141 Frame: a single execution step within a frame transaction.
 ///
 /// `mode` is the execution mode (0=DEFAULT, 1=VERIFY, 2=SENDER, 3=ASSERT under
-/// EIP-7906, 4=PROOF under EIP-8504; 5-255 reserved).
+/// EIP-7906; 4-255 reserved).
 /// `flags` bits: 0-1 = APPROVE scope restriction, 2 = atomic batch flag (valid
 /// on DEFAULT and SENDER frames only), 3-7 reserved (must be zero).
 #[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
@@ -2309,30 +2304,6 @@ impl Frame {
     pub fn is_expiry_verifier(&self) -> bool {
         self.execution_mode() == FrameMode::Verify
             && self.target == Some(frame_tx_expiry_verifier())
-    }
-
-    /// An EIP-8504 proof frame. Contracts and the protocol identify it by its
-    /// mode, not by its target.
-    pub fn is_proof(&self) -> bool {
-        self.mode == PROOF_FRAME_MODE
-    }
-
-    /// The dependencies a proof frame declares, in order and as encoded: a zero
-    /// `data_hash` is returned as zero. Empty for any other frame. Trailing bytes
-    /// that do not fill a triple are ignored; `validate_static_constraints`
-    /// rejects such a frame.
-    pub fn declared_dependencies(&self) -> Vec<Dependency> {
-        if !self.is_proof() {
-            return Vec::new();
-        }
-        self.data
-            .chunks_exact(DEPENDENCY_TRIPLE_BYTES)
-            .map(|triple| Dependency {
-                scheme: triple[31],
-                data_hash: H256::from_slice(&triple[32..64]),
-                verification_key_hash: H256::from_slice(&triple[64..96]),
-            })
-            .collect()
     }
 
     /// EIP-8272 §Recent root verifier frame: a VERIFY frame to `RECENT_ROOT_ADDRESS`
@@ -2422,11 +2393,21 @@ impl RLPDecode for Frame {
 /// (empty ⇒ the resolved signer is `tx.sender`, for introspection too); `Some(addr)` pins it.
 /// `msg`: empty = signs compute_sig_hash(tx); 32 bytes = signs that explicit digest.
 /// Raw `signature` bytes are intentionally not EVM-introspectable.
+///
+/// `scheme` 0x10 = LEANSPHINCS declares a dependency instead of carrying a
+/// signature: its `signer` is the 32-byte public key ([`Self::signer_key`]) and
+/// its `signature` is empty. The signature travels beside the transaction and is
+/// never part of it.
 #[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub struct FrameSignature {
     pub scheme: u8,
     #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::H160Wrapper>)]
     pub signer: Option<Address>,
+    /// The `signer` of a scheme whose signer is a 32-byte public key rather than
+    /// an address (LEANSPHINCS). It is the same RLP item as [`Self::signer`]: an
+    /// entry carries one or the other, never both.
+    #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::H256Wrapper>)]
+    pub signer_key: Option<H256>,
     #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
     pub msg: Bytes,
     #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
@@ -2441,9 +2422,13 @@ impl RLPEncode for FrameSignature {
             Some(addr) => TxKind::Call(addr),
             None => TxKind::Create,
         };
-        Encoder::new(buf)
-            .encode_field(&self.scheme)
-            .encode_field(&signer_kind)
+        let encoder = Encoder::new(buf).encode_field(&self.scheme);
+        // A key-shaped signer takes the place of the address in the same item.
+        let encoder = match &self.signer_key {
+            Some(key) => encoder.encode_field(key),
+            None => encoder.encode_field(&signer_kind),
+        };
+        encoder
             .encode_field(&self.msg)
             .encode_field(&self.signature)
             .finish();
@@ -2454,10 +2439,18 @@ impl RLPDecode for FrameSignature {
     fn decode_unfinished(rlp: &[u8]) -> Result<(FrameSignature, &[u8]), RLPDecodeError> {
         let decoder = Decoder::new(rlp)?;
         let (scheme, decoder) = decoder.decode_field("scheme")?;
-        let (signer_kind, decoder): (TxKind, _) = decoder.decode_field("signer")?;
-        let signer = match signer_kind {
-            TxKind::Call(addr) => Some(addr),
-            TxKind::Create => None,
+        // The signer is empty, a 20-byte address or a 32-byte public key. Which of
+        // them a scheme takes is a static validity rule, not a decoding one.
+        let (signer_bytes, decoder): (Bytes, _) = decoder.decode_field("signer")?;
+        let (signer, signer_key) = match signer_bytes.len() {
+            0 => (None, None),
+            20 => (Some(Address::from_slice(&signer_bytes)), None),
+            32 => (None, Some(H256::from_slice(&signer_bytes))),
+            len => {
+                return Err(RLPDecodeError::Custom(format!(
+                    "Frame signature signer must be empty, 20 or 32 bytes long, got {len}"
+                )));
+            }
         };
         let (msg, decoder) = decoder.decode_field("msg")?;
         let (signature, decoder) = decoder.decode_field("signature")?;
@@ -2465,6 +2458,7 @@ impl RLPDecode for FrameSignature {
             FrameSignature {
                 scheme,
                 signer,
+                signer_key,
                 msg,
                 signature,
             },
@@ -2569,6 +2563,10 @@ pub const LEANSPHINCS_WITNESS_GAS: u64 = LEANSPHINCS_SIGNATURE_SIZE as u64
 pub const FRAME_SIG_SCHEME_ARBITRARY: u8 = 0;
 pub const FRAME_SIG_SCHEME_SECP256K1: u8 = 1;
 pub const FRAME_SIG_SCHEME_P256: u8 = 2;
+/// The signature scheme of an entry that declares a leanSPHINCS dependency: its
+/// `signer` is the public key and its `signature` is empty, because the signature
+/// travels beside the transaction. The number is EIP-8288's `LEANSPHINCS_SCHEME`.
+pub const FRAME_SIG_SCHEME_LEANSPHINCS: u8 = LEANSPHINCS_SCHEME;
 /// EIP-8141 §Mempool `MAX_VERIFY_GAS`: the maximum gas
 /// a public-mempool node should expend validating signatures and simulating the
 /// validation prefix. Signature validation counts against this budget (rule #6),
@@ -2592,17 +2590,12 @@ pub const APPROVE_EXECUTION_AND_PAYMENT: u8 = 0x3;
 /// (FRAME_CANONICAL_PAYMASTER_CODE_HASH is unresolved in the draft EIP), so
 /// this de-facto limits sponsored frame txs to 1 per paymaster in the pool.
 pub const FRAME_TX_MAX_PENDING_NONCANONICAL_PAYMASTER: u8 = 1;
-/// EIP-8504: the frame mode of a proof frame.
-pub const PROOF_FRAME_MODE: u8 = 4;
-/// EIP-8504: the scheme byte of a leanSPHINCS dependency.
+/// The scheme byte of a leanSPHINCS dependency.
 pub const LEANSPHINCS_SCHEME: u8 = 0x10;
-/// EIP-8504: bytes of one `(scheme, data_hash, verification_key_hash)` triple in
-/// a proof frame's data.
+/// Bytes of one encoded `(scheme, data_hash, verification_key_hash)` dependency.
 pub const DEPENDENCY_TRIPLE_BYTES: usize = 96;
-/// EIP-8504: the most triples one proof frame may declare (provisional).
-pub const MAX_DEPENDENCIES_PER_FRAME: usize = 256;
-/// EIP-8504: execution gas a proof frame declares, and consumes, per triple
-/// (provisional).
+/// Gas a transaction pays for each LEANSPHINCS entry of its signature list, as
+/// that entry's verification cost (provisional).
 pub const LEANSPHINCS_VERIFICATION_GAS: u64 = 3000;
 /// EIP-8504: bytes of a leanSPHINCS signature (provisional).
 pub const LEANSPHINCS_SIGNATURE_SIZE: usize = 7740;
@@ -2839,34 +2832,44 @@ pub fn block_dependencies(transactions: &[Transaction]) -> Vec<Dependency> {
 }
 
 impl FrameTransaction {
-    /// EIP-8504 `dependencies(tx)`: the triples of every proof frame, each zero
-    /// `data_hash` replaced with the transaction's signature hash, sorted and
-    /// deduplicated. The substitution happens only here: the frame's encoded data
-    /// keeps the zero bytes, so the signature hash covers them.
+    /// `dependencies(tx)`: one `(LEANSPHINCS_SCHEME, message, public key)` for every
+    /// LEANSPHINCS entry of the signature list, sorted and deduplicated. The message
+    /// is the entry's explicit `msg`, or the transaction's signature hash when the
+    /// `msg` is empty. The entry itself keeps the empty `msg`, which the signature
+    /// hash covers.
     pub fn dependencies(&self) -> Vec<Dependency> {
-        if !self.has_proof_frames() {
+        if !self.has_dependencies() {
             return Vec::new();
         }
         let sig_hash = self.compute_sig_hash();
         deduplicate_and_sort(
-            self.frames
+            self.signatures
                 .iter()
-                .flat_map(Frame::declared_dependencies)
-                .map(|mut dependency| {
-                    if dependency.data_hash.is_zero() {
-                        dependency.data_hash = sig_hash;
-                    }
-                    dependency
+                .filter(|sig| sig.scheme == FRAME_SIG_SCHEME_LEANSPHINCS)
+                .filter_map(|sig| {
+                    let data_hash = match sig.msg.len() {
+                        0 => sig_hash,
+                        32 => H256::from_slice(&sig.msg),
+                        // Static validation rejects any other length.
+                        _ => return None,
+                    };
+                    Some(Dependency {
+                        scheme: LEANSPHINCS_SCHEME,
+                        data_hash,
+                        verification_key_hash: sig.signer_key?,
+                    })
                 })
                 .collect(),
         )
     }
 
-    /// Whether the transaction has at least one proof frame, which makes it a
-    /// dependency transaction: it is handled together with its witnesses until
-    /// it is included in a block.
-    pub fn has_proof_frames(&self) -> bool {
-        self.frames.iter().any(Frame::is_proof)
+    /// Whether the signature list declares at least one dependency, which makes
+    /// this a dependency transaction: it is handled together with its witnesses
+    /// until it is included in a block.
+    pub fn has_dependencies(&self) -> bool {
+        self.signatures
+            .iter()
+            .any(|sig| sig.scheme == FRAME_SIG_SCHEME_LEANSPHINCS)
     }
 
     /// Canonical signature hash (EIP-8141): the raw `signature` bytes of every
@@ -2889,6 +2892,7 @@ impl FrameTransaction {
                     FrameSignature {
                         scheme: s.scheme,
                         signer: s.signer,
+                        signer_key: s.signer_key,
                         msg: s.msg.clone(),
                         signature: Bytes::copy_from_slice(&length[first_nonzero..]),
                     }
@@ -2912,8 +2916,9 @@ impl FrameTransaction {
     }
 
     /// Per EIP-8141: 100 gas per ARBITRARY signature, 2800 per SECP256K1, 6700
-    /// per P256. Unknown schemes are rejected by static validation, so they are
-    /// treated as 0 here (validation runs first).
+    /// per P256, and `LEANSPHINCS_VERIFICATION_GAS` per LEANSPHINCS entry. Unknown
+    /// schemes are rejected by static validation, so they are treated as 0 here
+    /// (validation runs first).
     pub fn signature_verification_cost(&self) -> u64 {
         self.signatures
             .iter()
@@ -2921,6 +2926,7 @@ impl FrameTransaction {
                 FRAME_SIG_SCHEME_ARBITRARY => 100u64,
                 FRAME_SIG_SCHEME_SECP256K1 => 2800u64,
                 FRAME_SIG_SCHEME_P256 => 6700u64,
+                FRAME_SIG_SCHEME_LEANSPHINCS => LEANSPHINCS_VERIFICATION_GAS,
                 _ => 0,
             })
             .sum()
@@ -2938,7 +2944,11 @@ impl FrameTransaction {
             .map(|f| f.data.as_ref())
             .chain(self.signatures.iter().flat_map(|s| {
                 [
-                    s.signer.as_ref().map_or(EMPTY, |a| a.as_bytes()),
+                    match (&s.signer_key, &s.signer) {
+                        (Some(key), _) => key.as_bytes(),
+                        (None, Some(address)) => address.as_bytes(),
+                        (None, None) => EMPTY,
+                    },
                     s.msg.as_ref(),
                     if s.msg.is_empty() {
                         EMPTY
@@ -3030,13 +3040,7 @@ impl FrameTransaction {
     /// frame. A matching frame anywhere else is not the protocol verifier and fails
     /// the structural rules ([`FrameValidationError::RecentRootFrameMisplaced`]).
     pub fn recent_root_verifier_index(&self) -> Option<usize> {
-        // EIP-8504: proof frames run no code and take no position of their own, so
-        // "first" and "second" are counted over the frames left without them.
-        let mut frames = self
-            .frames
-            .iter()
-            .enumerate()
-            .filter(|(_, frame)| !frame.is_proof());
+        let mut frames = self.frames.iter().enumerate();
         let (first_index, first) = frames.next()?;
         if first.is_recent_root_verifier() {
             return Some(first_index);
@@ -3063,7 +3067,7 @@ impl FrameTransaction {
 
     /// The mandatory costs, always charged in full: the intrinsic cost, the
     /// per-frame cost, signature verification, value transfers, EIP-8250's
-    /// keyed-nonce access, and EIP-8504's witnesses. They are the terms EIP-8141's
+    /// keyed-nonce access, and the witnesses of its dependencies. They are the terms EIP-8141's
     /// `frame_tx_intrinsic_gas` and `calldata_floor_gas` share, so each is charged
     /// once on either side.
     pub fn mandatory_gas(&self) -> u64 {
@@ -3075,8 +3079,8 @@ impl FrameTransaction {
             .saturating_add(self.dependency_witness_gas())
     }
 
-    /// EIP-8504: `LEANSPHINCS_WITNESS_GAS` for every entry of `dependencies()`, so
-    /// a triple declared more than once is paid for once. The witnesses are not
+    /// `LEANSPHINCS_WITNESS_GAS` for every entry of `dependencies()`, so a
+    /// dependency declared more than once is paid for once. The witnesses are not
     /// transaction data, so nothing else prices their bytes; charging them here
     /// puts them on both sides of the `max_gas` comparison, and the calldata floor
     /// cannot absorb them. A dependency that two transactions share is paid by
@@ -3224,8 +3228,8 @@ impl FrameTransaction {
             })
     }
 
-    /// Validate static constraints per EIP-8141 spec, with the constraints
-    /// EIP-8504 adds for proof frames.
+    /// Validate static constraints per EIP-8141 spec, with the constraints of the
+    /// LEANSPHINCS signature scheme.
     /// Returns an error string if the transaction is invalid.
     pub fn validate_static_constraints(&self) -> Result<(), String> {
         // EIP-8250: the account nonce cannot be used at `MAX_NONCE_SEQ`, which only
@@ -3267,11 +3271,41 @@ impl FrameTransaction {
                             "Signature {i}: ARBITRARY signatures must not name a signer"
                         ));
                     }
+                    // With an explicit `msg` the bytes of an ARBITRARY entry would
+                    // be committed, readable and never checked by the protocol:
+                    // frame calldata by another name. The scheme keeps one meaning,
+                    // bytes outside the signature hash that account code checks.
+                    if !sig.msg.is_empty() {
+                        return Err(format!(
+                            "Signature {i}: ARBITRARY signatures must have an empty msg"
+                        ));
+                    }
                 }
                 FRAME_SIG_SCHEME_SECP256K1 | FRAME_SIG_SCHEME_P256 => {}
+                // A LEANSPHINCS entry declares a dependency: the signer is the
+                // public key, and the signature is empty from the start, because
+                // the signature hash commits to its length and the signature only
+                // ever travels beside the transaction.
+                FRAME_SIG_SCHEME_LEANSPHINCS => {
+                    if sig.signer_key.is_none() || sig.signer.is_some() {
+                        return Err(format!(
+                            "Signature {i}: a LEANSPHINCS signer must be a 32-byte public key"
+                        ));
+                    }
+                    if !sig.signature.is_empty() {
+                        return Err(format!(
+                            "Signature {i}: a LEANSPHINCS signature must be empty in the transaction"
+                        ));
+                    }
+                }
                 other => {
                     return Err(format!("Signature {i}: unsupported scheme {other}"));
                 }
+            }
+            if sig.scheme != FRAME_SIG_SCHEME_LEANSPHINCS && sig.signer_key.is_some() {
+                return Err(format!(
+                    "Signature {i}: only a LEANSPHINCS signer is a 32-byte public key"
+                ));
             }
             match sig.msg.len() {
                 0 => {}
@@ -3295,70 +3329,10 @@ impl FrameTransaction {
         let mut expiry_frame_count: usize = 0;
         let mut seen_assert = false;
         for (i, frame) in self.frames.iter().enumerate() {
-            // Reject reserved execution modes. EIP-7906 adds ASSERT (3) to the modes
-            // EIP-8141 accepts, and EIP-8504 adds PROOF (4).
+            // Reject reserved execution modes (4-255). EIP-7906 adds ASSERT (3) to
+            // the modes EIP-8141 accepts.
             if FrameMode::from_u8(frame.mode).is_none() {
                 return Err(format!("Frame {i}: reserved execution mode {}", frame.mode));
-            }
-            // EIP-8504 constraints on a proof frame. They apply in addition to the
-            // rules below, which also hold for proof frames.
-            if frame.is_proof() {
-                let len = frame.data.len();
-                if len == 0 || !len.is_multiple_of(DEPENDENCY_TRIPLE_BYTES) {
-                    return Err(format!(
-                        "Frame {i}: proof frame data must be a nonzero multiple of {DEPENDENCY_TRIPLE_BYTES} bytes (got {len})"
-                    ));
-                }
-                let triples = len / DEPENDENCY_TRIPLE_BYTES;
-                if triples > MAX_DEPENDENCIES_PER_FRAME {
-                    return Err(format!(
-                        "Frame {i}: proof frame declares {triples} dependencies, more than {MAX_DEPENDENCIES_PER_FRAME}"
-                    ));
-                }
-                for (j, triple) in frame.data.chunks_exact(DEPENDENCY_TRIPLE_BYTES).enumerate() {
-                    // The scheme occupies a 32-byte word: 31 zero bytes, then the
-                    // scheme byte. leanSPHINCS is the only scheme.
-                    if triple[..31].iter().any(|b| *b != 0) || triple[31] != LEANSPHINCS_SCHEME {
-                        return Err(format!(
-                            "Frame {i}: dependency {j} of the proof frame has an unknown scheme"
-                        ));
-                    }
-                }
-                if frame.target.is_some() {
-                    return Err(format!("Frame {i}: proof frame must have no target"));
-                }
-                if !frame.value.is_zero() {
-                    return Err(format!("Frame {i}: proof frame must have value == 0"));
-                }
-                if frame.flags != 0 {
-                    return Err(format!(
-                        "Frame {i}: proof frame must have flags == 0 (flags={:#04x})",
-                        frame.flags
-                    ));
-                }
-                // The frame must not belong to an atomic batch. Its own flags are
-                // zero, so only the preceding frame's batch flag needs checking.
-                let predecessor_batches = i
-                    .checked_sub(1)
-                    .and_then(|prev| self.frames.get(prev))
-                    .is_some_and(|prev| prev.is_atomic_batch());
-                if predecessor_batches {
-                    return Err(format!("Frame {i}: proof frame in an atomic batch"));
-                }
-                // `triples` is at most 256, so the product cannot overflow.
-                let expected_gas = (triples as u64).saturating_mul(LEANSPHINCS_VERIFICATION_GAS);
-                if frame.gas_limit != expected_gas {
-                    return Err(format!(
-                        "Frame {i}: proof frame must declare {expected_gas} execution gas (got {})",
-                        frame.gas_limit
-                    ));
-                }
-                if frame.state_gas_limit != 0 {
-                    return Err(format!(
-                        "Frame {i}: proof frame must have state_gas_limit == 0 (got {})",
-                        frame.state_gas_limit
-                    ));
-                }
             }
             // EIP-7906: ASSERT frames form a contiguous trailing suffix, so the diff
             // they observe is the transaction's final outcome.
@@ -3530,15 +3504,11 @@ impl FrameTransaction {
         // shape or the structural rules.
         let recent_root_index = self.recent_root_verifier_index();
         // Collect the frame indices left after the protocol verifier frames, in order.
-        // EIP-8504: proof frames are skipped like the expiry verifier frame, so one
-        // may sit anywhere among the frames that make the shape.
         let non_expiry: Vec<usize> = self
             .frames
             .iter()
             .enumerate()
-            .filter(|(idx, f)| {
-                !f.is_expiry_verifier() && !f.is_proof() && Some(*idx) != recent_root_index
-            })
+            .filter(|(idx, f)| !f.is_expiry_verifier() && Some(*idx) != recent_root_index)
             .map(|(i, _)| i)
             .collect();
 
@@ -3734,13 +3704,10 @@ impl FrameTransaction {
         // only as the first frame of the frame list. Expiry frames are otherwise
         // transparent to prefix matching, so a misplaced one would silently pin
         // the transaction's validity to a deadline outside the recognized shapes.
-        // EIP-8504: proof frames are skipped by this rule too, so "first" means
-        // first among the other frames.
         if let Some((frame_index, _)) = self
             .frames
             .iter()
             .enumerate()
-            .filter(|(_, frame)| !frame.is_proof())
             .skip(1)
             .find(|(_, frame)| frame.is_expiry_verifier())
         {
@@ -3775,9 +3742,9 @@ impl FrameTransaction {
 
         // Gas budget: prefix frame gas limits + signature cost ≤ MAX_VERIFY_GAS.
         // EIP-8272 counts the recent root verifier frame's `limits.execution` too.
-        // EIP-8504: a proof frame is never among `frame_indices`, so its
-        // `limits.execution` stays out of this sum. The witnesses it stands for are
-        // bounded by `MAX_SIGS_PER_TX`, not by this budget.
+        // A LEANSPHINCS entry counts through `signature_verification_cost()` like
+        // any other signature. The witnesses themselves are bounded by
+        // `MAX_SIGS_PER_TX`.
         let prefix_gas: u64 = prefix
             .frame_indices
             .iter()
@@ -4303,6 +4270,9 @@ mod serde_impl {
         #[serde(with = "crate::serde_utils::u64::hex_str")]
         pub scheme: u64,
         pub signer: Option<Address>,
+        /// The signer of a scheme whose signer is a 32-byte public key.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub signer_key: Option<H256>,
         #[serde(with = "crate::serde_utils::bytes")]
         pub msg: Bytes,
         #[serde(with = "crate::serde_utils::bytes")]
@@ -4314,6 +4284,7 @@ mod serde_impl {
             SignatureEntry {
                 scheme: value.scheme as u64,
                 signer: value.signer,
+                signer_key: value.signer_key,
                 msg: value.msg.clone(),
                 signature: value.signature.clone(),
             }
@@ -6427,6 +6398,7 @@ mod tests {
             signatures: vec![FrameSignature {
                 scheme: FRAME_SIG_SCHEME_SECP256K1,
                 signer: Some(Address::from_low_u64_be(0xABCD)),
+                signer_key: None,
                 msg: Bytes::new(),
                 signature: Bytes::from(vec![0u8; 65]),
             }],
@@ -7098,6 +7070,7 @@ mod tests {
         let sig = FrameSignature {
             scheme: FRAME_SIG_SCHEME_P256,
             signer: Some(Address::from_low_u64_be(0x1234)),
+            signer_key: None,
             msg: Bytes::from(vec![7u8; 32]),
             signature: Bytes::from(vec![9u8; 128]),
         };
@@ -7239,6 +7212,7 @@ mod tests {
         tx.signatures.push(FrameSignature {
             scheme: FRAME_SIG_SCHEME_P256,
             signer: Some(Address::from_low_u64_be(1)),
+            signer_key: None,
             msg: Bytes::new(),
             signature: Bytes::from(vec![0u8; 128]),
         });
@@ -7283,6 +7257,7 @@ mod tests {
             signatures: vec![FrameSignature {
                 scheme: FRAME_SIG_SCHEME_SECP256K1,
                 signer: Some(Address::from_low_u64_be(0xABCD)),
+                signer_key: None,
                 msg: Bytes::new(),
                 signature: Bytes::from(vec![0x01u8; 65]),
             }],
@@ -7370,212 +7345,192 @@ mod tests {
         );
     }
 
-    // ── Proof frames (EIP-8504) ──
+    // ── leanSPHINCS dependencies declared in the signature list ──
 
-    /// A proof frame that declares the given `(data_hash, public key)` pairs under
-    /// the leanSPHINCS scheme, with the gas the EIP requires.
-    fn proof_frame(declarations: &[(H256, H256)]) -> Frame {
-        let mut data = Vec::new();
-        for (data_hash, public_key) in declarations {
-            data.extend_from_slice(&[0u8; 31]);
-            data.push(LEANSPHINCS_SCHEME);
-            data.extend_from_slice(data_hash.as_bytes());
-            data.extend_from_slice(public_key.as_bytes());
-        }
-        Frame {
-            mode: PROOF_FRAME_MODE,
-            flags: 0,
-            target: None,
-            gas_limit: declarations.len() as u64 * LEANSPHINCS_VERIFICATION_GAS,
-            state_gas_limit: 0,
-            value: U256::zero(),
-            data: Bytes::from(data),
-        }
+    /// Signature list entries declaring the given `(message, public key)` pairs
+    /// under the LEANSPHINCS scheme. A zero message stands for the transaction's
+    /// signature hash and is encoded as an empty `msg`.
+    fn dependency_entries(declarations: &[(H256, H256)]) -> Vec<FrameSignature> {
+        declarations
+            .iter()
+            .map(|(message, public_key)| FrameSignature {
+                scheme: FRAME_SIG_SCHEME_LEANSPHINCS,
+                signer: None,
+                signer_key: Some(*public_key),
+                msg: if message.is_zero() {
+                    Bytes::new()
+                } else {
+                    Bytes::copy_from_slice(message.as_bytes())
+                },
+                signature: Bytes::new(),
+            })
+            .collect()
     }
 
-    /// The test transaction with `frame` inserted between its VERIFY and SENDER
-    /// frames.
-    fn frame_tx_with_proof_frame(frame: Frame) -> FrameTransaction {
+    /// `make_test_frame_tx` with `declarations` appended to its signature list.
+    fn dependency_tx(declarations: &[(H256, H256)]) -> FrameTransaction {
         let mut tx = make_test_frame_tx();
-        tx.frames.insert(1, frame);
+        tx.signatures.extend(dependency_entries(declarations));
         tx
     }
 
     #[test]
-    fn proof_frame_is_an_accepted_mode_and_the_next_one_is_reserved() {
-        let key = H256::repeat_byte(0xAA);
-        let mut tx = frame_tx_with_proof_frame(proof_frame(&[(H256::zero(), key)]));
-        tx.validate_static_constraints()
-            .expect("a well-formed proof frame is valid");
-        tx.frames[1].mode = PROOF_FRAME_MODE + 1;
-        let err = tx
-            .validate_static_constraints()
-            .expect_err("mode 5 is reserved");
-        assert!(err.contains("reserved execution mode 5"), "{err}");
-    }
-
-    #[test]
-    fn proof_frame_may_sit_at_any_position() {
-        let frame = proof_frame(&[(H256::zero(), H256::repeat_byte(0xAA))]);
-        for position in 0..=2 {
-            let mut tx = make_test_frame_tx();
-            tx.frames.insert(position, frame.clone());
-            tx.validate_static_constraints()
-                .unwrap_or_else(|e| panic!("position {position}: {e}"));
-        }
-    }
-
-    #[test]
-    fn proof_frame_static_constraints_are_enforced() {
-        let key = H256::repeat_byte(0xAA);
-        let valid = proof_frame(&[(H256::zero(), key)]);
-        let reject = |frame: Frame, expected: &str| {
-            let err = frame_tx_with_proof_frame(frame)
-                .validate_static_constraints()
-                .expect_err(expected);
-            assert!(err.contains(expected), "expected {expected:?}, got {err:?}");
-        };
-
-        let mut empty = valid.clone();
-        empty.data = Bytes::new();
-        empty.gas_limit = 0;
-        reject(empty, "nonzero multiple of 96 bytes");
-
-        let mut ragged = valid.clone();
-        ragged.data = Bytes::from([valid.data.as_ref(), &[0u8]].concat());
-        reject(ragged, "nonzero multiple of 96 bytes");
-
-        let too_many = proof_frame(&vec![(H256::zero(), key); MAX_DEPENDENCIES_PER_FRAME + 1]);
-        reject(too_many, "more than 256");
-
-        let mut padded_scheme = valid.clone();
-        let mut data = valid.data.to_vec();
-        data[0] = 1;
-        padded_scheme.data = Bytes::from(data);
-        reject(padded_scheme, "unknown scheme");
-
-        let mut other_scheme = valid.clone();
-        let mut data = valid.data.to_vec();
-        data[31] = 0x11;
-        other_scheme.data = Bytes::from(data);
-        reject(other_scheme, "unknown scheme");
-
-        let mut with_target = valid.clone();
-        with_target.target = Some(Address::from_low_u64_be(0xABCD));
-        reject(with_target, "must have no target");
-
-        let mut with_value = valid.clone();
-        with_value.value = U256::one();
-        reject(with_value, "must have value == 0");
-
-        let mut with_flags = valid.clone();
-        with_flags.flags = APPROVE_EXECUTION;
-        reject(with_flags, "must have flags == 0");
-
-        let mut wrong_gas = valid.clone();
-        wrong_gas.gas_limit += 1;
-        reject(wrong_gas, "must declare 3000 execution gas");
-
-        let mut with_state_gas = valid;
-        with_state_gas.state_gas_limit = 1;
-        reject(with_state_gas, "must have state_gas_limit == 0");
-
-        // The largest frame the EIP allows is accepted.
-        let full = proof_frame(&vec![(H256::zero(), key); MAX_DEPENDENCIES_PER_FRAME]);
-        frame_tx_with_proof_frame(full)
-            .validate_static_constraints()
-            .expect("256 triples are allowed");
-    }
-
-    #[test]
-    fn proof_frame_cannot_follow_an_atomic_batch_frame() {
+    fn mode_four_is_a_reserved_frame_mode() {
+        // Dependencies are declared in the signature list: no frame mode carries
+        // them, so 4 is reserved like every mode above ASSERT.
         let mut tx = make_test_frame_tx();
-        tx.frames = vec![
-            tx.frames[0].clone(),
-            Frame {
-                mode: FrameMode::Sender as u8,
-                flags: 0x04, // atomic batch
-                target: Some(Address::from_low_u64_be(0x1234)),
-                gas_limit: 21_000,
-                state_gas_limit: 0,
-                value: U256::zero(),
-                data: Bytes::new(),
-            },
-            proof_frame(&[(H256::zero(), H256::repeat_byte(0xAA))]),
-        ];
-        let err = tx
+        tx.frames[1].mode = 4;
+        assert!(
+            tx.validate_static_constraints()
+                .unwrap_err()
+                .contains("reserved execution mode"),
+        );
+    }
+
+    #[test]
+    fn leansphincs_entry_static_constraints_are_enforced() {
+        let key = H256::repeat_byte(0xAA);
+        // The signature hash, or an explicit non-zero message.
+        dependency_tx(&[(H256::zero(), key)])
             .validate_static_constraints()
-            .expect_err("a proof frame cannot end an atomic batch");
-        assert!(err.contains("proof frame in an atomic batch"), "{err}");
+            .expect("an entry for the signature hash is valid");
+        dependency_tx(&[(H256::repeat_byte(0x01), key)])
+            .validate_static_constraints()
+            .expect("an entry for an explicit message is valid");
+
+        let last = |tx: &mut FrameTransaction| tx.signatures.len() - 1;
+
+        // The signer is the 32-byte public key, never an address or nothing.
+        let mut tx = dependency_tx(&[(H256::zero(), key)]);
+        let i = last(&mut tx);
+        tx.signatures[i].signer_key = None;
+        assert!(
+            tx.validate_static_constraints()
+                .unwrap_err()
+                .contains("a LEANSPHINCS signer must be a 32-byte public key"),
+        );
+        tx.signatures[i].signer = Some(Address::from_low_u64_be(0xABCD));
+        assert!(
+            tx.validate_static_constraints()
+                .unwrap_err()
+                .contains("a LEANSPHINCS signer must be a 32-byte public key"),
+        );
+
+        // The signature never enters the transaction.
+        let mut tx = dependency_tx(&[(H256::zero(), key)]);
+        let i = last(&mut tx);
+        tx.signatures[i].signature = Bytes::from(vec![0x11; LEANSPHINCS_SIGNATURE_SIZE]);
+        assert!(
+            tx.validate_static_constraints()
+                .unwrap_err()
+                .contains("a LEANSPHINCS signature must be empty in the transaction"),
+        );
+
+        // No other scheme takes a key as its signer.
+        let mut tx = make_test_frame_tx();
+        tx.signatures[0].signer = None;
+        tx.signatures[0].signer_key = Some(key);
+        assert!(
+            tx.validate_static_constraints()
+                .unwrap_err()
+                .contains("only a LEANSPHINCS signer is a 32-byte public key"),
+        );
+    }
+
+    #[test]
+    fn arbitrary_entry_takes_only_an_empty_msg() {
+        let mut tx = make_test_frame_tx();
+        tx.signatures[0] = FrameSignature {
+            scheme: FRAME_SIG_SCHEME_ARBITRARY,
+            signer: None,
+            signer_key: None,
+            msg: Bytes::new(),
+            signature: Bytes::from_static(&[0xAA; 4]),
+        };
+        assert!(tx.validate_static_constraints().is_ok());
+        tx.signatures[0].msg = Bytes::from(vec![9u8; 32]);
+        assert!(
+            tx.validate_static_constraints()
+                .unwrap_err()
+                .contains("ARBITRARY signatures must have an empty msg"),
+        );
+    }
+
+    #[test]
+    fn leansphincs_entry_rlp_carries_the_key_as_its_signer() {
+        let key = H256::repeat_byte(0xAA);
+        let entry = dependency_entries(&[(H256::zero(), key)]).remove(0);
+        let mut buf = Vec::new();
+        entry.encode(&mut buf);
+        // [0x10, key (32 bytes), "", ""]
+        let mut expected = vec![0xc0 + 36, 0x10, 0x80 + 32];
+        expected.extend_from_slice(key.as_bytes());
+        expected.extend_from_slice(&[0x80, 0x80]);
+        assert_eq!(buf, expected);
+        let (decoded, rest) = FrameSignature::decode_unfinished(&buf).unwrap();
+        assert!(rest.is_empty());
+        assert_eq!(decoded, entry);
+
+        // A signer that is neither empty, an address nor a key does not decode.
+        let mut odd = vec![0xc0 + 25, 0x10, 0x80 + 21];
+        odd.extend_from_slice(&[0x01; 21]);
+        odd.extend_from_slice(&[0x80, 0x80]);
+        assert!(FrameSignature::decode_unfinished(&odd).is_err());
     }
 
     #[test]
     fn dependencies_substitute_the_signature_hash_then_sort_and_deduplicate() {
-        let key_a = H256::repeat_byte(0xAA);
-        let key_b = H256::repeat_byte(0xBB);
-        let explicit = H256::repeat_byte(0x01);
-        let mut tx = make_test_frame_tx();
-        // Two proof frames; the triple (zero, key_a) is declared in both, and
-        // (explicit, key_b) twice in the same frame.
-        tx.frames.insert(
-            1,
-            proof_frame(&[(H256::zero(), key_b), (explicit, key_b), (explicit, key_b)]),
-        );
-        tx.frames
-            .push(proof_frame(&[(H256::zero(), key_a), (H256::zero(), key_b)]));
-        tx.validate_static_constraints()
-            .expect("repeated declarations are allowed");
-
+        let key = H256::repeat_byte(0xAA);
+        let other_key = H256::repeat_byte(0xBB);
+        let message = H256::repeat_byte(0x01);
+        // The account's own entry twice, an explicit message, and another key.
+        let tx = dependency_tx(&[
+            (H256::zero(), other_key),
+            (H256::zero(), key),
+            (message, key),
+            (H256::zero(), key),
+        ]);
         let sig_hash = tx.compute_sig_hash();
-        assert_ne!(sig_hash, H256::zero());
-        let dependency = |data_hash, verification_key_hash| Dependency {
-            scheme: LEANSPHINCS_SCHEME,
-            data_hash,
-            verification_key_hash,
-        };
         let mut expected = vec![
-            dependency(explicit, key_b),
-            dependency(sig_hash, key_a),
-            dependency(sig_hash, key_b),
+            Dependency {
+                scheme: LEANSPHINCS_SCHEME,
+                data_hash: sig_hash,
+                verification_key_hash: key,
+            },
+            Dependency {
+                scheme: LEANSPHINCS_SCHEME,
+                data_hash: sig_hash,
+                verification_key_hash: other_key,
+            },
+            Dependency {
+                scheme: LEANSPHINCS_SCHEME,
+                data_hash: message,
+                verification_key_hash: key,
+            },
         ];
         expected.sort();
         assert_eq!(tx.dependencies(), expected);
 
-        // The frames keep the zero bytes: the substitution happens only in the
-        // derived list, so the signature hash it uses covers the data as encoded.
-        assert_eq!(
-            tx.frames[1].declared_dependencies()[0].data_hash,
-            H256::zero()
-        );
-        assert!(tx.has_proof_frames());
+        // The substitution happens only in `dependencies()`: the entry keeps its
+        // empty `msg`, which the signature hash covers.
+        assert!(tx.signatures.last().unwrap().msg.is_empty());
+        assert!(tx.has_dependencies());
+        // The other schemes of the signature list declare no dependency.
         assert!(make_test_frame_tx().dependencies().is_empty());
-        assert!(!make_test_frame_tx().has_proof_frames());
+        assert!(!make_test_frame_tx().has_dependencies());
     }
 
     #[test]
-    fn dependencies_are_ordered_by_scheme_then_message_then_key() {
-        let low = H256::from_low_u64_be(1);
-        let high = H256::repeat_byte(0xFF);
-        let dependency = |scheme, data_hash, verification_key_hash| Dependency {
-            scheme,
-            data_hash,
-            verification_key_hash,
-        };
-        let mut dependencies = vec![
-            dependency(0x11, low, low),
-            dependency(0x10, high, low),
-            dependency(0x10, low, high),
-            dependency(0x10, low, low),
-        ];
-        dependencies.sort();
-        assert_eq!(
-            dependencies,
-            vec![
-                dependency(0x10, low, low),
-                dependency(0x10, low, high),
-                dependency(0x10, high, low),
-                dependency(0x11, low, low),
-            ]
+    fn sig_hash_covers_the_declared_key_and_message() {
+        let key = H256::repeat_byte(0xAA);
+        let base = dependency_tx(&[(H256::zero(), key)]);
+        let other_key = dependency_tx(&[(H256::zero(), H256::repeat_byte(0xBB))]);
+        let other_message = dependency_tx(&[(H256::repeat_byte(0x01), key)]);
+        assert_ne!(base.compute_sig_hash(), other_key.compute_sig_hash());
+        assert_ne!(base.compute_sig_hash(), other_message.compute_sig_hash());
+        assert_ne!(
+            base.compute_sig_hash(),
+            make_test_frame_tx().compute_sig_hash()
         );
     }
 
@@ -7584,64 +7539,59 @@ mod tests {
         let dependency = Dependency {
             scheme: LEANSPHINCS_SCHEME,
             data_hash: H256::repeat_byte(0x01),
-            verification_key_hash: H256::repeat_byte(0x02),
+            verification_key_hash: H256::repeat_byte(0xAA),
         };
-        let frame = proof_frame(&[(dependency.data_hash, dependency.verification_key_hash)]);
-        assert_eq!(dependency.encode().as_slice(), frame.data.as_ref());
-        assert_eq!(frame.declared_dependencies(), vec![dependency]);
+        let encoded = dependency.encode();
+        assert_eq!(encoded.len(), DEPENDENCY_TRIPLE_BYTES);
+        assert!(encoded[..31].iter().all(|byte| *byte == 0));
+        assert_eq!(encoded[31], LEANSPHINCS_SCHEME);
+        assert_eq!(&encoded[32..64], dependency.data_hash.as_bytes());
+        assert_eq!(&encoded[64..], dependency.verification_key_hash.as_bytes());
     }
 
     #[test]
     fn block_dependencies_merge_the_transactions_of_a_block() {
-        let shared = H256::repeat_byte(0x07);
-        let key_a = H256::repeat_byte(0xAA);
-        let key_b = H256::repeat_byte(0xBB);
-
-        // Both transactions declare the same explicit message under key_a, and
-        // each declares its own signature hash under its own key.
-        let mut first = make_test_frame_tx();
-        first
-            .frames
-            .push(proof_frame(&[(shared, key_a), (H256::zero(), key_a)]));
-        let mut second = make_test_frame_tx();
+        let key = H256::repeat_byte(0xAA);
+        let message = H256::repeat_byte(0x01);
+        // Both transactions depend on the same explicit message; each also
+        // depends on its own signature hash.
+        let first = dependency_tx(&[(H256::zero(), key), (message, key)]);
+        let mut second = dependency_tx(&[(message, key), (H256::zero(), key)]);
         second.nonce_seq += 1;
-        second
-            .frames
-            .push(proof_frame(&[(shared, key_a), (H256::zero(), key_b)]));
-
-        let transactions = vec![
-            Transaction::FrameTransaction(first.clone()),
-            Transaction::EIP1559Transaction(Default::default()),
-            Transaction::FrameTransaction(second.clone()),
-        ];
-        let dependencies = block_dependencies(&transactions);
-
         let mut expected: Vec<Dependency> = [first.dependencies(), second.dependencies()].concat();
         expected.sort();
         expected.dedup();
-        assert_eq!(dependencies.len(), 3);
-        assert_eq!(dependencies, expected);
+        assert_eq!(expected.len(), 3);
+        assert_eq!(
+            block_dependencies(&[
+                Transaction::FrameTransaction(first),
+                Transaction::EIP1559Transaction(Default::default()),
+                Transaction::FrameTransaction(second),
+            ]),
+            expected
+        );
     }
 
     #[test]
     fn witness_gas_is_charged_once_per_dependency_on_both_sides_of_max_gas() {
-        assert_eq!(LEANSPHINCS_WITNESS_GAS, 495_360);
-
         let key = H256::repeat_byte(0xAA);
         let plain = make_test_frame_tx();
         assert_eq!(plain.dependency_witness_gas(), 0);
 
-        // The same triple declared three times, in two frames, is one dependency;
-        // a second key makes two.
-        let mut tx = make_test_frame_tx();
-        tx.frames
-            .insert(1, proof_frame(&[(H256::zero(), key), (H256::zero(), key)]));
-        tx.frames.push(proof_frame(&[
+        // The same entry three times is one dependency; a second key makes two.
+        let tx = dependency_tx(&[
+            (H256::zero(), key),
+            (H256::zero(), key),
             (H256::zero(), key),
             (H256::zero(), H256::repeat_byte(0xBB)),
-        ]));
+        ]);
         assert_eq!(tx.dependencies().len(), 2);
         assert_eq!(tx.dependency_witness_gas(), 2 * LEANSPHINCS_WITNESS_GAS);
+        // Every entry pays its verification gas, the repeated ones too.
+        assert_eq!(
+            tx.signature_verification_cost(),
+            plain.signature_verification_cost() + 4 * LEANSPHINCS_VERIFICATION_GAS
+        );
 
         // Against the same transaction with the witnesses unpriced, both the
         // standard total and the floor total grow by exactly the witness gas.
@@ -7671,10 +7621,10 @@ mod tests {
     /// A dependency transaction with two dependencies and a witness for each.
     /// The witnesses are not signatures: these tests only cover the encodings.
     fn test_proof_wrapper(blobs_bundle: Option<BlobsBundle>) -> ProofWrapper {
-        let mut tx = frame_tx_with_proof_frame(proof_frame(&[
+        let mut tx = dependency_tx(&[
             (H256::zero(), H256::repeat_byte(0xAA)),
             (H256::repeat_byte(0x01), H256::repeat_byte(0xBB)),
-        ]));
+        ]);
         if blobs_bundle.is_some() {
             tx.blob_versioned_hashes = vec![H256::repeat_byte(0x01)];
         }

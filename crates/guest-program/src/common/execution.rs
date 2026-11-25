@@ -35,15 +35,15 @@ pub struct BatchExecutionResult {
     pub bals: Vec<Option<BlockAccessList>>,
 }
 
-/// EIP-8504: the witnesses of a block's dependencies are verified natively,
-/// before execution, by the node. Stateless execution does not link the verifier,
-/// so it must not vouch for a block that depends on them: executing its proof
-/// frames would accept signatures nobody checked. Such a block is rejected.
+/// The witnesses of a block's dependencies are verified natively, before
+/// execution, by the node. Stateless execution does not link the verifier, so it
+/// must not vouch for a block that depends on them: executing its transactions
+/// would accept signatures nobody checked. Such a block is rejected.
 pub fn reject_unverified_dependency_witnesses(block: &Block) -> Result<(), ExecutionError> {
-    let has_proof_frames = block.body.transactions.iter().any(
-        |tx| matches!(tx, Transaction::FrameTransaction(frame_tx) if frame_tx.has_proof_frames()),
+    let has_dependencies = block.body.transactions.iter().any(
+        |tx| matches!(tx, Transaction::FrameTransaction(frame_tx) if frame_tx.has_dependencies()),
     );
-    if has_proof_frames {
+    if has_dependencies {
         return Err(ExecutionError::UnverifiedDependencyWitnesses(
             block.header.number,
         ));
@@ -245,7 +245,11 @@ where
 mod tests {
     use super::*;
     use bytes::Bytes;
-    use ethrex_common::types::{BlockBody, BlockHeader, Frame, FrameTransaction, PROOF_FRAME_MODE};
+    use ethrex_common::H256;
+    use ethrex_common::types::{
+        BlockBody, BlockHeader, FRAME_SIG_SCHEME_LEANSPHINCS, Frame, FrameSignature,
+        FrameTransaction,
+    };
 
     fn block_with(transactions: Vec<Transaction>) -> Block {
         Block::new(
@@ -262,28 +266,38 @@ mod tests {
         )
     }
 
-    fn frame_tx(mode: u8) -> Transaction {
+    /// A frame transaction, with a LEANSPHINCS entry in its signature list when
+    /// `depends` is set.
+    fn frame_tx(depends: bool) -> Transaction {
+        let signatures = if depends {
+            vec![FrameSignature {
+                scheme: FRAME_SIG_SCHEME_LEANSPHINCS,
+                signer: None,
+                signer_key: Some(H256::repeat_byte(0xAA)),
+                msg: Bytes::new(),
+                signature: Bytes::new(),
+            }]
+        } else {
+            Vec::new()
+        };
         Transaction::FrameTransaction(FrameTransaction {
-            frames: vec![Frame {
-                mode,
-                data: Bytes::from(vec![0u8; 96]),
-                ..Default::default()
-            }],
+            frames: vec![Frame::default()],
+            signatures,
             ..Default::default()
         })
     }
 
     #[test]
-    fn stateless_execution_rejects_a_block_with_proof_frames() {
+    fn stateless_execution_rejects_a_block_with_dependencies() {
         // Any other block is left to the rest of the validation.
         reject_unverified_dependency_witnesses(&block_with(Vec::new())).expect("no transactions");
-        reject_unverified_dependency_witnesses(&block_with(vec![frame_tx(0)]))
-            .expect("a frame transaction without proof frames");
+        reject_unverified_dependency_witnesses(&block_with(vec![frame_tx(false)]))
+            .expect("a frame transaction without dependencies");
 
-        // A proof frame stands for a signature this path cannot check.
+        // A LEANSPHINCS entry stands for a signature this path cannot check.
         let result = reject_unverified_dependency_witnesses(&block_with(vec![
-            frame_tx(0),
-            frame_tx(PROOF_FRAME_MODE),
+            frame_tx(false),
+            frame_tx(true),
         ]));
         assert!(
             matches!(

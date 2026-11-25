@@ -711,6 +711,7 @@ async fn mempool_rejects_frame_tx_with_invalid_signature() {
     frame_tx.signatures = vec![FrameSignature {
         scheme: FRAME_SIG_SCHEME_SECP256K1,
         signer: Some(Address::from_low_u64_be(0xABCD)),
+        signer_key: None,
         msg: Bytes::new(),
         signature: Bytes::from(vec![0xAB; 65]),
     }];
@@ -908,6 +909,7 @@ async fn mempool_rejects_frame_tx_exceeding_max_verify_gas() {
         .map(|_| FrameSignature {
             scheme: FRAME_SIG_SCHEME_P256,
             signer: Some(Address::from_low_u64_be(0xABCD)),
+            signer_key: None,
             msg: Bytes::new(),
             signature: Bytes::from(vec![0u8; 128]),
         })
@@ -3378,6 +3380,7 @@ mod p2p_serve_tests {
             signatures: vec![FrameSignature {
                 scheme: FRAME_SIG_SCHEME_SECP256K1,
                 signer: Some(Address::from_low_u64_be(0xABCD)),
+                signer_key: None,
                 msg: bytes::Bytes::new(),
                 signature: bytes::Bytes::from(vec![0u8; 65]),
             }],

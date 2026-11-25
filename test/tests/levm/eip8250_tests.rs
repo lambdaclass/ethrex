@@ -608,6 +608,7 @@ mod key_zero_from_a_fresh_sender {
         FrameSignature {
             scheme: FRAME_SIG_SCHEME_SECP256K1,
             signer: Some(signer),
+            signer_key: None,
             msg: Bytes::new(),
             signature: Bytes::from(bytes),
         }
@@ -632,6 +633,7 @@ mod key_zero_from_a_fresh_sender {
         tx.signatures = vec![FrameSignature {
             scheme: FRAME_SIG_SCHEME_SECP256K1,
             signer: Some(sender),
+            signer_key: None,
             msg: Bytes::new(),
             signature: Bytes::from(vec![0u8; 65]),
         }];

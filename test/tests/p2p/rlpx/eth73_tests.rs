@@ -10,11 +10,10 @@ use ethrex_blockchain::{
     mempool::{PooledDependencyWitnesses, ProofWrapperAnnouncement},
 };
 use ethrex_common::{
-    Address, H256, U256,
+    Address, H256,
     types::{
-        Frame, FrameTransaction, LEANSPHINCS_SCHEME, LEANSPHINCS_SIGNATURE_SIZE,
-        LEANSPHINCS_VERIFICATION_GAS, MempoolTransaction, PROOF_FRAME_MODE, ProofWrapper,
-        Transaction,
+        FRAME_SIG_SCHEME_LEANSPHINCS, FrameSignature, FrameTransaction, LEANSPHINCS_SIGNATURE_SIZE,
+        MempoolTransaction, ProofWrapper, Transaction,
     },
 };
 use ethrex_crypto::NativeCrypto;
@@ -48,27 +47,20 @@ fn test_blockchain() -> Blockchain {
     Blockchain::default_with_store(store)
 }
 
-/// A wrapper of a transaction from `sender` whose proof frame declares
-/// `dependencies` triples, with a placeholder witness for each.
+/// A wrapper of a transaction from `sender` whose signature list declares
+/// `dependencies` dependencies, with a placeholder witness for each.
 fn wrapper(sender: u64, dependencies: usize) -> ProofWrapper {
-    let mut data = Vec::new();
-    for key in 0..dependencies {
-        data.extend_from_slice(&[0u8; 31]);
-        data.push(LEANSPHINCS_SCHEME);
-        data.extend_from_slice(&[0u8; 32]);
-        data.extend_from_slice(H256::from_low_u64_be(key as u64 + 1).as_bytes());
-    }
     let tx = FrameTransaction {
         sender: Address::from_low_u64_be(sender),
-        frames: vec![Frame {
-            mode: PROOF_FRAME_MODE,
-            flags: 0,
-            target: None,
-            gas_limit: dependencies as u64 * LEANSPHINCS_VERIFICATION_GAS,
-            state_gas_limit: 0,
-            value: U256::zero(),
-            data: Bytes::from(data),
-        }],
+        signatures: (0..dependencies)
+            .map(|key| FrameSignature {
+                scheme: FRAME_SIG_SCHEME_LEANSPHINCS,
+                signer: None,
+                signer_key: Some(H256::from_low_u64_be(key as u64 + 1)),
+                msg: Bytes::new(),
+                signature: Bytes::new(),
+            })
+            .collect(),
         ..Default::default()
     };
     let witnesses = vec![Bytes::from(vec![0x5a; LEANSPHINCS_SIGNATURE_SIZE]); dependencies];

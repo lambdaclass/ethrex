@@ -538,7 +538,11 @@ impl OpcodeHandler for OpSigParamHandler {
             // assigns no resolved signer to ARBITRARY entries, so asking for one
             // is an exceptional halt.
             0x00 => {
-                if sig.scheme == ethrex_common::types::FRAME_SIG_SCHEME_ARBITRARY {
+                // Neither an ARBITRARY entry nor a LEANSPHINCS one resolves to an
+                // address: the first names no signer, the second's is a key.
+                if sig.scheme == ethrex_common::types::FRAME_SIG_SCHEME_ARBITRARY
+                    || sig.scheme == ethrex_common::types::FRAME_SIG_SCHEME_LEANSPHINCS
+                {
                     return Err(ExceptionalHalt::InvalidOpcode.into());
                 }
                 address_to_u256(sig.signer.unwrap_or(ctx.tx.sender))
@@ -560,6 +564,13 @@ impl OpcodeHandler for OpSigParamHandler {
                     return Err(ExceptionalHalt::InvalidOpcode.into());
                 }
                 U256::from(sig.signature.len())
+            }
+            // The raw 32-byte signer of an entry whose signer is a public key. An
+            // account compares it with the key it stores to recognize its own
+            // dependency. Entries whose signer is an address use 0x00.
+            0x04 => {
+                let key = sig.signer_key.ok_or(ExceptionalHalt::InvalidOpcode)?;
+                U256::from_big_endian(key.as_bytes())
             }
             _ => return Err(ExceptionalHalt::InvalidOpcode.into()),
         };
@@ -615,6 +626,20 @@ impl OpcodeHandler for OpSigDataCopyHandler {
             .ok_or(ExceptionalHalt::InvalidOpcode)?;
         if sig.scheme != ethrex_common::types::FRAME_SIG_SCHEME_ARBITRARY {
             return Err(ExceptionalHalt::InvalidOpcode.into());
+        }
+        // Bytes of an entry with an empty `msg` are outside the signature hash, so
+        // anyone can change them without changing that hash. Only a VERIFY frame
+        // may read them: if it rejects what it reads the transaction is invalid, so
+        // tampering can make a transaction invalid but never change what it does.
+        if sig.msg.is_empty() {
+            let reader_is_verify = ctx
+                .tx
+                .frames
+                .get(ctx.current_frame_index)
+                .is_some_and(|frame| frame.execution_mode() == FrameMode::Verify);
+            if !reader_is_verify {
+                return Err(ExceptionalHalt::InvalidOpcode.into());
+            }
         }
         if length == 0 {
             return Ok(OpcodeResult::Continue);
@@ -700,11 +725,6 @@ pub fn execute_default_code(
         // the caller's deferred transfer).
         // EIP-7906: an ASSERT frame is handled like SENDER or DEFAULT.
         FrameMode::Sender | FrameMode::Default | FrameMode::Assert => Ok((true, 0, Vec::new())),
-        // EIP-8504: a proof frame is settled before any target is resolved, so
-        // default code is never asked to stand in for one.
-        FrameMode::Proof => Err(VMError::Internal(crate::errors::InternalError::Custom(
-            "proof frame reached the default code".to_string(),
-        ))),
     }
 }
 

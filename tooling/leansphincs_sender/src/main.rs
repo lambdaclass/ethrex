@@ -12,8 +12,8 @@ use clap::{Parser, Subcommand};
 use ethrex_common::{
     Address, H256, U256,
     types::{
-        Frame, FrameMode, FrameTransaction, LEANSPHINCS_SCHEME, LEANSPHINCS_VERIFICATION_GAS,
-        PROOF_FRAME_MODE, ProofWrapper,
+        FRAME_SIG_SCHEME_LEANSPHINCS, Frame, FrameMode, FrameSignature, FrameTransaction,
+        ProofWrapper,
     },
     utils::keccak,
 };
@@ -21,8 +21,8 @@ use ethrex_crypto::NativeCrypto;
 use eyre::{Context, OptionExt, eyre};
 use serde_json::{Value, json};
 
-/// Gas for the account's validation frame. Its code reads one triple and
-/// approves, a few hundred gas.
+/// Gas for the account's validation frame. Its code reads one entry of the
+/// signature list and approves, a few hundred gas.
 const VERIFY_FRAME_GAS: u64 = 50_000;
 /// Gas for the call the transaction makes once it is approved.
 const SENDER_FRAME_GAS: u64 = 50_000;
@@ -116,56 +116,42 @@ impl AccountsArgs {
 
 /// Validation code of an account controlled by the leanSPHINCS key `public_key`.
 ///
-/// The frame's data is two words: the index of a proof frame and the byte offset
-/// of a triple in it. The code approves execution and payment when that frame is
-/// a proof frame and the triple is `(LEANSPHINCS_SCHEME, 0, public_key)`, that
-/// is, when the transaction depends on a signature of its own signature hash
-/// under the account's key. It reverts otherwise.
+/// The frame's data is one word, the index of an entry of the signature list.
+/// The code approves execution and payment when that entry has the LEANSPHINCS
+/// scheme, its signer is `public_key` and its `msg` is empty, that is, when the
+/// transaction depends on a signature of its own signature hash under the
+/// account's key. It reverts otherwise.
 ///
-/// The same code is exercised by ethrex's EIP-8504 tests
+/// The same code is exercised by ethrex's tests
 /// (`test/tests/levm/eip8504_tests.rs`).
 fn account_code(public_key: H256) -> Vec<u8> {
     let mut code = vec![
-        // FRAMEPARAM(mode, index) == PROOF_FRAME_MODE
+        // SIGPARAM(scheme, index) == LEANSPHINCS
         0x60,
-        0x02, // PUSH1 0x02 (param: mode)
+        0x01, // PUSH1 0x01 (param: scheme)
         0x5f,
-        0x35, // PUSH0, CALLDATALOAD (frame index)
-        0xb3, // FRAMEPARAM
+        0x35, // PUSH0, CALLDATALOAD (entry index)
+        0xb4, // SIGPARAM
         0x60,
-        PROOF_FRAME_MODE, // PUSH1 4
-        0x14,             // EQ
-        // FRAMEDATACOPY(memOffset 0, dataOffset, length 96, frame index)
+        FRAME_SIG_SCHEME_LEANSPHINCS, // PUSH1 0x10
+        0x14,                         // EQ
+        // SIGPARAM(raw signer, index) == public_key
+        0x60,
+        0x04, // PUSH1 0x04 (param: raw 32-byte signer)
         0x5f,
-        0x35, // PUSH0, CALLDATALOAD (frame index)
-        0x60,
-        0x60, // PUSH1 96 (length)
-        0x60,
-        0x20,
-        0x35, // PUSH1 32, CALLDATALOAD (offset of the triple)
-        0x5f, // PUSH0 (memOffset)
-        0xb2, // FRAMEDATACOPY
-        // scheme word == LEANSPHINCS_SCHEME
-        0x5f,
-        0x51, // PUSH0, MLOAD
-        0x60,
-        LEANSPHINCS_SCHEME, // PUSH1 0x10
-        0x14,
-        0x16, // EQ, AND
-        // data_hash == 0: the message is this transaction's signature hash
-        0x60,
-        0x20,
-        0x51, // PUSH1 32, MLOAD
-        0x15,
-        0x16, // ISZERO, AND
-        // verification_key_hash == public_key
-        0x60,
-        0x40,
-        0x51, // PUSH1 64, MLOAD
+        0x35, // PUSH0, CALLDATALOAD (entry index)
+        0xb4, // SIGPARAM
         0x7f, // PUSH32 public_key
     ];
     code.extend_from_slice(public_key.as_bytes());
     code.extend_from_slice(&[0x14, 0x16]); // EQ, AND
+    code.extend_from_slice(&[
+        // SIGPARAM(msg, index) == 0: the message is this transaction's signature hash
+        0x60, 0x02, // PUSH1 0x02 (param: msg)
+        0x5f, 0x35, // PUSH0, CALLDATALOAD (entry index)
+        0xb4, // SIGPARAM
+        0x15, 0x16, // ISZERO, AND
+    ]);
     // JUMPI to the approval, 6 bytes ahead: PUSH1 dest, JUMPI, PUSH0, PUSH0, REVERT.
     let approve_at = (code.len() + 6) as u8;
     code.extend_from_slice(&[0x60, approve_at, 0x57, 0x5f, 0x5f, 0xfd]);
@@ -174,10 +160,9 @@ fn account_code(public_key: H256) -> Vec<u8> {
     code
 }
 
-/// `[VERIFY, PROOF, SENDER]`: the account's validation frame pointed at the only
-/// triple of the proof frame, the proof frame declaring a signature of the
-/// transaction's signature hash under the account's key, and a call to
-/// `recipient`.
+/// `[VERIFY, SENDER]`: the account's validation frame pointed at the only entry
+/// of the signature list, which declares a signature of the transaction's
+/// signature hash under the account's key, and a call to `recipient`.
 fn transaction(
     chain_id: u64,
     account: &Account,
@@ -186,14 +171,9 @@ fn transaction(
     max_fee_per_gas: U256,
     max_priority_fee_per_gas: U256,
 ) -> FrameTransaction {
-    // The validation frame's data: the proof frame is frame 1, the triple is at
-    // offset 0.
-    let mut verify_data = [0u8; 64];
-    verify_data[31] = 1;
-    // The triple: the scheme in a 32-byte word, a zero message, the key.
-    let mut triple = [0u8; 96];
-    triple[31] = LEANSPHINCS_SCHEME;
-    triple[64..].copy_from_slice(account.public.as_bytes());
+    // The validation frame's data: the index of the account's entry in the
+    // signature list.
+    let verify_data = [0u8; 32];
 
     let mut tx = FrameTransaction {
         chain_id,
@@ -211,15 +191,6 @@ fn transaction(
                 data: Bytes::copy_from_slice(&verify_data),
             },
             Frame {
-                mode: PROOF_FRAME_MODE,
-                flags: 0,
-                target: None,
-                gas_limit: LEANSPHINCS_VERIFICATION_GAS,
-                state_gas_limit: 0,
-                value: U256::zero(),
-                data: Bytes::copy_from_slice(&triple),
-            },
-            Frame {
                 mode: u8::from(FrameMode::Sender),
                 flags: 0,
                 target: Some(recipient),
@@ -229,7 +200,14 @@ fn transaction(
                 data: Bytes::new(),
             },
         ],
-        signatures: Vec::new(),
+        // The entry carries no signature: that travels beside the transaction.
+        signatures: vec![FrameSignature {
+            scheme: FRAME_SIG_SCHEME_LEANSPHINCS,
+            signer: None,
+            signer_key: Some(account.public),
+            msg: Bytes::new(),
+            signature: Bytes::new(),
+        }],
         max_priority_fee_per_gas,
         blob_versioned_hashes: Vec::new(),
         ..Default::default()

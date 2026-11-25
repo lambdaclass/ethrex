@@ -1,7 +1,7 @@
 //! EIP-8504 dependency transactions from submission to import.
 //!
-//! An account controlled by a leanSPHINCS key sends `[VERIFY, PROOF, SENDER]`
-//! transactions. The signature travels beside the transaction: it is submitted
+//! An account controlled by a leanSPHINCS key sends `[VERIFY, SENDER]`
+//! transactions whose signature list declares the dependency. The signature travels beside the transaction: it is submitted
 //! with it, kept with it in the pool, placed in the block the transaction is
 //! included in, and checked by every node that imports that block.
 
@@ -31,7 +31,7 @@ use ethrex_rpc::{
 use ethrex_storage::{EngineType, Store};
 use serde_json::json;
 
-use crate::levm::eip8504_tests::{account_code, proof_frame};
+use crate::levm::eip8504_tests::{account_code, dependency_entries};
 
 const RECIPIENT: Address = H160([0x86; 20]);
 const GWEI: u64 = 1_000_000_000;
@@ -109,9 +109,9 @@ fn blockchain(store: Store) -> Blockchain {
     )
 }
 
-/// `[VERIFY, PROOF, SENDER]` from the key's account: its validation frame, a
-/// proof frame that declares a signature of the transaction's own signature hash
-/// under the key followed by `more_declarations`, and a call to `RECIPIENT`.
+/// `[VERIFY, SENDER]` from the key's account: its validation frame and a call to
+/// `RECIPIENT`. The signature list declares a signature of the transaction's own
+/// signature hash under the key, followed by `more_declarations`.
 fn dependency_transaction(
     chain_id: u64,
     key: &Key,
@@ -119,10 +119,8 @@ fn dependency_transaction(
 ) -> FrameTransaction {
     let mut declarations = vec![(H256::zero(), key.public)];
     declarations.extend_from_slice(more_declarations);
-    // The validation frame points at frame 1, the proof frame, and at the triple
-    // at offset 0 in it.
-    let mut verify_data = [0u8; 64];
-    verify_data[31] = 1;
+    // The validation frame points at entry 0 of the signature list.
+    let verify_data = [0u8; 32];
     let mut tx = FrameTransaction {
         chain_id,
         nonce_keys: vec![],
@@ -138,7 +136,6 @@ fn dependency_transaction(
                 value: U256::zero(),
                 data: Bytes::from(verify_data.to_vec()),
             },
-            proof_frame(&declarations),
             Frame {
                 mode: u8::from(FrameMode::Sender),
                 flags: 0,
@@ -149,7 +146,7 @@ fn dependency_transaction(
                 data: Bytes::new(),
             },
         ],
-        signatures: Vec::new(),
+        signatures: dependency_entries(&declarations),
         max_priority_fee_per_gas: U256::from(GWEI),
         blob_versioned_hashes: Vec::new(),
         ..Default::default()
@@ -437,9 +434,10 @@ async fn pool_admits_a_dependency_transaction_only_with_valid_witnesses() {
         "got {result:?}"
     );
 
-    // A transaction without proof frames has nothing for witnesses to satisfy.
+    // A transaction that declares no dependency has nothing for witnesses to
+    // satisfy.
     let mut plain = tx.clone();
-    plain.frames.remove(1);
+    plain.signatures.clear();
     let result = blockchain
         .add_dependency_transaction_to_pool(ProofWrapper::new(plain, None, Vec::new()))
         .await;
