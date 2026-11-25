@@ -405,6 +405,21 @@ impl DiscoveryServer {
             let _ = request.reply.send(Err(FindNodesError::Discv5Disabled));
             return;
         };
+        // A query whose caller has gone is otherwise dropped only at its next
+        // poll, up to a query tick away; it must not hold a slot against a
+        // caller who is waiting. Dropping it is all `QueryStep::Abandoned`
+        // does too: its FINDNODE owners expire with their pending requests.
+        discv5.active_queries.retain(|query| {
+            let abandoned = query.is_abandoned();
+            if abandoned {
+                trace!(
+                    protocol = "discv5",
+                    query = query.id.0,
+                    "Caller stopped waiting; dropping query"
+                );
+            }
+            !abandoned
+        });
         if discv5.active_queries.len() >= MAX_ACTIVE_QUERIES {
             let _ = request.reply.send(Err(FindNodesError::TooManyQueries));
             return;
@@ -1392,6 +1407,40 @@ mod tests {
             .try_recv()
             .expect("the query must answer once its request is answered in full")
             .expect("the query must have run");
+        assert_eq!(result.outcome, QueryOutcome::Exhausted);
+    }
+
+    #[tokio::test]
+    async fn an_abandoned_query_gives_up_its_slot_at_once() {
+        let (mut server, _) = server_with_session(SESSION_IP.parse().unwrap()).await;
+        let discv5 = server.discv5.as_mut().expect("discv5 state must exist");
+        let mut waiting = Vec::new();
+        for _ in 0..MAX_ACTIVE_QUERIES {
+            let (request, answer) = query_request();
+            let id = discv5.next_lookup_id();
+            discv5
+                .active_queries
+                .push(NodeQuery::new(id, request, Instant::now()));
+            waiting.push(answer);
+        }
+
+        // Every slot is taken by a query someone is waiting for.
+        let (request, mut answer) = query_request();
+        server.discv5_start_query(request).await;
+        assert!(matches!(
+            answer.try_recv(),
+            Ok(Err(FindNodesError::TooManyQueries))
+        ));
+
+        // Their callers stop waiting, and no tick has polled the queries since.
+        drop(waiting);
+        let (request, mut answer) = query_request();
+        server.discv5_start_query(request).await;
+        // With nothing to walk from, the query ends at once, but it did run.
+        let result = answer
+            .try_recv()
+            .expect("the query must answer")
+            .expect("abandoned queries must not hold the slots");
         assert_eq!(result.outcome, QueryOutcome::Exhausted);
     }
 

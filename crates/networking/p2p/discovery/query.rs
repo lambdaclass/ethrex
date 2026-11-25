@@ -217,10 +217,16 @@ impl NodeQuery {
         }
     }
 
+    /// Whether the caller has stopped waiting for the answer, by dropping the
+    /// future [`find_nodes`](super::DiscoveryHandle::find_nodes) returned.
+    pub(crate) fn is_abandoned(&self) -> bool {
+        self.reply.as_ref().is_none_or(|reply| reply.is_closed())
+    }
+
     /// Decide what happens next. Call again after acting on a
     /// [`QueryStep::Send`] or [`QueryStep::Walk`].
     pub(crate) fn poll(&mut self, now: Instant) -> QueryStep {
-        if self.reply.as_ref().is_none_or(|reply| reply.is_closed()) {
+        if self.is_abandoned() {
             return QueryStep::Abandoned;
         }
         if self.matched.len() >= self.want {
