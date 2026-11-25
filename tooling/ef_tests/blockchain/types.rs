@@ -325,6 +325,8 @@ pub struct Header {
     // Amsterdam fork fields (EIP-7928)
     pub block_access_list_hash: Option<H256>,
     pub slot_number: Option<U256>,
+    /// EIP-8504: commitment to the block's dependency witnesses.
+    pub dependency_witnesses_hash: Option<H256>,
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Clone)]
@@ -363,6 +365,9 @@ pub struct Block {
     #[serde(default)]
     pub uncle_headers: Vec<Header>,
     pub withdrawals: Option<Vec<Withdrawal>>,
+    /// EIP-8504: the block's dependency witnesses, absent before the EIP.
+    #[serde(default, with = "ethrex_common::serde_utils::bytes::vec_opt")]
+    pub dependency_witnesses: Option<Vec<Bytes>>,
     /// Execution witness from zkevm fixtures (standard format: state/codes/headers).
     #[serde(default, rename = "executionWitness")]
     pub execution_witness: Option<serde_json::Value>,
@@ -397,7 +402,7 @@ impl From<Block> for CoreBlock {
                 transactions: val.transactions.iter().map(|t| t.clone().into()).collect(),
                 ommers: val.uncle_headers.iter().map(|h| h.clone().into()).collect(),
                 withdrawals: val.withdrawals,
-                dependency_witnesses: None,
+                dependency_witnesses: val.dependency_witnesses,
             },
         )
     }
@@ -465,6 +470,7 @@ impl From<Header> for BlockHeader {
             requests_hash: val.requests_hash,
             block_access_list_hash: val.block_access_list_hash,
             slot_number: val.slot_number.map(|x| x.try_into().unwrap()),
+            dependency_witnesses_hash: val.dependency_witnesses_hash,
             ..Default::default()
         }
     }

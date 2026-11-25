@@ -155,6 +155,12 @@ const PATTERNS: &[Entry] = &[
         text: r"Maximum block size exceeded.*" },
     Entry { canonical: "BlockException.INVALID_BAL_HASH", kind: Kind::Re,
         text: r"BAL validation failed" },
+    // EIP-8504: a witness list that is not one valid witness per dependency, and
+    // a header commitment that does not match the list.
+    Entry { canonical: "BlockException.INVALID_DEPENDENCY_WITNESSES", kind: Kind::Re,
+        text: r"Block carries \d+ dependency witnesses for its \d+ dependencies|Dependency witness \d+ does not satisfy its dependency" },
+    Entry { canonical: "BlockException.INVALID_DEPENDENCY_WITNESSES_HASH", kind: Kind::Re,
+        text: r"Dependency witnesses do not match the header" },
     Entry { canonical: "BlockException.INVALID_BLOCK_ACCESS_LIST", kind: Kind::Re,
         text: r"Block access list contains index \d+ exceeding max valid index \d+|Failed to RLP decode BAL|Block access list .+ not in strictly ascending order.*|BAL validation failed for (tx \d+|system_tx|withdrawal): .*|BAL validation failed: .*|absent from BAL|Block access list slot .+ is in both storage_changes and storage_reads.*|Block access list .+ has an empty change set|Invalid block hash" },
     Entry { canonical: "BlockException.INCORRECT_BLOCK_FORMAT", kind: Kind::Re,
