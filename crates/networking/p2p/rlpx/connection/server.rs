@@ -639,15 +639,11 @@ impl PeerConnectionServer {
                 )
                 .await
                 {
-                    match &reason {
-                        PeerConnectionError::NoMatchingCapabilities
-                        | PeerConnectionError::HandshakeError(_) => {
-                            established_state.discovery.record_peer_event(
-                                established_state.node.node_id(),
-                                PeerEvent::Rejected,
-                            );
-                        }
-                        _ => {}
+                    if is_rejection(&reason) {
+                        established_state.discovery.record_peer_event(
+                            established_state.node.node_id(),
+                            PeerEvent::Rejected,
+                        );
                     }
                     connection_failed(
                         &mut established_state,
@@ -1340,11 +1336,13 @@ where
                 trace!(peer=%state.node, "Received Status(72)");
                 backend::validate_status(msg_data, &state.storage, &eth)?
             }
+            // The remote hung up, which is not a verdict on its network or
+            // capabilities: geth, for one, runs its add-peer checks after Hello
+            // and answers `TooManyPeers` or `AlreadyConnected` here. Reported
+            // like a Disconnect received during Hello, so it does not reach
+            // discovery as a rejection that would stop us dialing the node.
             Message::Disconnect(disconnect) => {
-                return Err(PeerConnectionError::HandshakeError(format!(
-                    "Peer disconnected due to: {}",
-                    disconnect.reason()
-                )));
+                return Err(PeerConnectionError::DisconnectReceived(disconnect.reason()));
             }
             _ => {
                 return Err(PeerConnectionError::HandshakeError(
@@ -1366,6 +1364,17 @@ async fn send_disconnect_message(state: &mut Established, reason: Option<Disconn
                 "Could not send Disconnect message",
             );
         });
+}
+
+/// Whether a connection attempt that failed with `error` is reported to discovery as
+/// [`PeerEvent::Rejected`]: the peer is on another network or offers no capability we
+/// speak. Anything else, a Disconnect the remote sent us included, is no verdict on the
+/// peer and reports nothing here.
+fn is_rejection(error: &PeerConnectionError) -> bool {
+    matches!(
+        error,
+        PeerConnectionError::NoMatchingCapabilities | PeerConnectionError::HandshakeError(_)
+    )
 }
 
 async fn connection_failed(state: &mut Established, error_text: &str, error: &PeerConnectionError) {
@@ -3295,7 +3304,7 @@ mod tx_announcement_tests {
 
     /// An established, synced session with a peer speaking `eth_version`, and the receiving end
     /// of its outbound queue, to see what the handler sends back.
-    fn session(eth_version: u8) -> (Established, mpsc::Receiver<Message>) {
+    pub(super) fn session(eth_version: u8) -> (Established, mpsc::Receiver<Message>) {
         let store = Store::new("memory", EngineType::InMemory).expect("in-memory store");
         let blockchain = Arc::new(Blockchain::default_with_store(store.clone()));
         blockchain.set_synced();
@@ -3878,6 +3887,50 @@ mod tx_announcement_tests {
                     ))
                 ),
                 "eth/{eth_version}: got {result:?}"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod status_exchange_tests {
+    use super::*;
+    use ethrex_common::types::Genesis;
+
+    /// A peer that answers our Status with a Disconnect is turning this connection away,
+    /// not telling us it is on another chain. geth runs its add-peer checks after Hello,
+    /// so `TooManyPeers` and `AlreadyConnected` arrive exactly here, and reporting them
+    /// as a rejection would retire a perfectly good peer from discovery's dial pool.
+    #[tokio::test]
+    async fn a_disconnect_instead_of_status_is_not_a_rejection() {
+        for reason in [
+            DisconnectReason::TooManyPeers,
+            DisconnectReason::AlreadyConnected,
+        ] {
+            // The receiver stays bound: dropping it closes the outbound queue, and our
+            // own Status would then fail to send before the peer's answer is read.
+            let (mut state, _outbound) = super::tx_announcement_tests::session(68);
+            state
+                .storage
+                .add_initial_state(Genesis::default())
+                .await
+                .expect("load genesis");
+            let disconnect = Message::Disconnect(DisconnectMessage {
+                reason: Some(reason),
+            });
+            let mut stream = futures::stream::iter([Ok(disconnect)]);
+
+            let error = init_capabilities(&mut state, &mut stream)
+                .await
+                .expect_err("a Disconnect is not a Status");
+
+            assert!(
+                matches!(error, PeerConnectionError::DisconnectReceived(got) if got == reason),
+                "{reason:?}: got {error:?}"
+            );
+            assert!(
+                !is_rejection(&error),
+                "{reason:?}: a remote hanging up must not reach discovery as a rejection"
             );
         }
     }
