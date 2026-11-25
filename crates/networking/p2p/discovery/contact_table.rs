@@ -190,7 +190,8 @@ pub struct Contact {
 
     /// ENR associated with this contact, if it was provided by the peer.
     pub record: Option<NodeRecord>,
-    /// This contact failed to respond our Ping.
+    /// A discovery message to this contact failed on our side; it goes at the
+    /// next prune.
     pub disposable: bool,
     /// Set to true after we send a successful ENRResponse to it.
     pub knows_us: bool,
@@ -299,9 +300,10 @@ impl Contact {
 /// verdict about whether to dial a peer in future, not a statement that the
 /// current connection is over.
 ///
-/// There is no variant for `disposable`. That flag means a contact did not
-/// answer us over UDP, which only discovery is in a position to observe, so it
-/// is set internally rather than reported. The sync layer used to reach for it
+/// There is no variant for `disposable`. That flag means a discovery message
+/// to the contact failed on our side (it could not be encoded or the socket
+/// refused it), which only discovery is in a position to observe, so it is set
+/// internally rather than reported. The sync layer used to reach for it
 /// to mean "stop using this peer", which is not what it does: it deletes the
 /// peer's routing-table entry, leaves the connection up, and is erased by the
 /// next prune. Scoring the peer down is the mechanism for that.
@@ -532,8 +534,11 @@ impl ContactTable {
 
     // --- Contact flags ---
 
-    /// Mark a contact as one we should stop keeping: it failed to answer a ping,
-    /// or the consumer found it useless. Pruned on the next [`Self::prune`].
+    /// Mark a contact as one we should stop keeping: a discovery message to it
+    /// failed on our side. Pruned on the next [`Self::prune`].
+    ///
+    /// Not set for a contact that simply stops answering: no ping or FINDNODE
+    /// timeout marks it.
     pub(crate) fn set_disposable(&mut self, node_id: &H256) {
         if let Some(contact) = self.get_contact_mut(node_id) {
             contact.disposable = true;
@@ -894,9 +899,10 @@ impl ContactTable {
     }
 
     /// Get nodes at distances for discv5 (returns Vec<NodeRecord>).
-    /// Uses the discv5 spec log-distance: `floor(log2(XOR))` for non-zero XOR.
-    /// Distance 0 is reserved for the local node itself (handled by the caller),
-    /// so contacts start at distance >= 1.
+    /// Uses the discv5 spec log-distance, the bit length of the XOR:
+    /// `floor(log2(XOR)) + 1` for non-zero XOR, so 1..=256 (one more than the
+    /// k-bucket index). Distance 0 is reserved for the local node itself
+    /// (handled by the caller), so contacts start at distance >= 1.
     pub fn nodes_at_distances(&self, distances: &[u32]) -> Vec<NodeRecord> {
         self.iter_contacts()
             .filter_map(|(contact_id, contact)| {
