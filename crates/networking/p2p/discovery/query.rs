@@ -253,15 +253,17 @@ impl NodeQuery {
         QueryStep::Walk
     }
 
-    /// Start a walk toward `target` from `seeds`, contacts whose records we
-    /// already hold, so the predicate runs on the seeds too.
+    /// Start a walk toward `target` from `seeds`, the closest contacts we
+    /// know, with their records where we hold them. The predicate runs on
+    /// those records; a seed without one is asked like any other node, and can
+    /// match only once a record of it turns up.
     ///
     /// `could_dial` says whether the consumer could still want a node; one it
     /// cannot is never reported as a match.
     pub(crate) fn start_walk(
         &mut self,
         target: H256,
-        seeds: &[(H256, Node, NodeRecord)],
+        seeds: &[(H256, Node, Option<NodeRecord>)],
         could_dial: impl Fn(&H256) -> bool,
     ) {
         self.target = target;
@@ -275,7 +277,9 @@ impl NodeQuery {
                 .collect(),
         ));
         for (node_id, node, record) in seeds {
-            self.observe(*node_id, node, record, &could_dial);
+            if let Some(record) = record {
+                self.observe(*node_id, node, record, &could_dial);
+            }
         }
     }
 
@@ -494,6 +498,12 @@ mod tests {
         signed_node(&SecretKey::new(&mut rand::rngs::OsRng), port, 1, marked)
     }
 
+    /// `node` as a walk seed whose record we hold.
+    fn with_record(node: &(H256, Node, NodeRecord)) -> (H256, Node, Option<NodeRecord>) {
+        let (node_id, node, record) = node.clone();
+        (node_id, node, Some(record))
+    }
+
     fn query(want: usize, timeout: Duration) -> (NodeQuery, oneshot::Receiver<QueryReply>) {
         let (reply, rx) = oneshot::channel();
         let request = FindNodesRequest {
@@ -544,7 +554,7 @@ mod tests {
         let (mut query, rx) = query(1, Duration::from_secs(5));
         let marked = node(1, true);
         assert!(matches!(query.poll(Instant::now()), QueryStep::Walk));
-        query.start_walk(H256::zero(), std::slice::from_ref(&marked), anyone);
+        query.start_walk(H256::zero(), &[with_record(&marked)], anyone);
 
         // The match has been seen, yet the query keeps going until it answers.
         assert_eq!(send_all(&mut query), vec![marked.0]);
@@ -565,7 +575,11 @@ mod tests {
         let extra = node(4, false);
         let marked = node(5, true);
         let _ = query.poll(Instant::now());
-        query.start_walk(H256::zero(), &seeds, anyone);
+        query.start_walk(
+            H256::zero(),
+            &seeds.iter().map(with_record).collect::<Vec<_>>(),
+            anyone,
+        );
         let asked = send_all(&mut query);
         let mut sorted = asked.clone();
         sorted.sort();
@@ -585,11 +599,23 @@ mod tests {
     }
 
     #[test]
+    fn a_walk_starts_from_seeds_without_records() {
+        // Bootnodes enter the table as bare nodes, so a query started before
+        // the crawl has fetched any record has only seeds like this one.
+        let (mut query, _rx) = query(1, Duration::from_secs(5));
+        let (node_id, node, _) = node(1, false);
+        assert!(matches!(query.poll(Instant::now()), QueryStep::Walk));
+        query.start_walk(H256::zero(), &[(node_id, node, None)], anyone);
+
+        assert_eq!(send_all(&mut query), vec![node_id]);
+    }
+
+    #[test]
     fn a_node_the_consumer_wrote_off_never_matches() {
         let (mut query, _rx) = query(1, Duration::from_secs(5));
         let marked = node(1, true);
         let _ = query.poll(Instant::now());
-        query.start_walk(H256::zero(), std::slice::from_ref(&marked), |_| false);
+        query.start_walk(H256::zero(), &[with_record(&marked)], |_| false);
         send_all(&mut query);
         query.on_nodes(marked.0, &req(0), 1, &[], |_| false);
 
@@ -603,7 +629,7 @@ mod tests {
         let (mut query, _rx) = query(1, Duration::from_secs(5));
         let marked = node(1, true);
         let _ = query.poll(Instant::now());
-        query.start_walk(H256::zero(), std::slice::from_ref(&marked), anyone);
+        query.start_walk(H256::zero(), &[with_record(&marked)], anyone);
         assert_eq!(send_all(&mut query), vec![marked.0]);
 
         query.on_nodes(marked.0, &req(0), 1, &[], |_| false);
@@ -627,7 +653,11 @@ mod tests {
         let newer = signed_node(&signer, 1, 3, false);
         let relay = node(2, false);
         let _ = query.poll(Instant::now());
-        query.start_walk(H256::zero(), &[matching.clone(), relay.clone()], anyone);
+        query.start_walk(
+            H256::zero(),
+            &[with_record(&matching), with_record(&relay)],
+            anyone,
+        );
         // The candidate is asked first, then the walk's one other node.
         assert_eq!(send_all(&mut query), vec![matching.0, relay.0]);
 
@@ -667,7 +697,11 @@ mod tests {
         let (mut query, _rx) = query(1, Duration::from_secs(5));
         let seeds: Vec<_> = (1..=4).map(|port| node(port, false)).collect();
         let _ = query.poll(Instant::now());
-        query.start_walk(H256::zero(), &seeds, anyone);
+        query.start_walk(
+            H256::zero(),
+            &seeds.iter().map(with_record).collect::<Vec<_>>(),
+            anyone,
+        );
         assert_eq!(send_all(&mut query).len(), LOOKUP_ALPHA);
         assert!(matches!(query.poll(Instant::now()), QueryStep::Wait));
 
@@ -686,7 +720,7 @@ mod tests {
         let seed = node(1, false);
         let later = node(2, false);
         let _ = query.poll(Instant::now());
-        query.start_walk(H256::zero(), std::slice::from_ref(&seed), anyone);
+        query.start_walk(H256::zero(), &[with_record(&seed)], anyone);
         assert_eq!(send_all(&mut query), vec![seed.0]);
 
         query.on_nodes(seed.0, &req(0), 2, &[], anyone);
@@ -714,7 +748,7 @@ mod tests {
             match query.poll(Instant::now()) {
                 QueryStep::Walk => {
                     walks += 1;
-                    query.start_walk(H256::zero(), std::slice::from_ref(&seed), anyone);
+                    query.start_walk(H256::zero(), &[with_record(&seed)], anyone);
                 }
                 QueryStep::Send { nodes, .. } => {
                     for (node_id, _) in nodes {

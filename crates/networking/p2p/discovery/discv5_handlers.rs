@@ -471,7 +471,9 @@ impl DiscoveryServer {
                 }
                 QueryStep::Walk => {
                     let target: H256 = OsRng.r#gen();
-                    let seeds = self.contacts.closest_records(target, LOOKUP_BUCKET_SIZE);
+                    let seeds = self
+                        .contacts
+                        .closest_discv5_contacts(target, LOOKUP_BUCKET_SIZE);
                     let contacts = &self.contacts;
                     let discv5 = self.discv5.as_mut().expect("discv5 state must exist");
                     if seeds.is_empty() {

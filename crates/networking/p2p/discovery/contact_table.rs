@@ -805,13 +805,21 @@ impl ContactTable {
             .collect()
     }
 
-    /// The `count` discv5 contacts closest to `target` that come with a
-    /// record, as `(id, node, record)`, closest first. Seeds a predicate query,
-    /// which needs the records to run its predicate on the seeds too.
-    pub fn closest_records(&self, target: H256, count: usize) -> Vec<(H256, Node, NodeRecord)> {
+    /// The `count` discv5 contacts closest to `target`, as `(id, node,
+    /// record)`, closest first, with the record when we hold one. Seeds a
+    /// predicate query, which runs its predicate on the seeds' records too.
+    ///
+    /// A contact we hold no record for, such as a bootnode, is a seed all the
+    /// same: without it, a query started before the crawl fetched any record
+    /// would have nowhere to begin.
+    pub fn closest_discv5_contacts(
+        &self,
+        target: H256,
+        count: usize,
+    ) -> Vec<(H256, Node, Option<NodeRecord>)> {
         let mut closest: Vec<(H256, &H256, &Contact)> = self
             .iter_contacts()
-            .filter(|(_, c)| c.is_discv5 && !c.disposable && c.record.is_some())
+            .filter(|(_, c)| c.is_discv5 && !c.disposable)
             .map(|(node_id, c)| (xor_distance(&target, node_id), node_id, c))
             .collect();
         if closest.len() > count {
@@ -821,7 +829,7 @@ impl ContactTable {
         closest.sort_unstable_by(|a, b| a.0.cmp(&b.0));
         closest
             .into_iter()
-            .filter_map(|(_, node_id, c)| Some((*node_id, c.node.clone(), c.record.clone()?)))
+            .map(|(_, node_id, c)| (*node_id, c.node.clone(), c.record.clone()))
             .collect()
     }
 
@@ -1395,6 +1403,25 @@ mod tests {
             .map(|(id, _, record)| (*id, record.seq))
             .collect();
         assert_eq!(reported, vec![(node_id, 5)]);
+    }
+
+    #[tokio::test]
+    async fn a_contact_without_a_record_still_seeds_a_query() {
+        // Bootnodes enter as bare nodes. A query started before the crawl has
+        // fetched a single record must still have somewhere to begin.
+        let mut table = table_with(FixedAnswer(true));
+        let (node_id, contact) = dummy_contact(7);
+        table
+            .new_contacts(vec![contact.node.clone()], DiscoveryProtocol::Discv5)
+            .await;
+
+        let seeds = table.closest_discv5_contacts(H256::zero(), 16);
+
+        assert_eq!(seeds.len(), 1);
+        let (seed_id, seed_node, seed_record) = &seeds[0];
+        assert_eq!(*seed_id, node_id);
+        assert_eq!(seed_node.node_id(), node_id);
+        assert!(seed_record.is_none());
     }
 
     // --- Consumer lifecycle ---
