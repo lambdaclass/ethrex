@@ -124,7 +124,7 @@ pub trait SubscriptionManagerProtocol: Send + Sync {
     fn new_head(&self, header: BlockHeader) -> Result<(), ActorError>;
 
     /// Broadcast a transaction added to the mempool to all
-    /// `newPendingTransactions` subscribers, as its hash or as a full transaction.
+    /// `newPendingTransactions` subscribers.
     fn new_pending_transaction(
         &self,
         hash: H256,
@@ -153,9 +153,9 @@ pub trait SubscriptionManagerProtocol: Send + Sync {
     /// [`Self::new_sync_status`].
     fn subscribe_syncing(&self, sender: Sender<String>) -> Response<Option<String>>;
 
-    /// Register a new `newPendingTransactions` subscriber that gets transaction
-    /// hashes or, with `full_txs`, full transactions. Returns its ID like
-    /// [`Self::subscribe`], under the same global cap.
+    /// Register a new `newPendingTransactions` subscriber, sent full transactions
+    /// instead of hashes with `full_txs`. Returns its ID like [`Self::subscribe`],
+    /// under the same global cap.
     fn subscribe_pending_transactions(
         &self,
         sender: Sender<String>,

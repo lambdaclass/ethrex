@@ -62,8 +62,7 @@ pub enum FilterKind {
     /// `eth_newBlockFilter`: the hashes of blocks added since the last poll.
     Blocks,
     /// `eth_newPendingTransactionFilter`: the transactions added to the mempool
-    /// since the last poll, buffered by the mempool's broadcast channel. Their
-    /// hashes, or with `full_txs` the transactions themselves.
+    /// since the last poll, buffered by the mempool's broadcast channel.
     PendingTransactions {
         new_transactions: Arc<Mutex<NewTransactions>>,
         full_txs: bool,
@@ -220,9 +219,8 @@ pub(crate) fn parse_pending_full_txs(param: Option<&RawValue>) -> Result<bool, R
     }
 }
 
-/// How a `newPendingTransactions` subscription or a pending transaction filter
-/// reports `transaction`: its hash, or with `full_txs` the object
-/// `eth_getTransactionByHash` returns for it while pending.
+/// `transaction`'s hash, or with `full_txs` the object `eth_getTransactionByHash`
+/// returns for it while pending.
 pub(crate) fn pending_transaction_value(
     hash: H256,
     transaction: &MempoolTransaction,
@@ -297,10 +295,9 @@ impl NewPendingTransactionFilterRequest {
     }
 }
 
-/// The transactions `new_transactions` has received since it was last drained,
-/// as [`pending_transaction_value`] reports them. Ones that fell out of the
-/// channel's buffer before this poll are skipped, as geth drops them for a filter
-/// that is not polled in time.
+/// The transactions `new_transactions` has received since it was last drained.
+/// Ones that fell out of the channel's buffer before this poll are skipped, as
+/// geth drops them for a filter that is not polled in time.
 fn drain_new_transactions(
     new_transactions: &Mutex<NewTransactions>,
     full_txs: bool,
@@ -955,7 +952,6 @@ mod tests {
             json!(format!("{hash:#x}"))
         };
         add_tx(1);
-        // Hashes without params and with `fullTx: false`, full transactions with `true`.
         let mut ids = Vec::new();
         for params in [json!([]), json!([false]), json!([true])] {
             let id = map_http_requests(
