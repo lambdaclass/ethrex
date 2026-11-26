@@ -54,7 +54,7 @@ fn make_test_block() -> (BlockHeader, BlockBody) {
         transactions: vec![],
         ommers: vec![],
         withdrawals: Some(vec![]),
-        dependency_witnesses: None,
+        claim_witnesses: None,
     };
 
     (header, body)

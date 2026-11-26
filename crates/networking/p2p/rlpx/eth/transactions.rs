@@ -124,9 +124,22 @@ impl NewPooledTransactionHashes {
             // as it would appear in a PooledTransactions response.
             // https://eips.ethereum.org/EIPS/eip-2718
             let transaction_size = match transaction {
-                // Blob-carrying transactions use the network (wrapped) representation
-                // which includes the blobs bundle: EIP-4844 txs and EIP-8141 frame txs
-                // with blobs alike.
+                // An EIP-8141 frame transaction is announced at the size of its
+                // pooled representation, which carries the witnesses of its claims
+                // and, when it has blobs, its sidecar. One whose witnesses or
+                // sidecar are gone from the pool cannot be served, so it is not
+                // announced.
+                Transaction::FrameTransaction(_) => {
+                    let Some(pooled) = blockchain
+                        .mempool
+                        .get_pooled_frame_transaction(transaction_hash)?
+                    else {
+                        continue;
+                    };
+                    P2PTransaction::FrameTransaction(pooled).encode_canonical_len()
+                }
+                // EIP-4844 transactions use the network (wrapped) representation
+                // which includes the blobs bundle.
                 // https://eips.ethereum.org/EIPS/eip-4844#networking
                 transaction if transaction.is_blob_carrying() => {
                     // If the bundle is gone (the tx was evicted or pulled into a payload
@@ -404,10 +417,36 @@ impl PooledTransactions {
         is_l2_mode: bool,
     ) -> Result<(), MempoolError> {
         for tx in self.pooled_transactions {
+            // An EIP-8141 frame tx arrives in its pooled representation, with the
+            // witnesses of its claims and, when it carries blobs, its whole
+            // sidecar. It is admitted as a unit, which checks all of them.
+            let tx = match tx {
+                P2PTransaction::FrameTransaction(pooled) => {
+                    if is_l2_mode && pooled.blobs_bundle.is_some() {
+                        debug!(
+                            peer=%node,
+                            "Rejecting blob transaction in L2 mode - blob transactions are not supported in L2",
+                        );
+                        continue;
+                    }
+                    if let Err(e) = blockchain.add_frame_transaction_to_pool(pooled).await {
+                        if matches!(e, MempoolError::BlobsBundleError(_)) {
+                            return Err(e);
+                        }
+                        debug!(
+                            peer=%node,
+                            error=%e,
+                            "Error adding frame transaction"
+                        );
+                    }
+                    continue;
+                }
+                other => other,
+            };
             let (tx, blobs_bundle) = tx
                 .into_transaction_and_blobs()
                 .map_err(|error| MempoolError::StoreError(StoreError::Custom(error)))?;
-            // An EIP-4844 tx or an EIP-8141 frame tx with blobs, with its sidecar.
+            // An EIP-4844 tx with its sidecar.
             match blobs_bundle {
                 Some(blobs_bundle) => {
                     if is_l2_mode {

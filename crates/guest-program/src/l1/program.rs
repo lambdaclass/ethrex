@@ -121,7 +121,7 @@ pub fn new_payload_request_to_block(
         transactions,
         ommers: vec![],
         withdrawals: Some(withdrawals),
-        dependency_witnesses: None,
+        claim_witnesses: None,
     };
 
     let mut header = BlockHeader {

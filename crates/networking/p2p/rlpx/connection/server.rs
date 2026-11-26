@@ -26,15 +26,6 @@ use crate::{
                 status::StatusMessage72,
                 transactions::{NewPooledTransactionHashes72, PooledTransactions72},
             },
-            eth73::{
-                proof_wrappers::{
-                    GetProofWrappers, MAX_PROOF_WRAPPER_ANNOUNCEMENTS,
-                    MAX_PROOF_WRAPPER_REQUEST_HASHES, MAX_UNDELIVERED_FROM_PEER,
-                    NewProofWrapperHashes, PROOF_WRAPPERS_RESPONSE_SOFT_LIMIT, ProofWrappers,
-                    RequestedFromPeer,
-                },
-                status::StatusMessage73,
-            },
             receipts::{
                 GetReceipts68, GetReceipts70, Receipts68, Receipts69, Receipts70,
                 SOFT_RESPONSE_LIMIT,
@@ -62,7 +53,6 @@ use ethrex_blockchain::{
     Blockchain,
     sampling::{is_provider_role, pick_random_extra_column},
 };
-use ethrex_blockchain::{error::MempoolError, mempool::ProofWrapperAnnouncement};
 use ethrex_common::H256;
 use ethrex_common::types::Receipt;
 #[cfg(feature = "l2")]
@@ -102,11 +92,6 @@ const PING_INTERVAL: Duration = Duration::from_secs(10);
 const BLOCK_RANGE_UPDATE_INTERVAL: Duration = Duration::from_secs(60);
 const INFLIGHT_TX_SWEEP_INTERVAL: Duration = Duration::from_secs(15);
 const INFLIGHT_TX_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// EIP-8504: `GetProofWrappers` requests a peer may leave unanswered before it is
-/// dropped. A node announces only wrappers it can serve, and an empty response is
-/// an answer, so silence is not an honest outcome.
-const MAX_UNANSWERED_PROOF_WRAPPER_REQUESTS: u8 = 2;
 /// Max time a single outbound frame may take to flush to a peer's socket before we
 /// consider the peer wedged and drop it. Without this bound, a slow/half-dead peer
 /// (TCP send window full, never draining) blocks the connection actor's serial drain
@@ -339,21 +324,6 @@ pub struct Established {
             Instant,
         ),
     >,
-    /// EIP-8504: wrappers this peer announced that another connection was already
-    /// fetching. They are requested from this peer if that fetch does not bring
-    /// the transaction in. Bounded by [`MAX_PROOF_WRAPPER_ANNOUNCEMENTS`].
-    pub(crate) pending_proof_wrappers: Vec<ProofWrapperAnnouncement>,
-    /// EIP-8504: `GetProofWrappers` requests awaiting their response: request id
-    /// to the announced wrappers that were requested and the request time.
-    pub(crate) requested_proof_wrappers: HashMap<u64, (Vec<ProofWrapperAnnouncement>, Instant)>,
-    /// EIP-8504: the transactions whose wrapper was already requested from this
-    /// peer, none of which is requested from it again.
-    pub(crate) proof_wrappers_requested_from_peer: RequestedFromPeer,
-    /// EIP-8504: how many `GetProofWrappers` requests this peer left unanswered.
-    pub(crate) unanswered_proof_wrapper_requests: u8,
-    /// EIP-8504: how many wrappers this peer announced, was asked for and did not
-    /// send, whether it answered without them or not at all.
-    pub(crate) undelivered_proof_wrappers: usize,
     /// Buffered transaction requests waiting to be flushed as a single batch.
     /// Accumulated between flush ticks (TX_REQUEST_BATCH_INTERVAL).
     pub(crate) pending_tx_requests: Vec<(NewPooledTransactionHashes, Vec<H256>)>,
@@ -438,18 +408,6 @@ impl Established {
                 warn!(error = %e, "clear_in_flight_txs failed during teardown");
             }
             retry_on_alternates(&self.blockchain, &self.peer_table, &requested_hashes).await;
-        }
-        // EIP-8504: release the wrappers requested from this peer, so a connection
-        // that also had them announced can fetch them.
-        for (_, (requested, _)) in self.requested_proof_wrappers.drain() {
-            let tx_hashes: Vec<H256> = requested.iter().map(|wrapper| wrapper.tx_hash).collect();
-            if let Err(e) = self
-                .blockchain
-                .mempool
-                .clear_in_flight_proof_wrappers(&tx_hashes)
-            {
-                warn!(error = %e, "clear_in_flight_proof_wrappers failed during teardown");
-            }
         }
         // Also clear hashes that were buffered but not yet sent.
         for (_announced, pending_hashes) in self.pending_tx_requests.drain(..) {
@@ -763,7 +721,7 @@ impl PeerConnectionServer {
     async fn handle_sweep_inflight_txs(
         &mut self,
         _msg: peer_connection_server_protocol::SweepInflightTxs,
-        ctx: &Context<Self>,
+        _ctx: &Context<Self>,
     ) {
         if let ConnectionState::Established(ref mut state) = self.state {
             let now = Instant::now();
@@ -798,50 +756,6 @@ impl PeerConnectionServer {
                     }
                     retry_on_alternates(&state.blockchain, &state.peer_table, &hashes).await;
                 }
-            }
-            // EIP-8504: release the wrappers this peer never sent, then request the
-            // ones it announced while another connection was fetching them, if
-            // that fetch did not bring the transaction in.
-            let stale_wrapper_ids: Vec<u64> = state
-                .requested_proof_wrappers
-                .iter()
-                .filter(|(_, (_, ts))| now.duration_since(*ts) > INFLIGHT_TX_TIMEOUT)
-                .map(|(id, _)| *id)
-                .collect();
-            for id in stale_wrapper_ids {
-                if let Some((requested, _)) = state.requested_proof_wrappers.remove(&id) {
-                    let tx_hashes: Vec<H256> =
-                        requested.iter().map(|wrapper| wrapper.tx_hash).collect();
-                    if let Err(e) = state
-                        .blockchain
-                        .mempool
-                        .clear_in_flight_proof_wrappers(&tx_hashes)
-                    {
-                        warn!(error = %e, "clear_in_flight_proof_wrappers failed while sweeping stale requests");
-                    }
-                    state.unanswered_proof_wrapper_requests =
-                        state.unanswered_proof_wrapper_requests.saturating_add(1);
-                    state.undelivered_proof_wrappers = state
-                        .undelivered_proof_wrappers
-                        .saturating_add(requested.len());
-                }
-            }
-            // A peer that keeps announcing wrappers and never sends them only
-            // delays the transactions it announces: drop it. Its teardown
-            // releases whatever is still requested from it.
-            if state.unanswered_proof_wrapper_requests > MAX_UNANSWERED_PROOF_WRAPPER_REQUESTS
-                || state.undelivered_proof_wrappers > MAX_UNDELIVERED_FROM_PEER
-            {
-                debug!(
-                    peer=%state.node,
-                    "Disconnecting peer: proof wrapper requests left unanswered",
-                );
-                state.disconnect_reason = Some(DisconnectReason::UselessPeer);
-                ctx.stop();
-                return;
-            }
-            if let Err(e) = request_pending_proof_wrappers(state).await {
-                debug!(error = %e, "Failed to request pending proof wrappers during sweep");
             }
             // EIP-8070: drop in-flight GetCells entries the peer never answered, so
             // the map can't grow unbounded on a peer that silently ignores requests.
@@ -1078,7 +992,6 @@ where
         Some(cap) if cap == &Capability::eth(70) => EthCapVersion::V70,
         Some(cap) if cap == &Capability::eth(71) => EthCapVersion::V71,
         Some(cap) if cap == &Capability::eth(72) => EthCapVersion::V72,
-        Some(cap) if cap == &Capability::eth(73) => EthCapVersion::V73,
         _ => EthCapVersion::default(),
     };
     *eth_version
@@ -1227,35 +1140,6 @@ async fn send_all_pooled_tx_hashes(
         .await
         .map_err(|e| PeerConnectionError::SendMessage(e.to_string()))?;
     }
-    // EIP-8504: dependency transactions are announced as their wrappers, to the
-    // peers that speak eth/73. Private ones are left out here too.
-    if supports_proof_wrappers(state) {
-        let wrappers = state
-            .blockchain
-            .mempool
-            .get_proof_wrappers_for_new_peer_dump()?;
-        if !wrappers.is_empty() {
-            state
-                .tx_broadcaster
-                .add_txs(
-                    wrappers.iter().map(|wrapper| wrapper.tx_hash).collect(),
-                    state.node.node_id(),
-                )
-                .map_err(|e| PeerConnectionError::BroadcastError(e.to_string()))?;
-            #[cfg(feature = "metrics")]
-            ethrex_metrics::eip8504::METRICS_EIP8504
-                .wrappers_announced_total
-                .inc_by(wrappers.len() as u64);
-            for chunk in wrappers.chunks(MAX_PROOF_WRAPPER_ANNOUNCEMENTS) {
-                connection
-                    .outgoing_message(Message::NewProofWrapperHashes(NewProofWrapperHashes::new(
-                        chunk.to_vec(),
-                    )))
-                    .await
-                    .map_err(|e| PeerConnectionError::SendMessage(e.to_string()))?;
-            }
-        }
-    }
     Ok(())
 }
 
@@ -1300,7 +1184,6 @@ where
             70 => Message::Status70(StatusMessage70::new(&state.storage).await?),
             71 => Message::Status71(StatusMessage71::new(&state.storage).await?),
             72 => Message::Status72(StatusMessage72::new(&state.storage).await?),
-            73 => Message::Status73(StatusMessage73::new(&state.storage).await?),
             ver => {
                 return Err(PeerConnectionError::HandshakeError(format!(
                     "Invalid eth version {ver}"
@@ -1335,10 +1218,6 @@ where
             }
             Message::Status72(msg_data) => {
                 trace!(peer=%state.node, "Received Status(72)");
-                backend::validate_status(msg_data, &state.storage, &eth)?
-            }
-            Message::Status73(msg_data) => {
-                trace!(peer=%state.node, "Received Status(73)");
                 backend::validate_status(msg_data, &state.storage, &eth)?
             }
             Message::Disconnect(disconnect) => {
@@ -1668,7 +1547,6 @@ async fn handle_incoming_message(
             | Message::GetBlockAccessLists(_)
             | Message::Snap2GetBlockAccessLists(_)
             | Message::GetCells(_)
-            | Message::GetProofWrappers(_)
     );
     if is_data_request && !check_serve_request_rate(state) {
         debug!(
@@ -1728,11 +1606,6 @@ async fn handle_incoming_message(
             };
         }
         Message::Status72(msg_data) => {
-            if let Some(eth) = &state.negotiated_eth_capability {
-                backend::validate_status(msg_data, &state.storage, eth)?
-            };
-        }
-        Message::Status73(msg_data) => {
             if let Some(eth) = &state.negotiated_eth_capability {
                 backend::validate_status(msg_data, &state.storage, eth)?
             };
@@ -2094,11 +1967,11 @@ async fn handle_incoming_message(
                     DisconnectReason::UselessPeer,
                 ));
             }
-            // eth/72 and later: respond with PooledTransactions72 (elided blob payload).
+            // eth/72: respond with PooledTransactions72 (elided blob payload).
             let is_eth72 = state
                 .negotiated_eth_capability
                 .as_ref()
-                .is_some_and(|cap| cap.version >= 72);
+                .is_some_and(|cap| cap.version == 72);
             if is_eth72 {
                 let response72 =
                     PooledTransactions72::new(response.id, response.pooled_transactions);
@@ -2350,38 +2223,6 @@ async fn handle_incoming_message(
             }
         }
         // eth/72 (EIP-8070): GetCells handler — serve cells we hold.
-        // eth/73 (EIP-8504): a peer announces the wrappers it has admitted.
-        Message::NewProofWrapperHashes(announcement) if peer_supports_eth => {
-            // Don't request wrappers if we're not synced: we won't be building blocks soon.
-            if state.blockchain.is_synced() {
-                // A wrapper larger than any this node admits is never requested.
-                let max_len = state.blockchain.max_proof_wrapper_size(true);
-                state.pending_proof_wrappers.extend(
-                    announcement
-                        .wrappers
-                        .into_iter()
-                        .filter(|wrapper| wrapper.wrapper_len <= max_len),
-                );
-                // Keep the newest announcements if the peer floods us with them.
-                let excess = state
-                    .pending_proof_wrappers
-                    .len()
-                    .saturating_sub(MAX_PROOF_WRAPPER_ANNOUNCEMENTS);
-                state.pending_proof_wrappers.drain(..excess);
-                request_pending_proof_wrappers(state).await?;
-            }
-        }
-        Message::GetProofWrappers(req) if peer_supports_eth => {
-            let response = req.handle(&state.blockchain)?;
-            #[cfg(feature = "metrics")]
-            ethrex_metrics::eip8504::METRICS_EIP8504
-                .wrappers_served_total
-                .inc_by(response.wrappers.len() as u64);
-            send(state, Message::ProofWrappers(response)).await?;
-        }
-        Message::ProofWrappers(msg) if peer_supports_eth => {
-            handle_proof_wrappers(state, msg).await?;
-        }
         Message::GetCells(req) if peer_supports_eth => {
             let response = req.handle(&state.blockchain.mempool);
             send(state, Message::Cells(response)).await?;
@@ -2988,189 +2829,6 @@ fn supports_eth72(state: &Established) -> bool {
         .negotiated_eth_capability
         .as_ref()
         .is_some_and(|cap| cap.version >= 72)
-}
-
-/// The EIP-8504 wrapper messages exist only from eth/73 on.
-fn supports_proof_wrappers(state: &Established) -> bool {
-    state
-        .negotiated_eth_capability
-        .as_ref()
-        .is_some_and(|cap| cap.version >= 73)
-}
-
-/// EIP-8504: requests from this peer the wrappers it announced whose transaction
-/// the node still lacks, no other connection is fetching, and this peer was not
-/// asked for before. The ones another connection is fetching stay pending and are
-/// tried again on the next sweep.
-/// Requests are sized so that the announced lengths of one request fit the
-/// response soft limit, and a request is tracked only once it was sent.
-async fn request_pending_proof_wrappers(
-    state: &mut Established,
-) -> Result<(), PeerConnectionError> {
-    if state.pending_proof_wrappers.is_empty() {
-        return Ok(());
-    }
-    let mut pending = std::mem::take(&mut state.pending_proof_wrappers);
-    // Never twice from the same peer, whatever came of the first request.
-    state
-        .proof_wrappers_requested_from_peer
-        .retain_unrequested(&mut pending);
-    let (to_request, in_flight_elsewhere) =
-        state.blockchain.mempool.reserve_proof_wrappers(pending)?;
-    state.pending_proof_wrappers = in_flight_elsewhere;
-    state.proof_wrappers_requested_from_peer.record(&to_request);
-
-    let mut chunks: Vec<Vec<ProofWrapperAnnouncement>> = Vec::new();
-    let mut chunk_bytes = 0usize;
-    for wrapper in to_request {
-        let starts_chunk = match chunks.last() {
-            None => true,
-            Some(chunk) => {
-                chunk.len() >= MAX_PROOF_WRAPPER_REQUEST_HASHES
-                    || chunk_bytes.saturating_add(wrapper.wrapper_len)
-                        > PROOF_WRAPPERS_RESPONSE_SOFT_LIMIT
-            }
-        };
-        if starts_chunk {
-            chunks.push(Vec::new());
-            chunk_bytes = 0;
-        }
-        chunk_bytes = chunk_bytes.saturating_add(wrapper.wrapper_len);
-        if let Some(chunk) = chunks.last_mut() {
-            chunk.push(wrapper);
-        }
-    }
-
-    let mut chunks = chunks.into_iter();
-    while let Some(chunk) = chunks.next() {
-        let request = GetProofWrappers::new(
-            random(),
-            chunk.iter().map(|wrapper| wrapper.wrapper_hash).collect(),
-        );
-        let request_id = request.id;
-        if let Err(e) = send(state, Message::GetProofWrappers(request)).await {
-            // Release this chunk and every chunk not sent yet.
-            let unsent: Vec<H256> = chunk
-                .into_iter()
-                .chain(chunks.flatten())
-                .map(|wrapper| wrapper.tx_hash)
-                .collect();
-            if let Err(clear_err) = state
-                .blockchain
-                .mempool
-                .clear_in_flight_proof_wrappers(&unsent)
-            {
-                warn!(error = %clear_err, "clear_in_flight_proof_wrappers failed after send error");
-            }
-            return Err(e);
-        }
-        state
-            .requested_proof_wrappers
-            .insert(request_id, (chunk, Instant::now()));
-    }
-    Ok(())
-}
-
-/// EIP-8504: admits the wrappers a peer returned for a `GetProofWrappers`
-/// request. Each must be one that was requested, for the transaction the peer
-/// announced, and must pass the admission checks that do not depend on this
-/// node's state or policy; a peer that fails any of that is disconnected, since
-/// a node only announces and sends wrappers it has admitted itself.
-async fn handle_proof_wrappers(
-    state: &mut Established,
-    msg: ProofWrappers,
-) -> Result<(), PeerConnectionError> {
-    // A response to no request of ours is ignored.
-    let Some((requested, _)) = state.requested_proof_wrappers.remove(&msg.id) else {
-        return Ok(());
-    };
-    // Release every requested wrapper, delivered or not, so another connection
-    // can fetch the ones this peer left out.
-    let requested_tx_hashes: Vec<H256> = requested.iter().map(|wrapper| wrapper.tx_hash).collect();
-    state
-        .blockchain
-        .mempool
-        .clear_in_flight_proof_wrappers(&requested_tx_hashes)?;
-    if !msg.wrappers.is_empty() {
-        state.received_txs_from_peer = true;
-    }
-    #[cfg(feature = "metrics")]
-    ethrex_metrics::eip8504::METRICS_EIP8504
-        .wrappers_received_total
-        .inc_by(msg.wrappers.len() as u64);
-    // The peer announced every wrapper it was asked for. Leaving some out is
-    // allowed, since a transaction can leave its pool in between, but a peer
-    // that does it at scale is announcing what it does not serve.
-    state.undelivered_proof_wrappers = state
-        .undelivered_proof_wrappers
-        .saturating_add(requested.len().saturating_sub(msg.wrappers.len()));
-    if state.undelivered_proof_wrappers > MAX_UNDELIVERED_FROM_PEER {
-        debug!(
-            peer=%state.node,
-            "Disconnecting peer: too many announced proof wrappers not delivered",
-        );
-        send_disconnect_message(state, Some(DisconnectReason::UselessPeer)).await;
-        return Err(PeerConnectionError::DisconnectSent(
-            DisconnectReason::UselessPeer,
-        ));
-    }
-    if !state.blockchain.is_synced() {
-        return Ok(());
-    }
-
-    let mut delivered = std::collections::HashSet::with_capacity(msg.wrappers.len());
-    for wrapper in msg.wrappers {
-        let wrapper_hash = wrapper.hash(&NativeCrypto);
-        let tx_hash = wrapper.tx_hash(&NativeCrypto);
-        let was_requested = requested.iter().any(|announced| {
-            announced.wrapper_hash == wrapper_hash && announced.tx_hash == tx_hash
-        });
-        if !was_requested || !delivered.insert(wrapper_hash) {
-            debug!(
-                peer=%state.node,
-                "Disconnecting peer: proof wrapper not requested, repeated, or for another transaction",
-            );
-            send_disconnect_message(state, Some(DisconnectReason::SubprotocolError)).await;
-            return Err(PeerConnectionError::DisconnectSent(
-                DisconnectReason::SubprotocolError,
-            ));
-        }
-        match state
-            .blockchain
-            .add_dependency_transaction_to_pool(wrapper)
-            .await
-        {
-            Ok(_) => {
-                // The peer has it: don't announce it back.
-                state
-                    .tx_broadcaster
-                    .add_txs(vec![tx_hash], state.node.node_id())
-                    .map_err(|e| PeerConnectionError::BroadcastError(e.to_string()))?;
-            }
-            // The wrapper itself is invalid whatever the state: the peer cannot
-            // have admitted it.
-            Err(
-                error @ (MempoolError::WitnessesWithoutDependencies
-                | MempoolError::WrapperDependenciesMismatch
-                | MempoolError::DependencyNotSatisfied(_)),
-            ) => {
-                debug!(
-                    peer=%state.node,
-                    reason=%error,
-                    "Disconnecting peer: invalid proof wrapper",
-                );
-                send_disconnect_message(state, Some(DisconnectReason::SubprotocolError)).await;
-                return Err(PeerConnectionError::DisconnectSent(
-                    DisconnectReason::SubprotocolError,
-                ));
-            }
-            // Anything else depends on this node's state or policy.
-            Err(error) => {
-                debug!(peer=%state.node, error=%error, "Error adding dependency transaction");
-            }
-        }
-    }
-    Ok(())
 }
 
 /// For each hash that has a remaining alternate announcer, look up that

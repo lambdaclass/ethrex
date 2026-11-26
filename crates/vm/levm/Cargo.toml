@@ -39,6 +39,9 @@ risc0 = ["c-kzg"]
 zisk = []
 rayon = ["dep:rayon"]
 secp256k1 = []
+# Links the native leanSPHINCS verifier behind EIP-8141's `LEANSPHINCS_VERIFIER`
+# claims. Without it every such claim is treated as unsatisfied.
+leansphincs = ["ethrex-crypto/leansphincs"]
 
 [lints.rust]
 unsafe_code = "warn"

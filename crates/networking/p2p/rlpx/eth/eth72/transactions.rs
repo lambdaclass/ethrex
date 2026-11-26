@@ -93,9 +93,22 @@ impl NewPooledTransactionHashes72 {
             let tx_type = transaction.tx_type();
             let transaction_hash = transaction.hash(&NativeCrypto);
             let transaction_size = match transaction {
-                // A blob-carrying tx is announced at its wrapped size: an EIP-4844 tx,
-                // and an EIP-8141 frame tx with blobs, which eth/72 carries whole since
-                // its elided encoding and `cell_mask` are defined for type 3 only.
+                // An EIP-8141 frame transaction is announced at the size of its
+                // pooled representation, which carries the witnesses of its claims
+                // and, when it has blobs, its sidecar: eth/72 carries it whole,
+                // since its elided encoding and `cell_mask` are defined for type 3
+                // only. One whose witnesses or sidecar are gone from the pool
+                // cannot be served, so it is not announced.
+                Transaction::FrameTransaction(_) => {
+                    let Some(pooled) = blockchain
+                        .mempool
+                        .get_pooled_frame_transaction(transaction_hash)?
+                    else {
+                        continue;
+                    };
+                    P2PTransaction::FrameTransaction(pooled).encode_canonical_len()
+                }
+                // An EIP-4844 tx is announced at its wrapped size.
                 transaction if transaction.is_blob_carrying() => {
                     // See `NewPooledTransactionHashes::new`: a blob tx whose bundle is no
                     // longer in the pool cannot be served, so it must not be announced.
@@ -399,12 +412,38 @@ impl PooledTransactions72 {
         is_l2_mode: bool,
     ) -> Result<(), MempoolError> {
         for tx in self.pooled_transactions {
+            // An EIP-8141 frame tx arrives in its pooled representation, with the
+            // witnesses of its claims and, when it carries blobs, its whole
+            // sidecar. It is admitted as a unit, which checks all of them.
+            let tx = match tx {
+                P2PTransaction::FrameTransaction(pooled) => {
+                    if is_l2_mode && pooled.blobs_bundle.is_some() {
+                        debug!(
+                            peer=%node,
+                            "Rejecting blob transaction in L2 mode - blob transactions are not supported in L2",
+                        );
+                        continue;
+                    }
+                    if let Err(e) = blockchain.add_frame_transaction_to_pool(pooled).await {
+                        if matches!(e, MempoolError::BlobsBundleError(_)) {
+                            return Err(e);
+                        }
+                        debug!(
+                            peer=%node,
+                            error=%e,
+                            "Error adding frame transaction"
+                        );
+                    }
+                    continue;
+                }
+                other => other,
+            };
             let (tx, blobs_bundle) = tx
                 .into_transaction_and_blobs()
                 .map_err(|error| MempoolError::StoreError(StoreError::Custom(error)))?;
             // An EIP-4844 tx (blobs elided in eth/72, so commitments and proofs are
             // stored and full KZG validation waits for the cells fetched via
-            // GetCells) or an EIP-8141 frame tx with blobs, which arrives whole.
+            // GetCells).
             match blobs_bundle {
                 Some(blobs_bundle) => {
                     if is_l2_mode {

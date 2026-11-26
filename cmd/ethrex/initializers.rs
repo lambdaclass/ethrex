@@ -931,7 +931,6 @@ pub async fn init_l1(
             gap_admit_occupancy_threshold: opts.mempool_gap_admit_occupancy_threshold,
             mempool_prewarm_enabled: true,
             max_verify_gas: opts.mempool_max_verify_gas,
-            max_sigs_per_tx: opts.mempool_max_sigs_per_tx,
         },
     );
 

@@ -104,6 +104,43 @@ impl Evm {
         }
     }
 
+    /// EIP-8141 §Block Witnesses: checks the block's `claim_witnesses` against its
+    /// transactions' claims, on the state this EVM was created over, which must be
+    /// the block's pre-state. It must pass before the block executes: execution
+    /// treats every claim as verified.
+    pub fn verify_claim_witnesses(
+        &self,
+        block: &Block,
+    ) -> Result<(), crate::claims::ClaimWitnessesError> {
+        crate::claims::verify_claim_witnesses(
+            block,
+            self.db.store.clone(),
+            self.vm_type,
+            self.crypto.as_ref(),
+        )
+    }
+
+    /// EIP-8141 `verify_dependency` at the block `header` belongs to, against the
+    /// state this EVM was created over: whether `witness` satisfies `dependency`.
+    /// Verification reads state through a database of its own, so nothing it loads
+    /// reaches this EVM's.
+    pub fn verify_dependency(
+        &self,
+        dependency: &ethrex_common::types::Dependency,
+        witness: &[u8],
+        header: &BlockHeader,
+    ) -> Result<bool, EvmError> {
+        let mut db = GeneralizedDatabase::new(self.db.store.clone());
+        crate::claims::verify_dependency(
+            dependency,
+            witness,
+            &mut db,
+            header,
+            self.vm_type,
+            self.crypto.as_ref(),
+        )
+    }
+
     /// Execute a block and return the execution result.
     ///
     /// Also records and returns the Block Access List (EIP-7928) for Amsterdam+ forks.

@@ -14,8 +14,8 @@ use ethrex_common::{
     Address, H160, H256, U256,
     types::{
         BYTES_PER_CELL, BlobTuple, BlobsBundle, BlockHeader, CELLS_PER_EXT_BLOB, ChainConfig,
-        FRAME_TX_MAX_PENDING_NONCANONICAL_PAYMASTER, Fork, MempoolTransaction, ProofWrapper,
-        Transaction, TxType, kzg_commitment_to_versioned_hash,
+        FRAME_TX_MAX_PENDING_NONCANONICAL_PAYMASTER, Fork, MempoolTransaction,
+        PooledFrameTransaction, Transaction, TxType, kzg_commitment_to_versioned_hash,
     },
     utils::keccak,
 };
@@ -24,7 +24,7 @@ use ethrex_metrics::metrics;
 use ethrex_storage::error::StoreError;
 
 #[cfg(feature = "metrics")]
-use ethrex_metrics::eip8504::METRICS_EIP8504;
+use ethrex_metrics::claims::METRICS_CLAIMS;
 use ethrex_vm::{intrinsic_gas_dimensions, intrinsic_gas_floor};
 use tracing::{info, warn};
 
@@ -211,56 +211,20 @@ pub struct Alternate {
     pub tx_size: usize,
 }
 
-/// The witnesses a pooled dependency transaction (EIP-8504) was admitted with,
-/// and the identity of the wrapper that carries them on the network.
-#[derive(Debug, Clone)]
-pub struct PooledDependencyWitnesses {
-    /// The Keccak-256 hash of the wrapper's RLP serialization.
-    pub wrapper_hash: H256,
-    /// The length in bytes of the wrapper's RLP serialization.
-    pub wrapper_len: usize,
-    /// One witness for each entry of the transaction's `dependencies()`, in the
-    /// same order. They were verified on admission.
-    pub witnesses: Vec<Bytes>,
-}
-
-impl PooledDependencyWitnesses {
-    /// Total size of the witnesses, in bytes.
-    fn witness_bytes(&self) -> usize {
-        self.witnesses.iter().map(Bytes::len).sum()
-    }
-}
-
-/// A pooled wrapper as it is announced to peers: its hash, the hash of its
-/// transaction and the length of its RLP serialization.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ProofWrapperAnnouncement {
-    pub wrapper_hash: H256,
-    pub tx_hash: H256,
-    pub wrapper_len: usize,
-}
-
 #[derive(Debug, Default)]
 struct MempoolInner {
     broadcast_pool: FxHashSet<H256>,
     transaction_pool: FxHashMap<H256, MempoolTransaction>,
     blobs_bundle_pool: FxHashMap<H256, BlobsBundle>,
-    /// The witnesses of every pooled dependency transaction (EIP-8504), keyed by
-    /// transaction hash. An entry is inserted together with its transaction and
-    /// removed with it in `remove_transaction_with_lock`, so a pooled transaction
-    /// with proof frames always has its witnesses here. Kept apart from
+    /// The witnesses of every pooled frame transaction that has claims
+    /// (EIP-8141), keyed by transaction hash: one witness for each claim, in the
+    /// order of the claims. An entry is inserted together with its transaction
+    /// and removed with it in `remove_transaction_with_lock`, so a pooled
+    /// transaction with claims always has its witnesses here. Kept apart from
     /// `blobs_bundle_pool`, whose size is the blob transaction count.
-    dependency_witnesses_pool: FxHashMap<H256, PooledDependencyWitnesses>,
-    /// For each pooled wrapper's hash, the hash of its transaction.
-    tx_by_wrapper_hash: FxHashMap<H256, H256>,
-    /// Total size in bytes of the witnesses in `dependency_witnesses_pool`.
-    dependency_witness_bytes: usize,
-    /// Hashes of the transactions whose wrapper has been requested from a peer
-    /// with `GetProofWrappers` and not yet answered. Keyed by transaction, not by
-    /// wrapper, because one wrapper is enough for a transaction that has several.
-    /// Kept apart from `in_flight_txs`, so announcing a hash in one protocol
-    /// cannot hold back a request in the other.
-    in_flight_proof_wrappers: FxHashSet<H256>,
+    claim_witnesses_pool: FxHashMap<H256, Vec<Bytes>>,
+    /// Total size in bytes of the witnesses in `claim_witnesses_pool`.
+    claim_witness_bytes: usize,
     /// Transaction hashes that have been requested via GetPooledTransactions
     /// but whose responses haven't arrived yet. Used to avoid sending duplicate
     /// requests when multiple peers announce the same transaction.
@@ -365,13 +329,12 @@ impl MempoolInner {
         }
         self.broadcast_pool.remove(hash);
         self.private_pool.remove(hash);
-        // EIP-8504: a dependency transaction's witnesses leave with it.
-        if let Some(pooled) = self.dependency_witnesses_pool.remove(hash) {
-            self.tx_by_wrapper_hash.remove(&pooled.wrapper_hash);
-            self.dependency_witness_bytes = self
-                .dependency_witness_bytes
-                .saturating_sub(pooled.witness_bytes());
-            self.record_dependency_witnesses_metrics();
+        // EIP-8141: a frame transaction's claim witnesses leave with it.
+        if let Some(witnesses) = self.claim_witnesses_pool.remove(hash) {
+            self.claim_witness_bytes = self
+                .claim_witness_bytes
+                .saturating_sub(witnesses.iter().map(Bytes::len).sum());
+            self.record_claim_witnesses_metrics();
         }
 
         // Clear ALL frame-tx reservation state in this single removal path
@@ -416,15 +379,15 @@ impl MempoolInner {
         Ok(())
     }
 
-    /// Publishes the size of the dependency witnesses pool (EIP-8504).
-    fn record_dependency_witnesses_metrics(&self) {
+    /// Publishes the size of the claim witnesses pool (EIP-8141).
+    fn record_claim_witnesses_metrics(&self) {
         metrics!({
-            METRICS_EIP8504
+            METRICS_CLAIMS
                 .pool_transactions
-                .set(self.dependency_witnesses_pool.len() as i64);
-            METRICS_EIP8504
+                .set(self.claim_witnesses_pool.len() as i64);
+            METRICS_CLAIMS
                 .pool_witness_bytes
-                .set(self.dependency_witness_bytes as i64);
+                .set(self.claim_witness_bytes as i64);
         });
     }
 
@@ -957,20 +920,21 @@ impl Mempool {
         )
     }
 
-    /// Adds a dependency transaction (EIP-8504) to the pool together with the
-    /// witnesses it was admitted with. Both are stored under the same write lock,
-    /// so no reader sees the transaction without them. Admission gating is
-    /// identical to [`Self::add_transaction`]; with `broadcast` unset the
-    /// transaction stays private, as in [`Self::add_transaction_no_broadcast`].
+    /// Adds a frame transaction with claims (EIP-8141) to the pool together with
+    /// the witnesses it was admitted with, one for each claim in the order of the
+    /// claims. Both are stored under the same write lock, so no reader sees the
+    /// transaction without them. Admission gating is identical to
+    /// [`Self::add_transaction`]; with `broadcast` unset the transaction stays
+    /// private, as in [`Self::add_transaction_no_broadcast`].
     #[allow(clippy::too_many_arguments)]
-    pub fn add_dependency_transaction(
+    pub fn add_transaction_with_claim_witnesses(
         &self,
         hash: H256,
         sender: Address,
         transaction: MempoolTransaction,
         frame_reservation: Option<FramePaymasterReservation>,
         sender_admission: Option<SenderAdmission>,
-        dependency_witnesses: PooledDependencyWitnesses,
+        claim_witnesses: Vec<Bytes>,
         broadcast: bool,
     ) -> Result<(), MempoolError> {
         self.add_transaction_inner(
@@ -979,7 +943,7 @@ impl Mempool {
             transaction,
             frame_reservation,
             sender_admission,
-            Some(dependency_witnesses),
+            Some(claim_witnesses),
             broadcast,
         )
     }
@@ -992,7 +956,7 @@ impl Mempool {
         transaction: MempoolTransaction,
         frame_reservation: Option<FramePaymasterReservation>,
         sender_admission: Option<SenderAdmission>,
-        dependency_witnesses: Option<PooledDependencyWitnesses>,
+        claim_witnesses: Option<Vec<Bytes>>,
         broadcast: bool,
     ) -> Result<(), MempoolError> {
         let mut inner = self.write()?;
@@ -1156,16 +1120,15 @@ impl Mempool {
             inner.txs_by_sender_nonce.insert((sender, tx_nonce), hash);
         }
         inner.transaction_pool.insert(hash, transaction);
-        // EIP-8504: the witnesses enter with their transaction. Every removal
-        // above has already run, so one that dropped an earlier copy of this same
-        // transaction cannot take these with it.
-        if let Some(pooled) = dependency_witnesses {
-            inner.tx_by_wrapper_hash.insert(pooled.wrapper_hash, hash);
-            inner.dependency_witness_bytes = inner
-                .dependency_witness_bytes
-                .saturating_add(pooled.witness_bytes());
-            inner.dependency_witnesses_pool.insert(hash, pooled);
-            inner.record_dependency_witnesses_metrics();
+        // EIP-8141: the claim witnesses enter with their transaction. Every
+        // removal above has already run, so one that dropped an earlier copy of
+        // this same transaction cannot take these with it.
+        if let Some(witnesses) = claim_witnesses {
+            inner.claim_witness_bytes = inner
+                .claim_witness_bytes
+                .saturating_add(witnesses.iter().map(Bytes::len).sum());
+            inner.claim_witnesses_pool.insert(hash, witnesses);
+            inner.record_claim_witnesses_metrics();
         }
         // Private txs are held for local block building only: they never enter
         // the broadcast pool, so no P2P path can pick them up.
@@ -1220,18 +1183,13 @@ impl Mempool {
         Ok(())
     }
 
-    /// The transactions queued for broadcast. A dependency transaction
-    /// (EIP-8504) is never among them: it is propagated only inside its wrapper,
-    /// see [`Self::get_proof_wrappers_for_broadcast`].
     pub fn get_txs_for_broadcast(&self) -> Result<Vec<MempoolTransaction>, StoreError> {
         let inner = self.read()?;
         let txs = inner
             .transaction_pool
             .iter()
             .filter_map(|(hash, tx)| {
-                if !inner.broadcast_pool.contains(hash)
-                    || inner.dependency_witnesses_pool.contains_key(hash)
-                {
+                if !inner.broadcast_pool.contains(hash) {
                     None
                 } else {
                     Some(tx.clone())
@@ -1241,151 +1199,64 @@ impl Mempool {
         Ok(txs)
     }
 
-    /// The wrappers (EIP-8504) queued for broadcast, as they are announced.
-    pub fn get_proof_wrappers_for_broadcast(
-        &self,
-    ) -> Result<Vec<ProofWrapperAnnouncement>, StoreError> {
+    /// The witnesses of a pooled frame transaction (EIP-8141), one for each of
+    /// its claims in the order of the claims. Empty for a pooled frame transaction
+    /// without claims; `None` when the transaction is not in the pool.
+    pub fn get_claim_witnesses(&self, tx_hash: H256) -> Result<Option<Vec<Bytes>>, StoreError> {
         let inner = self.read()?;
-        Ok(inner
-            .dependency_witnesses_pool
-            .iter()
-            .filter(|(tx_hash, _)| inner.broadcast_pool.contains(tx_hash))
-            .map(|(tx_hash, pooled)| ProofWrapperAnnouncement {
-                wrapper_hash: pooled.wrapper_hash,
-                tx_hash: *tx_hash,
-                wrapper_len: pooled.wrapper_len,
-            })
-            .collect())
-    }
-
-    /// Every pooled wrapper (EIP-8504) that may be announced to a peer that has
-    /// just connected: all but the private ones.
-    pub fn get_proof_wrappers_for_new_peer_dump(
-        &self,
-    ) -> Result<Vec<ProofWrapperAnnouncement>, StoreError> {
-        let inner = self.read()?;
-        Ok(inner
-            .dependency_witnesses_pool
-            .iter()
-            .filter(|(tx_hash, _)| !inner.private_pool.contains(tx_hash))
-            .map(|(tx_hash, pooled)| ProofWrapperAnnouncement {
-                wrapper_hash: pooled.wrapper_hash,
-                tx_hash: *tx_hash,
-                wrapper_len: pooled.wrapper_len,
-            })
-            .collect())
-    }
-
-    /// Splits the wrappers a peer announced (EIP-8504) into the ones to request
-    /// from it now, which are marked as in flight under the same lock, and the
-    /// ones another connection is already fetching, which the caller keeps to try
-    /// again if that fetch fails. A wrapper whose transaction is already pooled,
-    /// or that repeats an earlier entry's transaction, is dropped.
-    pub fn reserve_proof_wrappers(
-        &self,
-        announced: Vec<ProofWrapperAnnouncement>,
-    ) -> Result<(Vec<ProofWrapperAnnouncement>, Vec<ProofWrapperAnnouncement>), StoreError> {
-        let mut inner = self.write()?;
-        let mut seen = FxHashSet::default();
-        let mut to_request = Vec::new();
-        let mut in_flight_elsewhere = Vec::new();
-        for wrapper in announced {
-            if inner.transaction_pool.contains_key(&wrapper.tx_hash)
-                || !seen.insert(wrapper.tx_hash)
-            {
-                continue;
-            }
-            if inner.in_flight_proof_wrappers.insert(wrapper.tx_hash) {
-                to_request.push(wrapper);
-            } else {
-                in_flight_elsewhere.push(wrapper);
-            }
+        if !inner.transaction_pool.contains_key(&tx_hash) {
+            return Ok(None);
         }
-        Ok((to_request, in_flight_elsewhere))
+        Ok(Some(
+            inner
+                .claim_witnesses_pool
+                .get(&tx_hash)
+                .cloned()
+                .unwrap_or_default(),
+        ))
     }
 
-    /// Releases the in-flight mark of the given transactions' wrappers, once the
-    /// request for them was answered, failed or timed out.
-    pub fn clear_in_flight_proof_wrappers(&self, tx_hashes: &[H256]) -> Result<(), StoreError> {
-        let mut inner = self.write()?;
-        for tx_hash in tx_hashes {
-            inner.in_flight_proof_wrappers.remove(tx_hash);
-        }
-        Ok(())
-    }
-
-    /// The witnesses of a pooled dependency transaction (EIP-8504), one for each
-    /// entry of its `dependencies()`, in the same order.
-    pub fn get_dependency_witnesses(
+    /// A pooled frame transaction in its pooled representation (EIP-8141),
+    /// rebuilt from the transaction, the witnesses of its claims and, when it
+    /// carries blobs, its blob sidecar, all read under one lock. `None` when it is
+    /// not pooled, is not a frame transaction, or carries blobs whose sidecar is
+    /// not in the pool.
+    pub fn get_pooled_frame_transaction(
         &self,
         tx_hash: H256,
-    ) -> Result<Option<Vec<Bytes>>, StoreError> {
-        Ok(self
-            .read()?
-            .dependency_witnesses_pool
-            .get(&tx_hash)
-            .map(|pooled| pooled.witnesses.clone()))
-    }
-
-    /// Whether `tx_hash` is a pooled dependency transaction (EIP-8504).
-    pub fn is_dependency_transaction(&self, tx_hash: H256) -> Result<bool, StoreError> {
-        Ok(self
-            .read()?
-            .dependency_witnesses_pool
-            .contains_key(&tx_hash))
-    }
-
-    /// Whether the wrapper with this hash is in the pool.
-    pub fn contains_proof_wrapper(&self, wrapper_hash: H256) -> Result<bool, StoreError> {
-        Ok(self.read()?.tx_by_wrapper_hash.contains_key(&wrapper_hash))
-    }
-
-    /// The pooled wrapper (EIP-8504) with this hash, rebuilt from its transaction,
-    /// its blob sidecar if it has one, and its witnesses. `None` when it is not
-    /// pooled or when its transaction is private.
-    pub fn get_proof_wrapper(
-        &self,
-        wrapper_hash: H256,
-    ) -> Result<Option<ProofWrapper>, StoreError> {
+    ) -> Result<Option<PooledFrameTransaction>, StoreError> {
         let inner = self.read()?;
-        let Some(tx_hash) = inner.tx_by_wrapper_hash.get(&wrapper_hash) else {
-            return Ok(None);
-        };
-        if inner.private_pool.contains(tx_hash) {
-            return Ok(None);
-        }
-        let (Some(tx), Some(pooled)) = (
-            inner.transaction_pool.get(tx_hash),
-            inner.dependency_witnesses_pool.get(tx_hash),
-        ) else {
-            return Ok(None);
-        };
-        let Transaction::FrameTransaction(frame_tx) = tx.transaction() else {
+        let Some(Transaction::FrameTransaction(frame_tx)) = inner
+            .transaction_pool
+            .get(&tx_hash)
+            .map(MempoolTransaction::transaction)
+        else {
             return Ok(None);
         };
         let blobs_bundle = if frame_tx.blob_versioned_hashes.is_empty() {
             None
         } else {
-            match inner.blobs_bundle_pool.get(tx_hash) {
+            match inner.blobs_bundle_pool.get(&tx_hash) {
                 Some(bundle) => Some(bundle.clone()),
                 None => return Ok(None),
             }
         };
-        Ok(Some(ProofWrapper::new(
-            frame_tx.clone(),
+        Ok(Some(PooledFrameTransaction {
+            tx: frame_tx.clone(),
+            witnesses: inner
+                .claim_witnesses_pool
+                .get(&tx_hash)
+                .cloned()
+                .unwrap_or_default(),
             blobs_bundle,
-            pooled.witnesses.clone(),
-        )))
+        }))
     }
 
-    /// The number of pooled dependency transactions (EIP-8504) and the total
-    /// size in bytes of their witnesses.
-    pub fn dependency_witnesses_size(&self) -> Result<(usize, usize), StoreError> {
+    /// The number of pooled frame transactions with claims (EIP-8141) and the
+    /// total size in bytes of their witnesses.
+    pub fn claim_witnesses_size(&self) -> Result<(usize, usize), StoreError> {
         let inner = self.read()?;
-        Ok((
-            inner.dependency_witnesses_pool.len(),
-            inner.dependency_witness_bytes,
-        ))
+        Ok((inner.claim_witnesses_pool.len(), inner.claim_witness_bytes))
     }
 
     pub fn remove_broadcasted_txs(&self, hashes: &[H256]) -> Result<(), StoreError> {
@@ -2216,13 +2087,7 @@ impl Mempool {
         let mut txs: Vec<MempoolTransaction> = inner
             .transaction_pool
             .iter()
-            .filter(|(hash, tx)| {
-                !inner.private_pool.contains(hash)
-                    && !tx.is_privileged()
-                    // EIP-8504: a dependency transaction is announced only as its
-                    // wrapper, see `get_proof_wrappers_for_new_peer_dump`.
-                    && !inner.dependency_witnesses_pool.contains_key(hash)
-            })
+            .filter(|(hash, tx)| !inner.private_pool.contains(hash) && !tx.is_privileged())
             .map(|(_, tx)| tx.clone())
             .collect();
         // Announce grouped by sender and ascending by nonce, matching what the

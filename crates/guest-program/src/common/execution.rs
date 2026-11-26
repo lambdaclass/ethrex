@@ -2,12 +2,15 @@ use std::sync::Arc;
 
 use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::block_execution_witness::{ExecutionWitness, GuestProgramState};
-use ethrex_common::types::{Block, Receipt, Transaction, validate_block_body};
+use ethrex_common::types::{
+    Block, LEANSPHINCS_VERIFIER, Receipt, Transaction, validate_block_body,
+};
 use ethrex_common::{
     H256, U256, validate_block_access_list_hash, validate_block_pre_execution, validate_gas_used,
     validate_receipts_root_and_logs_bloom, validate_requests_hash,
 };
 use ethrex_crypto::Crypto;
+use ethrex_vm::claims::ClaimWitnessesError;
 use ethrex_vm::{Evm, GuestProgramStateWrapper, VmDatabase};
 
 use crate::common::ExecutionError;
@@ -35,20 +38,34 @@ pub struct BatchExecutionResult {
     pub bals: Vec<Option<BlockAccessList>>,
 }
 
-/// EIP-8504: the witnesses of a block's dependencies are verified natively,
-/// before execution, by the node. Stateless execution does not link the verifier,
-/// so it must not vouch for a block that depends on them: executing its proof
-/// frames would accept signatures nobody checked. Such a block is rejected.
-pub fn reject_unverified_dependency_witnesses(block: &Block) -> Result<(), ExecutionError> {
-    let has_proof_frames = block.body.transactions.iter().any(
-        |tx| matches!(tx, Transaction::FrameTransaction(frame_tx) if frame_tx.has_proof_frames()),
-    );
-    if has_proof_frames {
-        return Err(ExecutionError::UnverifiedDependencyWitnesses(
+/// EIP-8141: checks a block's claim witnesses against its pre-state, the state
+/// `vm` was created over, exactly as a node does before it executes the block.
+/// Execution treats every claim as verified, so stateless execution vouches for
+/// a block only when all of its claims were checked here.
+///
+/// The leanSPHINCS verifier is linked only into native builds. A build without
+/// it cannot check a `LEANSPHINCS_VERIFIER` claim, so `leansphincs_verifier_linked`
+/// being unset makes it refuse a block that has one rather than execute frames
+/// that would rely on a signature nobody checked.
+pub fn verify_claim_witnesses(
+    block: &Block,
+    vm: &Evm,
+    leansphincs_verifier_linked: bool,
+) -> Result<(), ExecutionError> {
+    let has_leansphincs_claims = block.body.transactions.iter().any(|tx| {
+        matches!(tx, Transaction::FrameTransaction(frame_tx)
+            if frame_tx.claims.iter().any(|claim| claim.verifier == LEANSPHINCS_VERIFIER))
+    });
+    if has_leansphincs_claims && !leansphincs_verifier_linked {
+        return Err(ExecutionError::UnverifiedClaimWitnesses(
             block.header.number,
         ));
     }
-    Ok(())
+    vm.verify_claim_witnesses(block)
+        .map_err(|error| match error {
+            ClaimWitnessesError::InvalidBlock(error) => ExecutionError::BlockValidation(error),
+            ClaimWitnessesError::Evm(error) => ExecutionError::Evm(error),
+        })
 }
 
 /// Execute a batch of blocks using the provided VM factory.
@@ -145,10 +162,12 @@ where
             .map_err(ExecutionError::BlockValidation)
         })?;
 
-        reject_unverified_dependency_witnesses(block)?;
-
         // Create VM using the provided factory
         let mut vm = report_cycles("setup_evm", || vm_factory(&wrapped_db, i))?;
+
+        report_cycles("verify_claim_witnesses", || {
+            verify_claim_witnesses(block, &vm, ethrex_vm::LEANSPHINCS_VERIFIER_LINKED)
+        })?;
 
         // Execute block
         let (result, bal) = report_cycles("execute_block", || {
@@ -239,58 +258,4 @@ where
         burned_fees: acc_burned_fees,
         bals: acc_bals,
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use bytes::Bytes;
-    use ethrex_common::types::{BlockBody, BlockHeader, Frame, FrameTransaction, PROOF_FRAME_MODE};
-
-    fn block_with(transactions: Vec<Transaction>) -> Block {
-        Block::new(
-            BlockHeader {
-                number: 7,
-                ..Default::default()
-            },
-            BlockBody {
-                transactions,
-                ommers: Vec::new(),
-                withdrawals: Some(Vec::new()),
-                dependency_witnesses: Some(Vec::new()),
-            },
-        )
-    }
-
-    fn frame_tx(mode: u8) -> Transaction {
-        Transaction::FrameTransaction(FrameTransaction {
-            frames: vec![Frame {
-                mode,
-                data: Bytes::from(vec![0u8; 96]),
-                ..Default::default()
-            }],
-            ..Default::default()
-        })
-    }
-
-    #[test]
-    fn stateless_execution_rejects_a_block_with_proof_frames() {
-        // Any other block is left to the rest of the validation.
-        reject_unverified_dependency_witnesses(&block_with(Vec::new())).expect("no transactions");
-        reject_unverified_dependency_witnesses(&block_with(vec![frame_tx(0)]))
-            .expect("a frame transaction without proof frames");
-
-        // A proof frame stands for a signature this path cannot check.
-        let result = reject_unverified_dependency_witnesses(&block_with(vec![
-            frame_tx(0),
-            frame_tx(PROOF_FRAME_MODE),
-        ]));
-        assert!(
-            matches!(
-                result,
-                Err(ExecutionError::UnverifiedDependencyWitnesses(7))
-            ),
-            "got {result:?}"
-        );
-    }
 }

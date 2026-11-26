@@ -795,167 +795,6 @@ pub struct VM<'a> {
     pub(crate) assertion_diff: Option<crate::opcode_handlers::tx_assertion::TxDiff>,
 }
 
-/// secp256k1 group order `n`.
-const SECP256K1_N: [u8; 32] = [
-    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfe,
-    0xba, 0xae, 0xdc, 0xe6, 0xaf, 0x48, 0xa0, 0x3b, 0xbf, 0xd2, 0x5e, 0x8c, 0xd0, 0x36, 0x41, 0x41,
-];
-/// secp256k1 `n / 2`.
-const SECP256K1_N_HALF: [u8; 32] = [
-    0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-    0x5d, 0x57, 0x6e, 0x73, 0x57, 0xa4, 0x50, 0x1d, 0xdf, 0xe9, 0x2f, 0x46, 0x68, 0x1b, 0x20, 0xa0,
-];
-/// P-256 (secp256r1) group order `n`.
-const SECP256R1_N: [u8; 32] = [
-    0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-    0xbc, 0xe6, 0xfa, 0xad, 0xa7, 0x17, 0x9e, 0x84, 0xf3, 0xb9, 0xca, 0xc2, 0xfc, 0x63, 0x25, 0x51,
-];
-/// P-256 (secp256r1) `n / 2`.
-const SECP256R1_N_HALF: [u8; 32] = [
-    0x7f, 0xff, 0xff, 0xff, 0x80, 0x00, 0x00, 0x00, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-    0xde, 0x73, 0x7d, 0x56, 0xd3, 0x8b, 0xcf, 0x42, 0x79, 0xdc, 0xe5, 0x61, 0x7e, 0x31, 0x92, 0xa8,
-];
-
-/// True when the big-endian 32-byte scalar is in `(0, upper)`.
-fn scalar_below(scalar: &[u8], upper: &[u8; 32]) -> bool {
-    scalar.iter().any(|&b| b != 0) && scalar < &upper[..]
-}
-
-/// True when the big-endian 32-byte scalar is in `(0, upper]`.
-fn scalar_at_most(scalar: &[u8], upper: &[u8; 32]) -> bool {
-    scalar.iter().any(|&b| b != 0) && scalar <= &upper[..]
-}
-
-/// Validate every EIP-8141 outer signature against the canonical `sig_hash`.
-/// Returns false if any signature is malformed or invalid. Verification gas is
-/// intrinsic (already in `standard_gas_limit`), so a scratch budget is used for the
-/// crypto precompiles and their deduction is ignored.
-#[expect(
-    clippy::indexing_slicing,
-    reason = "signature length is checked before each fixed-offset slice"
-)]
-pub fn validate_frame_signatures(
-    signatures: &[ethrex_common::types::FrameSignature],
-    sig_hash: ethrex_common::H256,
-    sender: ethrex_common::Address,
-    fork: Fork,
-    crypto: &dyn Crypto,
-) -> bool {
-    use ethrex_common::types::{
-        FRAME_SIG_SCHEME_ARBITRARY, FRAME_SIG_SCHEME_P256, FRAME_SIG_SCHEME_SECP256K1,
-    };
-    for sig in signatures {
-        // Resolve the signed message.
-        let msg: [u8; 32] = match sig.msg.len() {
-            0 => sig_hash.0,
-            32 => {
-                let mut m = [0u8; 32];
-                m.copy_from_slice(&sig.msg);
-                if m == [0u8; 32] {
-                    return false;
-                }
-                m
-            }
-            _ => return false,
-        };
-        let mut scratch_gas = u64::MAX;
-        match sig.scheme {
-            FRAME_SIG_SCHEME_SECP256K1 => {
-                if sig.signature.len() != 65 {
-                    return false;
-                }
-                let v = sig.signature[0];
-                let r = &sig.signature[1..33];
-                let s = &sig.signature[33..65];
-                // EIP-8141 requires a canonical signature: `v` is a bare recovery
-                // id (0 or 1), `0 < r < n`, and low-s per EIP-2 (`0 < s <= n/2`),
-                // so each signature has exactly one encoding.
-                if v > 1 || !scalar_below(r, &SECP256K1_N) || !scalar_at_most(s, &SECP256K1_N_HALF)
-                {
-                    return false;
-                }
-                // The ecrecover precompile takes `v` in EVM form (27 or 28).
-                let mut calldata = vec![0u8; 128];
-                calldata[..32].copy_from_slice(&msg);
-                calldata[63] = v.saturating_add(27);
-                calldata[64..96].copy_from_slice(r);
-                calldata[96..128].copy_from_slice(s);
-                let Ok(result) = crate::precompiles::ecrecover(
-                    &Bytes::from(calldata),
-                    &mut scratch_gas,
-                    fork,
-                    crypto,
-                ) else {
-                    return false;
-                };
-                if result.len() != 32 {
-                    return false;
-                }
-                let recovered = ethrex_common::Address::from_slice(&result[12..]);
-                if recovered == ethrex_common::Address::zero() {
-                    return false;
-                }
-                // Per EIP-8141, an absent signer resolves to tx.sender (used for
-                // introspection too); the recovered key must equal the resolved signer.
-                if recovered != sig.signer.unwrap_or(sender) {
-                    return false;
-                }
-            }
-            FRAME_SIG_SCHEME_P256 => {
-                if sig.signature.len() != 128 {
-                    return false;
-                }
-                let r = &sig.signature[0..32];
-                let s = &sig.signature[32..64];
-                let qx = &sig.signature[64..96];
-                let qy = &sig.signature[96..128];
-                // EIP-8141 requires `0 < r < n` and low-s (`0 < s <= n/2`) so each
-                // signature has one encoding. P256VERIFY itself accepts high-s, so
-                // signers must normalize `s` to `n - s` before use.
-                if !scalar_below(r, &SECP256R1_N) || !scalar_at_most(s, &SECP256R1_N_HALF) {
-                    return false;
-                }
-                // signer = keccak256(qx || qy)[12:]  (NO domain separator)
-                let mut pk = Vec::with_capacity(64);
-                pk.extend_from_slice(qx);
-                pk.extend_from_slice(qy);
-                let h = ethrex_crypto::keccak::keccak_hash(&pk);
-                // Per EIP-8141, an absent signer resolves to tx.sender (used for
-                // introspection too); the derived key must equal the resolved signer.
-                if ethrex_common::Address::from_slice(&h[12..]) != sig.signer.unwrap_or(sender) {
-                    return false;
-                }
-                let mut calldata = vec![0u8; 160];
-                calldata[..32].copy_from_slice(&msg);
-                calldata[32..64].copy_from_slice(r);
-                calldata[64..96].copy_from_slice(s);
-                calldata[96..128].copy_from_slice(qx);
-                calldata[128..160].copy_from_slice(qy);
-                let Ok(result) = crate::precompiles::p_256_verify(
-                    &Bytes::from(calldata),
-                    &mut scratch_gas,
-                    fork,
-                    crypto,
-                ) else {
-                    return false;
-                };
-                if result.len() != 32 || result[31] != 1 {
-                    return false;
-                }
-            }
-            FRAME_SIG_SCHEME_ARBITRARY => {
-                // ARBITRARY: no protocol crypto; the signer must be empty. A
-                // custom verifier reads the raw bytes via SIGPARAM 0x04.
-                if sig.signer.is_some() {
-                    return false;
-                }
-            }
-            _ => return false,
-        }
-    }
-    true
-}
-
 /// Find the end of the atomic batch containing `failed_idx`, per EIP-8141:
 /// a batch is a maximal contiguous run of frames whose ATOMIC_BATCH_FLAG is
 /// set, terminated by the first frame without the flag. Static validation
@@ -2066,19 +1905,12 @@ impl<'a> VM<'a> {
             fee_budget,
         });
 
-        // EIP-8141: every outer signature must validate
-        // before any frame executes; otherwise the whole transaction is invalid.
-        if !validate_frame_signatures(
-            &frame_tx.signatures,
-            sig_hash,
-            frame_tx.sender,
-            self.env.config.fork,
-            self.crypto,
-        ) {
-            return Err(VMError::TxValidation(
-                crate::errors::TxValidationError::InvalidFrameSignature,
-            ));
-        }
+        // EIP-8141: every claim's witness must verify before any frame executes.
+        // The witnesses are not part of the transaction: a block carries them in
+        // `claim_witnesses`, where they are checked against the block's pre-state
+        // before any of its transactions runs, and a pooled transaction carries
+        // them beside it, where admission checks them. Nothing is left to verify
+        // here, and frames see the claims as verified facts through `HASCLAIM`.
 
         // Tx-level rollback accumulator: if the tx is later declared invalid
         // after frames committed, restore `db.current_accounts_state` so the
@@ -2193,30 +2025,6 @@ impl<'a> VM<'a> {
                 in_atomic_batch = false;
             }
 
-            // EIP-8504: a proof frame performs no call, accesses no account and
-            // changes no state. It consumes its whole execution limit and, like any
-            // other frame, yields a receipt: status 1, no state gas, no logs. The
-            // dependencies it declares are satisfied by witnesses the block carries,
-            // which are checked before the block executes, not here. Static rules
-            // keep it out of every atomic batch, so none is open at this point.
-            if frame.is_proof() {
-                let ctx = self.frame_tx_context.as_mut().ok_or(VMError::Internal(
-                    InternalError::Custom("missing frame tx context".to_string()),
-                ))?;
-                ctx.current_frame_index = frame_idx;
-                ctx.approve_called_in_current_frame = false;
-                ctx.frame_results.push((
-                    ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS,
-                    frame.gas_limit,
-                    0,
-                    Vec::new(),
-                ));
-                total_gas_used = total_gas_used
-                    .checked_add(frame.gas_limit)
-                    .ok_or(VMError::Internal(InternalError::Overflow))?;
-                continue;
-            }
-
             // Clear the outer call-frame backup at the start of each independent
             // frame so that a later frame's failure-path `restore_cache_state()`
             // only reverts that frame's own effects — not APPROVE/state deltas
@@ -2292,12 +2100,6 @@ impl<'a> VM<'a> {
                         break;
                     }
                     (sender, false)
-                }
-                // Proof frames run no code and were settled at the top of the loop.
-                FrameMode::Proof => {
-                    return Err(VMError::Internal(InternalError::Custom(
-                        "proof frame reached the frame call dispatch".to_string(),
-                    )));
                 }
             };
 
@@ -3269,18 +3071,6 @@ impl<'a> VM<'a> {
             fee_budget,
         });
 
-        if !validate_frame_signatures(
-            &frame_tx.signatures,
-            sig_hash,
-            frame_tx.sender,
-            self.env.config.fork,
-            self.crypto,
-        ) {
-            return Err(VMError::TxValidation(
-                crate::errors::TxValidationError::InvalidFrameSignature,
-            ));
-        }
-
         let expiry_verifier = ethrex_common::types::frame_tx_expiry_verifier();
         let mut observer = ValidationObserver::new(sender, deploy_index, expiry_verifier);
         observer.canonical_paymaster_pay_frame = canonical_paymaster_pay_frame;
@@ -3343,25 +3133,6 @@ impl<'a> VM<'a> {
                 break;
             }
 
-            // EIP-8504: a proof frame runs no code. It is recorded as block
-            // execution records it, so a later prefix frame that reads its status or
-            // gas through `FRAMEPARAM` sees the same values. Its gas stays out of the
-            // total: the witnesses it stands for are verified outside this
-            // simulation and bounded by their own limit, not by `MAX_VERIFY_GAS`.
-            if frame.is_proof() {
-                let ctx = self.frame_tx_context.as_mut().ok_or(VMError::Internal(
-                    InternalError::Custom("missing frame tx context".to_string()),
-                ))?;
-                ctx.current_frame_index = frame_idx;
-                ctx.frame_results.push((
-                    ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS,
-                    frame.gas_limit,
-                    0,
-                    Vec::new(),
-                ));
-                continue;
-            }
-
             // Each independent prefix frame starts with a clean call-frame backup
             // so a later frame's failure only reverts its own effects.
             self.current_call_frame.call_frame_backup.clear();
@@ -3391,12 +3162,6 @@ impl<'a> VM<'a> {
                     // prefix.
                     return Err(VMError::Internal(InternalError::Custom(
                         "SENDER or ASSERT frame in validation prefix".to_string(),
-                    )));
-                }
-                // Proof frames run no code and were settled at the top of the loop.
-                FrameMode::Proof => {
-                    return Err(VMError::Internal(InternalError::Custom(
-                        "proof frame reached the prefix call dispatch".to_string(),
                     )));
                 }
             };
@@ -3600,6 +3365,125 @@ impl<'a> VM<'a> {
             sender_approved: ctx.sender_approved,
             total_gas_used,
         })
+    }
+
+    /// EIP-8141 §Pure Context: call the custom claim verifier `verifier` with
+    /// `calldata`, `key || msg || witness`, and `gas_limit`, and report whether the
+    /// call succeeds. The claim holds if and only if it does, whatever it returns.
+    ///
+    /// A verifier that is an active precompile is dispatched directly. Any other
+    /// verifier runs its code under the pure opcode table as a static call with no
+    /// value and no state gas; one without code, or whose code is an EIP-7702
+    /// delegation indicator, halts. The call has its own EIP-2929 access sets,
+    /// which hold only the active precompiles, and the verifier's entry access is
+    /// drawn from `gas_limit` against them: warm for a precompile, cold for a
+    /// contract. Everything the call touched is set aside on exit, so it warms
+    /// nothing and changes no state. The caller charges `gas_limit` in full
+    /// whatever is left.
+    pub(crate) fn run_pure_verifier(
+        &mut self,
+        verifier: Address,
+        calldata: Bytes,
+        gas_limit: u64,
+    ) -> Result<bool, VMError> {
+        let fork = self.env.config.fork;
+        let verifier_is_precompile = self.address_is_precompile(&verifier);
+
+        let access_cost = if verifier_is_precompile {
+            crate::gas_cost::WARM_ADDRESS_ACCESS_COST
+        } else {
+            crate::gas_cost::cold_account_access_cost(fork)
+        };
+        // A limit that cannot pay for reaching the verifier halts before it runs.
+        let Some(gas_limit) = gas_limit.checked_sub(access_cost) else {
+            return Ok(false);
+        };
+
+        if verifier_is_precompile {
+            // Precompiles are pure, so the claim is evaluated without an EVM.
+            let mut gas_remaining = gas_limit;
+            let result = precompiles::execute_precompile(
+                self.effective_precompile_address(verifier),
+                &calldata,
+                &mut gas_remaining,
+                fork,
+                self.db.store.precompile_cache(),
+                self.crypto,
+                self.stateless_validator,
+            );
+            return Ok(
+                Self::handle_precompile_result(result, gas_limit, gas_remaining)?.is_success(),
+            );
+        }
+
+        // An account without code is not a verifier. Code that is an EIP-7702
+        // delegation indicator can change, so a verifier holding one halts too.
+        let (bytecode, delegation) =
+            crate::utils::eip7702_peek_delegation(self.db, &self.substate, verifier, fork)?;
+        if bytecode.is_empty() || delegation.is_some() {
+            return Ok(false);
+        }
+
+        let entry_point = ethrex_common::types::frame_tx_entry_point();
+        let call_frame = CallFrame::new(
+            entry_point,  // msg_sender
+            verifier,     // to
+            verifier,     // code_address
+            bytecode,     // bytecode
+            U256::zero(), // msg_value
+            calldata,     // calldata
+            true,         // is_static
+            gas_limit,    // gas_limit (the entry access is already taken)
+            0,            // depth
+            false,        // should_transfer_value
+            false,        // is_create
+            0,            // ret_offset
+            0,            // ret_size
+            {
+                // A pooled stack keeps the previous frame's items; each frame starts empty.
+                let mut stack = self.stack_pool.pop().unwrap_or_default();
+                stack.clear();
+                stack
+            },
+            Memory::default(),
+        );
+
+        // Everything the pure context must neither see nor leave behind is set
+        // aside for the call: the access sets, transient storage and logs (a fresh
+        // substate holds only the precompiles, which are warm by construction),
+        // the opcode table (the pure one halts on every instruction that reads
+        // beyond the verifier's input and code), the mempool observer, whose rules
+        // the pure context already subsumes, and the state gas pool, which a
+        // verifier has none of.
+        let saved_call_frame = mem::replace(&mut self.current_call_frame, call_frame);
+        let saved_call_frames = mem::take(&mut self.call_frames);
+        let saved_substate = mem::replace(
+            &mut self.substate,
+            Substate::from_accesses(fork, FxHashSet::default(), FxHashMap::default()),
+        );
+        let saved_opcode_table = mem::replace(&mut self.opcode_table, Self::pure_opcode_table());
+        let saved_observer_active = mem::replace(&mut self.validation_observer.active, false);
+        let saved_origin = mem::replace(&mut self.env.origin, entry_point);
+        let saved_state_gas_reservoir = mem::replace(&mut self.state_gas_reservoir, 0);
+        let saved_state_gas_isolated = mem::replace(&mut self.state_gas_isolated, true);
+
+        let result = self.run_execution();
+
+        self.state_gas_isolated = saved_state_gas_isolated;
+        self.state_gas_reservoir = saved_state_gas_reservoir;
+        self.env.origin = saved_origin;
+        self.validation_observer.active = saved_observer_active;
+        self.opcode_table = saved_opcode_table;
+        self.substate = saved_substate;
+        let finished_frame = mem::replace(&mut self.current_call_frame, saved_call_frame);
+        self.call_frames = saved_call_frames;
+        self.stack_pool.push(finished_frame.stack);
+
+        match result {
+            Ok(ctx_result) => Ok(ctx_result.is_success()),
+            Err(error) if error.should_propagate() => Err(error),
+            Err(_) => Ok(false),
+        }
     }
 
     /// Must run after `prepare_execution` so EIP-7702 delegation is already resolved into

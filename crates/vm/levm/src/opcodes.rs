@@ -180,8 +180,7 @@ pub enum Opcode {
     FRAMEDATALOAD = 0xB1,
     FRAMEDATACOPY = 0xB2,
     FRAMEPARAM = 0xB3,
-    SIGPARAM = 0xB4,
-    SIGDATACOPY = 0xB5,
+    HASCLAIM = 0xB4,
     // EIP-7906 transaction assertions
     TXTRACE = 0xB6,
     EVENTDATACOPY = 0xB7,
@@ -346,8 +345,7 @@ impl From<u8> for Opcode {
             table[0xB1] = Opcode::FRAMEDATALOAD;
             table[0xB2] = Opcode::FRAMEDATACOPY;
             table[0xB3] = Opcode::FRAMEPARAM;
-            table[0xB4] = Opcode::SIGPARAM;
-            table[0xB5] = Opcode::SIGDATACOPY;
+            table[0xB4] = Opcode::HASCLAIM;
             table[0xB6] = Opcode::TXTRACE;
             table[0xB7] = Opcode::EVENTDATACOPY;
             table[0x51] = Opcode::MLOAD;
@@ -673,13 +671,76 @@ impl<'a> VM<'a> {
         opcode_table[Opcode::FRAMEDATALOAD as usize] = OpCodeFn::new::<OpFrameDataLoadHandler>();
         opcode_table[Opcode::FRAMEDATACOPY as usize] = OpCodeFn::new::<OpFrameDataCopyHandler>();
         opcode_table[Opcode::FRAMEPARAM as usize] = OpCodeFn::new::<OpFrameParamHandler>();
-        opcode_table[Opcode::SIGPARAM as usize] = OpCodeFn::new::<OpSigParamHandler>();
-        opcode_table[Opcode::SIGDATACOPY as usize] = OpCodeFn::new::<OpSigDataCopyHandler>();
+        opcode_table[Opcode::HASCLAIM as usize] = OpCodeFn::new::<OpHasClaimHandler>();
         // EIP-7906 transaction assertion opcodes, valid only inside an ASSERT frame
         opcode_table[Opcode::TXTRACE as usize] = OpCodeFn::new::<OpTxTraceHandler>();
         opcode_table[Opcode::EVENTDATACOPY as usize] = OpCodeFn::new::<OpEventDataCopyHandler>();
         // EIP-8298 code reuse
         opcode_table[Opcode::SETCODEFROM as usize] = OpCodeFn::new::<OpSetCodeFromHandler>();
+
+        opcode_table
+    }
+
+    /// The opcode table of the pure context a custom claim verifier runs in
+    /// (EIP-8141 §Pure Context).
+    ///
+    /// A verifier computes a function of its input, `key || msg || witness`, and
+    /// its gas limit, using only its own code and the active precompiles. On top
+    /// of the `STATICCALL` restrictions, which the call's static flag enforces,
+    /// the table makes every instruction that reads anything else an exceptional
+    /// halt. Swapping the table costs the ordinary dispatch loop nothing.
+    pub(crate) fn pure_opcode_table() -> &'static [OpCodeFn; 256] {
+        static PURE: [OpCodeFn; 256] = VM::<'static>::build_opcode_table_pure();
+        &PURE
+    }
+
+    #[allow(clippy::as_conversions, clippy::indexing_slicing)]
+    const fn build_opcode_table_pure() -> [OpCodeFn; 256] {
+        let mut opcode_table: [OpCodeFn; 256] = Self::build_opcode_table_hegota();
+        let halt = OpCodeFn::new::<OpInvalidHandler>();
+
+        // The call's context and other accounts: ADDRESS through CALLER. CALLVALUE
+        // stays available, since it is always zero.
+        let mut opcode = Opcode::ADDRESS as usize;
+        while opcode <= Opcode::CALLER as usize {
+            opcode_table[opcode] = halt;
+            opcode = opcode.saturating_add(1);
+        }
+        // GASPRICE through EXTCODECOPY, and EXTCODEHASH.
+        let mut opcode = Opcode::GASPRICE as usize;
+        while opcode <= Opcode::EXTCODECOPY as usize {
+            opcode_table[opcode] = halt;
+            opcode = opcode.saturating_add(1);
+        }
+        opcode_table[Opcode::EXTCODEHASH as usize] = halt;
+        // The chain, the block and the transaction: BLOCKHASH through SLOTNUM.
+        let mut opcode = Opcode::BLOCKHASH as usize;
+        while opcode <= Opcode::SLOTNUM as usize {
+            opcode_table[opcode] = halt;
+            opcode = opcode.saturating_add(1);
+        }
+        // Storage, persistent and transient.
+        opcode_table[Opcode::SLOAD as usize] = halt;
+        opcode_table[Opcode::TLOAD as usize] = halt;
+        // The instructions EIP-8141 introduces: APPROVE, and TXPARAM through
+        // HASCLAIM.
+        opcode_table[Opcode::APPROVE as usize] = halt;
+        let mut opcode = Opcode::TXPARAM as usize;
+        while opcode <= Opcode::HASCLAIM as usize {
+            opcode_table[opcode] = halt;
+            opcode = opcode.saturating_add(1);
+        }
+        // An instruction a later EIP introduces halts unless that EIP permits it
+        // here, and none of the ones this fork carries does: EIP-7906's transaction
+        // assertions and EIP-8298's code reuse.
+        opcode_table[Opcode::TXTRACE as usize] = halt;
+        opcode_table[Opcode::EVENTDATACOPY as usize] = halt;
+        opcode_table[Opcode::SETCODEFROM as usize] = halt;
+        // Calls: only a STATICCALL to an active precompile remains.
+        opcode_table[Opcode::CALL as usize] = halt;
+        opcode_table[Opcode::CALLCODE as usize] = halt;
+        opcode_table[Opcode::DELEGATECALL as usize] = halt;
+        opcode_table[Opcode::STATICCALL as usize] = OpCodeFn::new::<OpPureStaticCallHandler>();
 
         opcode_table
     }
@@ -711,6 +772,13 @@ mod tests {
             }
         }
         let hegota = VM::build_opcode_table(Fork::Hegota);
-        assert!(!same_handler(hegota[0xAA], hegota[0xEF]));
+        for byte in [0xAAusize, 0xB0, 0xB1, 0xB2, 0xB3, 0xB4] {
+            assert!(
+                !same_handler(hegota[byte], hegota[0xEF]),
+                "frame opcode {byte:#x} must be installed at Hegota"
+            );
+        }
+        // HASCLAIM (0xB4) is the last of them: 0xB5 is not an instruction.
+        assert!(same_handler(hegota[0xB5], hegota[0xEF]));
     }
 }

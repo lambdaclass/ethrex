@@ -42,8 +42,8 @@
 //! blockchain.add_transaction_to_mempool(tx).await?;
 //! ```
 
+pub mod claim_witnesses;
 pub mod constants;
-pub mod dependency_witnesses;
 pub mod error;
 pub mod fork_choice;
 mod glamsterdam;
@@ -60,18 +60,19 @@ use ::tracing::{error, info, instrument, warn};
 // unused in any configuration that compiles that path out.
 #[cfg(feature = "rayon")]
 use ::tracing::debug;
+use claim_witnesses::validate_claim_witnesses;
 use constants::{AMSTERDAM_MAX_INITCODE_SIZE, MAX_INITCODE_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
-use dependency_witnesses::validate_dependency_witnesses;
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{
     EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH, MIN_BASE_FEE_PER_BLOB_GAS, TX_MAX_TOTAL_GAS_LIMIT_AMSTERDAM,
 };
 
+use bytes::Bytes;
 use crossbeam::channel::{self as cb, TryRecvError, select};
 // Re-export stateless validation functions for backwards compatibility
 use crate::vm::{OverlaidVmDatabase, StateOverride, precompile_moves};
-use dependency_witnesses::satisfies;
+#[cfg(feature = "c-kzg")]
 use ethrex_common::types::MAX_BLOB_TX_SIZE;
 use ethrex_common::types::MAX_TX_SIZE;
 use ethrex_common::types::block_access_list::BlockAccessList;
@@ -85,7 +86,7 @@ use ethrex_common::types::{
 use ethrex_common::types::{EIP7702_DELEGATED_CODE_LEN, is_eip7702_delegation};
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
-use ethrex_common::types::{MAX_SIGS_PER_TX, ProofWrapper, proof_wrapper_overhead};
+use ethrex_common::types::{MAX_BLOCK_WITNESS_BYTES, PooledFrameTransaction};
 use ethrex_common::utils::keccak;
 use ethrex_common::validate_block_access_list_size;
 use ethrex_common::{Address, H256, U256};
@@ -114,7 +115,7 @@ use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError, VmDatabase};
 use mempool::{
     BalanceCheck, FRAME_CANONICAL_PAYMASTER_CODE_HASH, FramePaymasterReservation, Mempool,
-    PooledDependencyWitnesses, SenderAdmission, is_canonical_paymaster,
+    SenderAdmission, is_canonical_paymaster,
 };
 use payload::PayloadOrTask;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -139,7 +140,7 @@ use ethrex_metrics::bal::METRICS_BAL;
 #[cfg(feature = "metrics")]
 use ethrex_metrics::blocks::METRICS_BLOCKS;
 #[cfg(feature = "metrics")]
-use ethrex_metrics::eip8504::METRICS_EIP8504;
+use ethrex_metrics::claims::METRICS_CLAIMS;
 
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::BlobsBundle;
@@ -438,10 +439,6 @@ pub struct BlockchainOptions {
     /// validating signatures and simulating a frame transaction's validation
     /// prefix. Mempool policy (SHOULD), not consensus, so it is operator-tunable.
     pub max_verify_gas: u64,
-    /// EIP-8504 `MAX_SIGS_PER_TX`: the most dependencies a transaction may have
-    /// for this node to verify their witnesses and admit it. Mempool policy, not
-    /// consensus, so it is operator-tunable.
-    pub max_sigs_per_tx: usize,
 }
 
 impl Default for BlockchainOptions {
@@ -467,7 +464,6 @@ impl Default for BlockchainOptions {
             gap_admit_occupancy_threshold: DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
             mempool_prewarm_enabled: true,
             max_verify_gas: DEFAULT_MAX_VERIFY_GAS,
-            max_sigs_per_tx: DEFAULT_MAX_SIGS_PER_TX,
         }
     }
 }
@@ -490,22 +486,17 @@ pub const DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT: usize = 64;
 /// `MAX_VERIFY_GAS` value.
 pub const DEFAULT_MAX_VERIFY_GAS: u64 = FRAME_TX_MAX_VERIFY_GAS;
 
-/// Default number of dependencies per transaction this node verifies witnesses
-/// for: the EIP-8504 `MAX_SIGS_PER_TX` value.
-pub const DEFAULT_MAX_SIGS_PER_TX: usize = MAX_SIGS_PER_TX;
-
-/// The admission check of EIP-8504 a dependency transaction failed, as a metric
-/// label. Everything that is not one of the wrapper's own checks is the
-/// acceptance of the transaction itself.
+/// The admission check a frame transaction submitted in its pooled representation
+/// (EIP-8141) failed, as a metric label. Everything that is not one of the checks
+/// on its witnesses is the acceptance of the transaction itself.
 #[cfg(feature = "metrics")]
-fn dependency_rejection_reason(error: &MempoolError) -> &'static str {
+fn claim_rejection_reason(error: &MempoolError) -> &'static str {
     match error {
-        MempoolError::TxSizeExceeded { .. } => "size",
+        MempoolError::TxSizeExceeded { .. } | MempoolError::ClaimWitnessesTooLarge { .. } => "size",
         MempoolError::InvalidFrameTransaction(_) => "static_constraints",
-        MempoolError::WitnessesWithoutDependencies => "no_dependencies",
-        MempoolError::TooManyDependencies { .. } => "too_many_dependencies",
-        MempoolError::WrapperDependenciesMismatch => "dependencies_mismatch",
-        MempoolError::DependencyNotSatisfied(_) => "witness",
+        MempoolError::ClaimWitnessCountMismatch { .. } => "witness_count",
+        MempoolError::ClaimWitnessLengthMismatch { .. } => "witness_length",
+        MempoolError::ClaimNotSatisfied(_) => "witness",
         _ => "acceptance",
     }
 }
@@ -810,11 +801,13 @@ impl Blockchain {
         // Validate the block pre-execution
         validate_block_pre_execution(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
         self.validate_l1_transaction_types(block)?;
-        validate_dependency_witnesses(block, &chain_config)?;
 
         let parent_timestamp = parent_header.timestamp;
         let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header)?;
         let mut vm = self.new_evm(vm_db)?;
+        // EIP-8141: every claim of the block's transactions must be satisfied by
+        // a witness the block carries, checked against the block's pre-state.
+        validate_claim_witnesses(block, &vm)?;
 
         let (execution_result, bal) = vm.execute_block(block, parent_timestamp)?;
         let account_updates = vm.get_state_transitions()?;
@@ -901,11 +894,12 @@ impl Blockchain {
         // Validate the block pre-execution
         validate_block_pre_execution(block, parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
         self.validate_l1_transaction_types(block)?;
-        // EIP-8504: every dependency of the block's transactions must be satisfied
-        // by a witness the block carries. It runs on every path, including blocks
-        // assembled from an engine payload, whose body commitments are derived and
-        // so say nothing about whether the witnesses are valid.
-        validate_dependency_witnesses(block, &chain_config)?;
+        // EIP-8141: every claim of the block's transactions must be satisfied by
+        // a witness the block carries, checked against the block's pre-state, which
+        // is the state `vm` was created over. It runs on every path, including
+        // blocks assembled from an engine payload, whose body commitments are
+        // derived and so say nothing about whether the witnesses are valid.
+        validate_claim_witnesses(block, vm)?;
         match body_check {
             BodyCheck::Verify => validate_block_body(&block.header, &block.body, &NativeCrypto)
                 .map_err(|e| ChainError::InvalidBlock(InvalidBlockError::InvalidBody(e)))?,
@@ -2093,6 +2087,11 @@ impl Blockchain {
             // StatelessValidator". Mirrors the sibling paths at the other
             // `new_from_db_for_l1` sites (block import + witness gen).
             attach_stateless_validator(&mut vm);
+
+            // EIP-8141: check the block's claim witnesses through the logger, so the
+            // code of every custom claim verifier is part of the witness and
+            // stateless execution can repeat the check.
+            validate_claim_witnesses(block, &vm)?;
 
             // Re-execute block with logger
             let (execution_result, bal) = vm.execute_block(block, parent_timestamp)?;
@@ -3384,14 +3383,15 @@ impl Blockchain {
     /// Admits a blob-carrying transaction, an EIP-4844 transaction or an EIP-8141
     /// frame transaction with blobs, together with its blobs bundle.
     ///
-    /// `dependency_witnesses` holds the verified witnesses of a dependency
-    /// transaction (EIP-8504) and is `None` for every other transaction.
+    /// `claim_witnesses` holds the witnesses a frame transaction was submitted
+    /// with, one for each of its claims (EIP-8141), and is `None` for a
+    /// transaction submitted without any.
     #[cfg(feature = "c-kzg")]
     async fn add_blob_transaction_to_pool_inner(
         &self,
         transaction: Transaction,
         blobs_bundle: BlobsBundle,
-        dependency_witnesses: Option<PooledDependencyWitnesses>,
+        claim_witnesses: Option<Vec<Bytes>>,
         broadcast: bool,
     ) -> Result<H256, MempoolError> {
         let fork = self.current_fork()?;
@@ -3440,7 +3440,7 @@ impl Blockchain {
         // which also removes any same-nonce tx being replaced under the same lock
         // (#6938) — so no separate pre-removal here.
         let (frame_reservation, sender_admission) = self
-            .validate_transaction_inner(&transaction, sender, dependency_witnesses.is_some())
+            .validate_transaction_inner(&transaction, sender, claim_witnesses.as_deref())
             .await?;
 
         // Add blobs bundle before the transaction so that when add_transaction
@@ -3457,7 +3457,7 @@ impl Blockchain {
             mempool_tx,
             frame_reservation,
             sender_admission,
-            dependency_witnesses,
+            claim_witnesses,
             broadcast,
         );
         if let Err(e) = inserted {
@@ -3496,12 +3496,13 @@ impl Blockchain {
 
     /// Admits a transaction that carries no blobs.
     ///
-    /// `dependency_witnesses` holds the verified witnesses of a dependency
-    /// transaction (EIP-8504) and is `None` for every other transaction.
+    /// `claim_witnesses` holds the witnesses a frame transaction was submitted
+    /// with, one for each of its claims (EIP-8141), and is `None` for a
+    /// transaction submitted without any.
     async fn add_transaction_to_pool_inner(
         &self,
         transaction: Transaction,
-        dependency_witnesses: Option<PooledDependencyWitnesses>,
+        claim_witnesses: Option<Vec<Bytes>>,
         broadcast: bool,
     ) -> Result<H256, MempoolError> {
         // Blob-carrying transactions, EIP-4844 ones and EIP-8141 frame ones with blobs,
@@ -3537,7 +3538,7 @@ impl Blockchain {
         // the removal happens only after the locked paymaster re-check, so a
         // rejected fee-bump leaves the original pending tx intact.
         let (frame_reservation, sender_admission) = self
-            .validate_transaction_inner(&transaction, sender, dependency_witnesses.is_some())
+            .validate_transaction_inner(&transaction, sender, claim_witnesses.as_deref())
             .await?;
 
         // Add transaction to storage
@@ -3548,7 +3549,7 @@ impl Blockchain {
             mempool_tx,
             frame_reservation,
             sender_admission,
-            dependency_witnesses,
+            claim_witnesses,
             broadcast,
         )?;
 
@@ -3556,8 +3557,8 @@ impl Blockchain {
     }
 
     /// Inserts an admitted transaction into the mempool: with its witnesses when
-    /// it is a dependency transaction (EIP-8504), and queued for P2P broadcast
-    /// only when `broadcast` is set.
+    /// it is a frame transaction with claims (EIP-8141), and queued for P2P
+    /// broadcast only when `broadcast` is set.
     #[allow(clippy::too_many_arguments)]
     fn insert_into_mempool(
         &self,
@@ -3566,27 +3567,29 @@ impl Blockchain {
         transaction: MempoolTransaction,
         frame_reservation: Option<FramePaymasterReservation>,
         sender_admission: Option<SenderAdmission>,
-        dependency_witnesses: Option<PooledDependencyWitnesses>,
+        claim_witnesses: Option<Vec<Bytes>>,
         broadcast: bool,
     ) -> Result<(), MempoolError> {
-        match dependency_witnesses {
-            Some(dependency_witnesses) => self.mempool.add_dependency_transaction(
+        match claim_witnesses {
+            Some(claim_witnesses) if !claim_witnesses.is_empty() => {
+                self.mempool.add_transaction_with_claim_witnesses(
+                    hash,
+                    sender,
+                    transaction,
+                    frame_reservation,
+                    sender_admission,
+                    claim_witnesses,
+                    broadcast,
+                )
+            }
+            _ if broadcast => self.mempool.add_transaction(
                 hash,
                 sender,
                 transaction,
                 frame_reservation,
                 sender_admission,
-                dependency_witnesses,
-                broadcast,
             ),
-            None if broadcast => self.mempool.add_transaction(
-                hash,
-                sender,
-                transaction,
-                frame_reservation,
-                sender_admission,
-            ),
-            None => self.mempool.add_transaction_no_broadcast(
+            _ => self.mempool.add_transaction_no_broadcast(
                 hash,
                 sender,
                 transaction,
@@ -3596,164 +3599,56 @@ impl Blockchain {
         }
     }
 
-    /// Adds a dependency transaction (EIP-8504), a frame transaction with at
-    /// least one proof frame, to the mempool together with its witnesses, checking
-    /// that the wrapper and the transaction are valid.
+    /// Adds an EIP-8141 frame transaction to the mempool in its pooled
+    /// representation, with one witness for each of its claims and, when it
+    /// carries blobs, its blob sidecar, checking that all of them are valid.
     ///
-    /// This is the P2P entry point: the wrapper is queued for announcement to
-    /// peers regardless of `BlockchainOptions::private_mempool`. For the local-RPC
-    /// path that honors `private_mempool`, use
-    /// [`Self::add_local_dependency_transaction_to_pool`].
-    pub async fn add_dependency_transaction_to_pool(
+    /// This is the P2P entry point: the transaction is queued for announcement
+    /// to peers regardless of `BlockchainOptions::private_mempool`. For the
+    /// local-RPC path that honors `private_mempool`, use
+    /// [`Self::add_local_frame_transaction_to_pool`].
+    pub async fn add_frame_transaction_to_pool(
         &self,
-        wrapper: ProofWrapper,
+        pooled: PooledFrameTransaction,
     ) -> Result<H256, MempoolError> {
-        self.add_dependency_transaction_to_pool_inner(wrapper, true)
-            .await
+        self.add_frame_transaction_to_pool_inner(pooled, true).await
     }
 
-    /// Local-RPC counterpart of [`Self::add_dependency_transaction_to_pool`].
-    /// When `BlockchainOptions::private_mempool` is `true`, the transaction is
-    /// added to the mempool but its wrapper is not announced to peers.
-    pub async fn add_local_dependency_transaction_to_pool(
+    /// Local-RPC counterpart of [`Self::add_frame_transaction_to_pool`]. When
+    /// `BlockchainOptions::private_mempool` is `true`, the transaction is added
+    /// to the mempool but is not announced to peers.
+    pub async fn add_local_frame_transaction_to_pool(
         &self,
-        wrapper: ProofWrapper,
+        pooled: PooledFrameTransaction,
     ) -> Result<H256, MempoolError> {
         let broadcast = !self.options.private_mempool;
-        self.add_dependency_transaction_to_pool_inner(wrapper, broadcast)
+        self.add_frame_transaction_to_pool_inner(pooled, broadcast)
             .await
     }
 
-    /// The largest wrapper (EIP-8504) this node accepts, in bytes of its RLP
-    /// serialization: the largest transaction it accepts in its pooled network
-    /// form, plus a triple and a signature for each of the `max_sigs_per_tx`
-    /// dependencies it verifies.
-    pub fn max_proof_wrapper_size(&self, with_blobs: bool) -> usize {
-        let max_pooled_tx_size = if with_blobs {
-            MAX_BLOB_TX_SIZE
-        } else {
-            MAX_TX_SIZE
-        };
-        max_pooled_tx_size + proof_wrapper_overhead(self.options.max_sigs_per_tx)
-    }
-
-    async fn add_dependency_transaction_to_pool_inner(
+    /// Admits a frame transaction submitted in its pooled representation
+    /// (EIP-8141 §Acceptance Algorithm) through the same path as any other
+    /// transaction, which checks its witnesses against its claims.
+    async fn add_frame_transaction_to_pool_inner(
         &self,
-        wrapper: ProofWrapper,
+        pooled: PooledFrameTransaction,
         broadcast: bool,
     ) -> Result<H256, MempoolError> {
-        let result = self.admit_dependency_transaction(wrapper, broadcast).await;
-        metrics!(if let Err(error) = &result {
-            METRICS_EIP8504
-                .rejected_total
-                .with_label_values(&[dependency_rejection_reason(error)])
-                .inc();
-        });
-        result
-    }
-
-    /// Admits a dependency transaction (EIP-8504) with its witnesses. The checks
-    /// run in the order of the EIP's admission rules, cheapest first, and the
-    /// acceptance algorithm of EIP-8141 runs last, once every witness is known to
-    /// satisfy its dependency.
-    async fn admit_dependency_transaction(
-        &self,
-        wrapper: ProofWrapper,
-        broadcast: bool,
-    ) -> Result<H256, MempoolError> {
-        // Size cap of the wrapper as it travels on the network. It bounds the
-        // work below before any of it runs.
-        let encoded_wrapper = wrapper.encode_to_vec();
-        let limit = self.max_proof_wrapper_size(wrapper.blobs_bundle.is_some());
-        if encoded_wrapper.len() > limit {
-            return Err(MempoolError::TxSizeExceeded {
-                actual: encoded_wrapper.len(),
-                limit,
-            });
-        }
-
-        // A key holder can sign the same message more than once, so a transaction
-        // may have more than one valid wrapper. The node keeps a single one: an
-        // additional wrapper for a pooled transaction is ignored.
-        let transaction = Transaction::FrameTransaction(wrapper.tx.clone());
-        let hash = transaction.hash(&NativeCrypto);
-        if self.mempool.contains_tx(hash)? {
-            if !broadcast {
-                warn!(%hash, "tx already public; --mempool.private cannot retroactively un-broadcast");
-            }
-            return Ok(hash);
-        }
-
-        // A dependency transaction is a frame transaction: there are none before
-        // Hegota, and nothing below is worth doing for one that arrives early.
-        let header_no = self.storage.get_latest_block_number()?;
-        let header = self
-            .storage
-            .get_block_header(header_no)?
-            .ok_or(MempoolError::NoBlockHeaderError)?;
-        if self.storage.get_chain_config().fork(header.timestamp) < Fork::Hegota {
-            return Err(MempoolError::FrameTxPreFork);
-        }
-
-        // The wrapper's form (one transaction, mode 0) was checked when it was
-        // decoded or built. Next, the static constraints of EIP-8141 and of the
-        // proof frames.
-        wrapper
-            .tx
-            .validate_static_constraints()
-            .map_err(MempoolError::InvalidFrameTransaction)?;
-
-        // At least one dependency, and no more than this node verifies. The limit
-        // applies to the deduplicated list, so a triple declared twice counts once.
-        let dependencies = wrapper.tx.dependencies();
-        if dependencies.is_empty() {
-            return Err(MempoolError::WitnessesWithoutDependencies);
-        }
-        if dependencies.len() > self.options.max_sigs_per_tx {
-            return Err(MempoolError::TooManyDependencies {
-                actual: dependencies.len(),
-                limit: self.options.max_sigs_per_tx,
-            });
-        }
-
-        // The wrapper states exactly the transaction's dependencies and carries
-        // one witness for each.
-        if !wrapper.states_its_dependencies() {
-            return Err(MempoolError::WrapperDependenciesMismatch);
-        }
-
-        // Each witness satisfies its dependency. This does not depend on state,
-        // so it is done once: the revalidation after each block does not repeat it.
+        let PooledFrameTransaction {
+            tx,
+            witnesses,
+            blobs_bundle,
+        } = pooled;
         #[cfg(feature = "metrics")]
-        let verification_started = Instant::now();
-        for (index, (dependency, witness)) in
-            dependencies.iter().zip(&wrapper.witnesses).enumerate()
-        {
-            if !satisfies(dependency, witness) {
-                return Err(MempoolError::DependencyNotSatisfied(index));
-            }
-        }
-        metrics!(
-            METRICS_EIP8504
-                .admission_witness_verification_seconds
-                .observe(verification_started.elapsed().as_secs_f64())
-        );
-
-        let dependency_witnesses = PooledDependencyWitnesses {
-            wrapper_hash: keccak(&encoded_wrapper),
-            wrapper_len: encoded_wrapper.len(),
-            witnesses: wrapper.witnesses,
-        };
-
-        // EIP-8141's acceptance algorithm, through the same path as any other
-        // frame transaction.
-        let admitted = match wrapper.blobs_bundle {
+        let has_claims = !tx.claims.is_empty();
+        let transaction = Transaction::FrameTransaction(tx);
+        let admitted = match blobs_bundle {
             #[cfg(feature = "c-kzg")]
             Some(blobs_bundle) => {
                 self.add_blob_transaction_to_pool_inner(
                     transaction,
                     blobs_bundle,
-                    Some(dependency_witnesses),
+                    Some(witnesses),
                     broadcast,
                 )
                 .await
@@ -3762,16 +3657,17 @@ impl Blockchain {
             #[cfg(not(feature = "c-kzg"))]
             Some(_) => Err(MempoolError::BlobTxNoBlobsBundle),
             None => {
-                self.add_transaction_to_pool_inner(
-                    transaction,
-                    Some(dependency_witnesses),
-                    broadcast,
-                )
-                .await
+                self.add_transaction_to_pool_inner(transaction, Some(witnesses), broadcast)
+                    .await
             }
         };
-        metrics!(if admitted.is_ok() {
-            METRICS_EIP8504.admitted_total.inc();
+        metrics!(match &admitted {
+            Ok(_) if has_claims => METRICS_CLAIMS.admitted_total.inc(),
+            Ok(_) => {}
+            Err(error) => METRICS_CLAIMS
+                .rejected_total
+                .with_label_values(&[claim_rejection_reason(error)])
+                .inc(),
         });
         admitted
     }
@@ -4066,17 +3962,18 @@ impl Blockchain {
         tx: &Transaction,
         sender: Address,
     ) -> Result<(Option<FramePaymasterReservation>, Option<SenderAdmission>), MempoolError> {
-        self.validate_transaction_inner(tx, sender, false).await
+        self.validate_transaction_inner(tx, sender, None).await
     }
 
-    /// [`Self::validate_transaction`], told whether the transaction arrived with
-    /// witnesses that were verified against its dependencies (EIP-8504). A
-    /// transaction with proof frames passes only in that case.
+    /// [`Self::validate_transaction`], given the witnesses a frame transaction
+    /// was submitted with, one for each of its claims (EIP-8141), or `None` when
+    /// it was submitted without any. A frame transaction with claims passes only
+    /// if each of its witnesses satisfies its claim.
     async fn validate_transaction_inner(
         &self,
         tx: &Transaction,
         sender: Address,
-        dependency_witnesses_verified: bool,
+        claim_witnesses: Option<&[Bytes]>,
     ) -> Result<(Option<FramePaymasterReservation>, Option<SenderAdmission>), MempoolError> {
         let nonce = tx.nonce();
 
@@ -4144,50 +4041,91 @@ impl Blockchain {
                 .validate_static_constraints()
                 .map_err(MempoolError::InvalidFrameTransaction)?;
 
-            // EIP-8504: a transaction with proof frames is admitted only together
-            // with a witness for each of its dependencies. It can never be included
-            // without them, so one that arrives alone is rejected here.
-            if frame_tx.has_proof_frames() && !dependency_witnesses_verified {
-                return Err(MempoolError::DependencyTransactionWithoutWitnesses);
-            }
-
             // Frame `data` size is bounded by the wire-size cap below
             // (MAX_TX_SIZE over encode_canonical_len), which covers the
             // frames' payloads since they are part of the canonical encoding.
 
-            // EIP-8141 §Mempool (rule #6): signature validation counts against
-            // MAX_VERIFY_GAS. Reject before any per-signature crypto runs when the
-            // signature-verification cost alone exceeds the budget — such a tx can
+            // EIP-8141 §Acceptance Algorithm, step 2: one witness for each claim,
+            // each of the length its claim fixes. A transaction with claims can
+            // never be included without their witnesses, so one that arrives
+            // alone is rejected here.
+            let witnesses = match claim_witnesses {
+                Some(witnesses) => witnesses,
+                None if frame_tx.claims.is_empty() => &[],
+                None => return Err(MempoolError::FrameTxWithoutWitnesses),
+            };
+            if witnesses.len() != frame_tx.claims.len() {
+                return Err(MempoolError::ClaimWitnessCountMismatch {
+                    expected: frame_tx.claims.len(),
+                    found: witnesses.len(),
+                });
+            }
+            let dependencies = frame_tx.claim_dependencies().ok_or_else(|| {
+                MempoolError::InvalidFrameTransaction("malformed claim".to_string())
+            })?;
+            for (index, (dependency, witness)) in dependencies.iter().zip(witnesses).enumerate() {
+                if u64::try_from(witness.len()) != Ok(dependency.witness_len) {
+                    return Err(MempoolError::ClaimWitnessLengthMismatch {
+                        index,
+                        expected: dependency.witness_len,
+                        found: witness.len(),
+                    });
+                }
+            }
+            // A block carries at most `MAX_BLOCK_WITNESS_BYTES` of claim witnesses,
+            // so a transaction whose own witnesses exceed that can never be
+            // included. Witnesses of claims that resolve to the same dependency
+            // are carried once.
+            let block_witnesses: BTreeMap<_, _> = dependencies.iter().zip(witnesses).collect();
+            let block_witnesses_len =
+                ethrex_common::types::claim_witnesses_len(block_witnesses.into_values());
+            if block_witnesses_len > MAX_BLOCK_WITNESS_BYTES {
+                return Err(MempoolError::ClaimWitnessesTooLarge {
+                    actual: block_witnesses_len,
+                    limit: MAX_BLOCK_WITNESS_BYTES,
+                });
+            }
+
+            // EIP-8141 §Mempool (rule #6): claim verification counts against
+            // MAX_VERIFY_GAS. Reject before any witness is verified when the
+            // claim verification cost alone exceeds the budget -- such a tx can
             // never satisfy the validation-prefix gas limit, and this bounds the
-            // crypto work done by validate_frame_signatures below. (The full
-            // validation-prefix simulation runs below over a throwaway head-state
-            // VM and is the authoritative gas-budget check.)
-            if frame_tx.signature_verification_cost() > self.options.max_verify_gas {
+            // verification work done below.
+            if frame_tx.claim_verification_cost() > self.options.max_verify_gas {
                 return Err(MempoolError::FrameTxVerifyGasExceeded);
             }
 
-            // Authenticate the signature list BEFORE admission: without this the
-            // unauthenticated `sender` field lets fabricated senders flood the
-            // pool for free (no balance is charged at admission).
-            let sig_hash = frame_tx.compute_sig_hash();
-            if !ethrex_vm::validate_frame_signatures(
-                &frame_tx.signatures,
-                sig_hash,
-                frame_tx.sender,
-                fork,
-                &NativeCrypto,
-            ) {
-                return Err(MempoolError::InvalidFrameSignature);
-            }
-
-            // EIP-8141 §Mempool: validate the prefix shape and structural rules.
-            // The full gas-budget check (prefix frame gas limits + sig cost ≤
-            // MAX_VERIFY_GAS) is the authoritative superset of the cheap
-            // sig-cost pre-filter above; both are kept for defence-in-depth.
+            // EIP-8141 §Mempool: validate the prefix shape and structural rules
+            // (§Acceptance Algorithm, step 3). The full gas-budget check (prefix
+            // frame gas limits + claim verification cost ≤ MAX_VERIFY_GAS) is the
+            // authoritative superset of the cheap pre-filter above; both are kept
+            // for defence-in-depth.
             let prefix = frame_tx.validation_prefix().map_err(MempoolError::from)?;
             frame_tx
                 .validate_prefix_structure(&prefix, self.options.max_verify_gas)
                 .map_err(MempoolError::from)?;
+
+            // EIP-8141 §Acceptance Algorithm, step 5: protocol-verifier claims
+            // depend on no state, so each is verified against its witness before
+            // any state is read, stopping at the first that fails. This also
+            // authenticates the transaction BEFORE admission: without it the
+            // unauthenticated `sender` field lets fabricated senders flood the
+            // pool for free (no balance is charged at admission). Claims a custom
+            // verifier checks need state and are verified further below.
+            #[cfg(feature = "metrics")]
+            let verification_started = Instant::now();
+            for (index, (dependency, witness)) in dependencies.iter().zip(witnesses).enumerate() {
+                if ethrex_vm::claims::verify_protocol_dependency(dependency, witness, &NativeCrypto)
+                    == Some(false)
+                {
+                    return Err(MempoolError::ClaimNotSatisfied(index));
+                }
+            }
+            metrics!(if !dependencies.is_empty() {
+                METRICS_CLAIMS
+                    .admission_witness_verification_seconds
+                    .observe(verification_started.elapsed().as_secs_f64());
+            });
         }
 
         // Wire size cap for non-blob txs: peer-policy default, not consensus.
@@ -4499,6 +4437,27 @@ impl Blockchain {
             let mut vm = self
                 .new_evm(vm_db)
                 .map_err(|err| MempoolError::FrameTxValidationFailed(err.to_string()))?;
+
+            // EIP-8141 §Acceptance Algorithm, step 6: the claims a custom verifier
+            // checks are verified in the pure context against current state, before
+            // the validation prefix is simulated. Their length and count were
+            // checked above, with the protocol verifiers' claims.
+            let witnesses = claim_witnesses.unwrap_or_default();
+            let dependencies = frame_tx.claim_dependencies().ok_or_else(|| {
+                MempoolError::InvalidFrameTransaction("malformed claim".to_string())
+            })?;
+            for (index, (dependency, witness)) in dependencies.iter().zip(witnesses).enumerate() {
+                if dependency.protocol_verifier().is_some() {
+                    continue;
+                }
+                let satisfied = vm
+                    .verify_dependency(dependency, witness, &header)
+                    .map_err(|err| MempoolError::FrameTxValidationFailed(err.to_string()))?;
+                if !satisfied {
+                    return Err(MempoolError::ClaimNotSatisfied(index));
+                }
+            }
+
             // OQ1: no canonical paymaster bytecode is resolvable, so no canonical
             // code hash is passed (the canonical-pay-frame exemption never fires).
             let outcome = vm
@@ -4677,13 +4636,6 @@ impl Blockchain {
                 "Hash {hash} is private and must not propagate",
             )));
         }
-        // EIP-8504: a dependency transaction is sent only inside its wrapper,
-        // never in a `PooledTransactions` message.
-        if self.mempool.is_dependency_transaction(*hash)? {
-            return Err(StoreError::Custom(format!(
-                "Hash {hash} is a dependency transaction and travels only in its wrapper",
-            )));
-        }
         let Some(tx) = self.mempool.get_transaction_by_hash(*hash)? else {
             return Err(StoreError::Custom(format!(
                 "Hash {hash} not found in the mempool",
@@ -4693,8 +4645,17 @@ impl Blockchain {
             Transaction::LegacyTransaction(itx) => P2PTransaction::LegacyTransaction(itx),
             Transaction::EIP2930Transaction(itx) => P2PTransaction::EIP2930Transaction(itx),
             Transaction::EIP1559Transaction(itx) => P2PTransaction::EIP1559Transaction(itx),
-            // A blob-carrying tx travels with its sidecar, an EIP-4844 tx and an
-            // EIP-8141 frame tx with blobs alike.
+            // An EIP-8141 frame tx travels in its pooled representation, with the
+            // witnesses of its claims and, when it carries blobs, its sidecar.
+            Transaction::FrameTransaction(_) => {
+                let Some(pooled) = self.mempool.get_pooled_frame_transaction(*hash)? else {
+                    return Err(StoreError::Custom(format!(
+                        "Frame transaction present without its witnesses or its bundle: hash {hash}",
+                    )));
+                };
+                P2PTransaction::FrameTransaction(pooled)
+            }
+            // An EIP-4844 tx travels with its sidecar.
             tx if tx.is_blob_carrying() => {
                 let Some(bundle) = self.mempool.get_blobs_bundle(*hash)? else {
                     return Err(StoreError::Custom(format!(
@@ -4715,7 +4676,6 @@ impl Blockchain {
                 ));
             }
             Transaction::FeeTokenTransaction(itx) => P2PTransaction::FeeTokenTransaction(itx),
-            Transaction::FrameTransaction(itx) => P2PTransaction::FrameTransaction(itx),
             // Blob-carrying, so taken by the arm above.
             Transaction::EIP4844Transaction(_) => {
                 return Err(StoreError::Custom(format!(

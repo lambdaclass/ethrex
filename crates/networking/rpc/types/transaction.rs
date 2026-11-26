@@ -3,9 +3,8 @@ use ethrex_common::{
     Address, H256, serde_utils,
     types::{
         BlockHash, BlockNumber, EIP1559Transaction, EIP2930Transaction, EIP7702Transaction,
-        EnvelopeTxType, FeeTokenTransaction, FrameTransaction, LegacyTransaction,
-        PrivilegedL2Transaction, ProofWrapper, Transaction, WrappedEIP4844Transaction,
-        WrappedFrameTransaction,
+        EnvelopeTxType, FeeTokenTransaction, LegacyTransaction, PooledFrameTransaction,
+        PrivilegedL2Transaction, Transaction, WrappedEIP4844Transaction,
     },
 };
 use ethrex_crypto::NativeCrypto;
@@ -57,13 +56,10 @@ pub enum SendRawTransactionRequest {
     EIP7702(EIP7702Transaction),
     PrivilegedL2(PrivilegedL2Transaction),
     FeeToken(FeeTokenTransaction),
-    Frame(FrameTransaction),
-    /// A blob-carrying frame transaction in its EIP-7594 network wrapper.
-    FrameWithBlobs(WrappedFrameTransaction),
-    /// A dependency transaction (EIP-8504) submitted with its witnesses, and with
-    /// its blob sidecar when it carries blobs, as the wrapper the node built
-    /// from them.
-    FrameWithWitnesses(ProofWrapper),
+    /// An EIP-8141 frame transaction in its pooled representation: the
+    /// transaction, one witness for each of its claims and, when it carries
+    /// blobs, its blob sidecar.
+    Frame(PooledFrameTransaction),
 }
 
 impl SendRawTransactionRequest {
@@ -78,13 +74,7 @@ impl SendRawTransactionRequest {
                 Transaction::PrivilegedL2Transaction(t.clone())
             }
             SendRawTransactionRequest::FeeToken(t) => Transaction::FeeTokenTransaction(t.clone()),
-            SendRawTransactionRequest::Frame(t) => Transaction::FrameTransaction(t.clone()),
-            SendRawTransactionRequest::FrameWithBlobs(t) => {
-                Transaction::FrameTransaction(t.tx.clone())
-            }
-            SendRawTransactionRequest::FrameWithWitnesses(wrapper) => {
-                Transaction::FrameTransaction(wrapper.tx.clone())
-            }
+            SendRawTransactionRequest::Frame(t) => Transaction::FrameTransaction(t.tx.clone()),
         }
     }
 
@@ -110,19 +100,19 @@ impl SendRawTransactionRequest {
                     EnvelopeTxType::EIP7702 => {
                         EIP7702Transaction::decode(tx_bytes).map(SendRawTransactionRequest::EIP7702)
                     }
-                    // EIP-8504: `rlp([tx_payload_body, witnesses])`, or the blob
-                    // wrapper's items followed by `witnesses`.
-                    EnvelopeTxType::Frame if ProofWrapper::is_submission(tx_bytes)? => {
-                        ProofWrapper::decode_submission(tx_bytes)
-                            .map(SendRawTransactionRequest::FrameWithWitnesses)
+                    // EIP-8141 §Networking: a frame transaction is submitted in its
+                    // pooled representation, `rlp([tx_body, wrapper_version,
+                    // witnesses, blob_sidecar])`. A bare `tx_body`, the form it has
+                    // inside a block, carries no witnesses and is not a submission.
+                    EnvelopeTxType::Frame if !PooledFrameTransaction::is_pooled(tx_bytes)? => {
+                        Err(RLPDecodeError::Custom(
+                            "a frame transaction is submitted in its pooled representation, \
+                             rlp([tx_body, wrapper_version, witnesses, blob_sidecar])"
+                                .to_string(),
+                        ))
                     }
-                    EnvelopeTxType::Frame if WrappedFrameTransaction::is_wrapped(tx_bytes)? => {
-                        WrappedFrameTransaction::decode(tx_bytes)
-                            .map(SendRawTransactionRequest::FrameWithBlobs)
-                    }
-                    EnvelopeTxType::Frame => {
-                        FrameTransaction::decode(tx_bytes).map(SendRawTransactionRequest::Frame)
-                    }
+                    EnvelopeTxType::Frame => PooledFrameTransaction::decode(tx_bytes)
+                        .map(SendRawTransactionRequest::Frame),
                     EnvelopeTxType::FeeToken => FeeTokenTransaction::decode(tx_bytes)
                         .map(SendRawTransactionRequest::FeeToken),
                     EnvelopeTxType::Privileged => PrivilegedL2Transaction::decode(tx_bytes)
@@ -138,7 +128,11 @@ impl SendRawTransactionRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethrex_common::{Bytes, U256, types::Frame};
+    use ethrex_common::{
+        Bytes, U256,
+        types::{Claim, Frame, FrameTransaction, SECP256K1_VERIFIER},
+    };
+    use ethrex_rlp::encode::RLPEncode;
 
     // The execution-apis frame transaction schema names the frame fields `target`, `executionGas`
     // and `stateGas`, and carries the sender as `from`, like every other transaction type. A
@@ -178,5 +172,75 @@ mod tests {
                 "data": "0xab",
             })
         );
+    }
+
+    /// A frame transaction with one secp256k1 claim, and a 65-byte witness for it.
+    fn pooled_frame_transaction() -> PooledFrameTransaction {
+        PooledFrameTransaction {
+            tx: FrameTransaction {
+                sender: Address::repeat_byte(0x11),
+                claims: vec![Claim {
+                    verifier: SECP256K1_VERIFIER,
+                    ..Default::default()
+                }],
+                frames: vec![Frame {
+                    mode: 1,
+                    flags: 3,
+                    gas_limit: 0x5208,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            witnesses: vec![Bytes::from(vec![0x07; 65])],
+            blobs_bundle: None,
+        }
+    }
+
+    // EIP-8141 §Networking: `eth_sendRawTransaction` takes a frame transaction in its pooled
+    // representation, `0x06 || rlp([tx_body, wrapper_version, witnesses, blob_sidecar])`.
+    #[test]
+    fn a_frame_transaction_is_submitted_in_its_pooled_representation() {
+        let pooled = pooled_frame_transaction();
+        let mut raw = vec![0x06];
+        pooled.encode(&mut raw);
+
+        let request = SendRawTransactionRequest::decode_canonical(&raw).expect("decodes");
+        let SendRawTransactionRequest::Frame(decoded) = &request else {
+            panic!("expected a frame transaction, got {request:?}");
+        };
+        assert_eq!(decoded, &pooled);
+        assert_eq!(
+            request.to_transaction(),
+            Transaction::FrameTransaction(pooled.tx)
+        );
+    }
+
+    // The bare `tx_body`, the form a frame transaction has inside a block, carries no
+    // witnesses and is not a submission.
+    #[test]
+    fn a_bare_frame_transaction_is_not_a_submission() {
+        let pooled = pooled_frame_transaction();
+        let mut raw = vec![0x06];
+        pooled.tx.encode(&mut raw);
+        let error = SendRawTransactionRequest::decode_canonical(&raw).expect_err("rejected");
+        assert!(
+            error.to_string().contains("pooled representation"),
+            "{error}"
+        );
+    }
+
+    // A pooled representation with a wrapper version other than zero is rejected.
+    #[test]
+    fn a_pooled_frame_transaction_of_another_wrapper_version_is_rejected() {
+        let pooled = pooled_frame_transaction();
+        let mut raw = vec![0x06];
+        ethrex_rlp::structs::Encoder::new(&mut raw)
+            .encode_field(&pooled.tx)
+            .encode_field(&1u8)
+            .encode_field(&pooled.witnesses)
+            .encode_raw(&[0xc0])
+            .finish();
+        let error = SendRawTransactionRequest::decode_canonical(&raw).expect_err("rejected");
+        assert!(error.to_string().contains("wrapper version"), "{error}");
     }
 }

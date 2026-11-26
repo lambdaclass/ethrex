@@ -67,8 +67,6 @@ const PATTERNS: &[Entry] = &[
         text: "Base fee per gas is incorrect" },
 
     // EIP-8141 frame transactions (upstream `EthrexExceptionMapper`, devnets/frames).
-    Entry { canonical: "TransactionException.TYPE_6_INVALID_SIGNATURE", kind: Kind::Sub,
-        text: "Invalid frame transaction: signature validation failed" },
     Entry { canonical: "TransactionException.TYPE_6_INVALID_FRAME_EXECUTION", kind: Kind::Sub,
         text: "Invalid frame transaction: VERIFY frame did not call APPROVE or payer not approved" },
     Entry { canonical: "TransactionException.GASPRICE_OVERFLOW", kind: Kind::Sub,
@@ -121,10 +119,10 @@ const PATTERNS: &[Entry] = &[
     Entry { canonical: "TransactionException.INITCODE_SIZE_EXCEEDED", kind: Kind::Re,
         text: r"create initcode size limit|Initcode size exceeded.*" },
     // EIP-8141 static validity names the rule it failed after the prefix; a frame,
-    // signature or EIP-8250 nonce field too wide for its type is rejected while
+    // claim or EIP-8250 nonce field too wide for its type is rejected while
     // decoding. Upstream's mapper does not list the two nonce fields yet.
     Entry { canonical: "TransactionException.TYPE_6_INVALID_FRAME_FORMAT", kind: Kind::Re,
-        text: r"Invalid frame transaction format: .*|Invalid frame transaction: signature validation failed|Error decoding field '(frames|signatures|nonce_keys|nonce_seq)' of type .*" },
+        text: r"Invalid frame transaction format: .*|Error decoding field '(frames|claims|nonce_keys|nonce_seq)' of type .*" },
     Entry { canonical: "TransactionException.NONCE_IS_MAX", kind: Kind::Re,
         text: r"Nonce is max" },
     Entry { canonical: "TransactionException.GAS_ALLOWANCE_EXCEEDED", kind: Kind::Re,
@@ -155,12 +153,12 @@ const PATTERNS: &[Entry] = &[
         text: r"Maximum block size exceeded.*" },
     Entry { canonical: "BlockException.INVALID_BAL_HASH", kind: Kind::Re,
         text: r"BAL validation failed" },
-    // EIP-8504: a witness list that is not one valid witness per dependency, and
-    // a header commitment that does not match the list.
-    Entry { canonical: "BlockException.INVALID_DEPENDENCY_WITNESSES", kind: Kind::Re,
-        text: r"Block carries \d+ dependency witnesses for its \d+ dependencies|Dependency witness \d+ does not satisfy its dependency" },
-    Entry { canonical: "BlockException.INVALID_DEPENDENCY_WITNESSES_HASH", kind: Kind::Re,
-        text: r"Dependency witnesses do not match the header" },
+    // EIP-8141 §Block Witnesses: claim witnesses that are not one valid witness
+    // per dependency, and a header commitment that does not match them.
+    Entry { canonical: "BlockException.INVALID_CLAIM_WITNESSES", kind: Kind::Re,
+        text: r"Invalid claim witnesses: .*|Block carries \d+ claim witnesses for its \d+ dependencies|Claim witness \d+ does not satisfy its dependency|A frame transaction declares a claim with a malformed key or msg" },
+    Entry { canonical: "BlockException.INVALID_CLAIM_WITNESSES_HASH", kind: Kind::Re,
+        text: r"Claim witnesses do not (match|hash to) the header" },
     Entry { canonical: "BlockException.INVALID_BLOCK_ACCESS_LIST", kind: Kind::Re,
         text: r"Block access list contains index \d+ exceeding max valid index \d+|Failed to RLP decode BAL|Block access list .+ not in strictly ascending order.*|BAL validation failed for (tx \d+|system_tx|withdrawal): .*|BAL validation failed: .*|absent from BAL|Block access list slot .+ is in both storage_changes and storage_reads.*|Block access list .+ has an empty change set|Invalid block hash" },
     Entry { canonical: "BlockException.INCORRECT_BLOCK_FORMAT", kind: Kind::Re,

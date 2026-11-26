@@ -49,8 +49,18 @@ pub enum InvalidBlockError {
     UnsupportedTransactionType(u8),
     #[error("Transaction has invalid chain id: have {have}, want {want}")]
     InvalidTransactionChainId { have: u64, want: u64 },
-    #[error("Block carries {found} dependency witnesses for its {expected} dependencies")]
-    DependencyWitnessesCountMismatch { expected: usize, found: usize },
-    #[error("Dependency witness {0} does not satisfy its dependency")]
-    DependencyNotSatisfied(usize),
+    #[error("Invalid claim witnesses: {0}")]
+    InvalidClaimWitnesses(String),
+    #[error("Claim witnesses do not hash to the header's claim_witnesses_hash")]
+    ClaimWitnessesHashMismatch,
+    #[error("A frame transaction declares a claim with a malformed key or msg")]
+    MalformedClaim,
+    #[error("Block carries {found} claim witnesses for its {expected} dependencies")]
+    ClaimWitnessesCountMismatch { expected: usize, found: usize },
+    #[error("Claim witness {0} does not satisfy its dependency")]
+    ClaimNotSatisfied(usize),
+    #[error(
+        "Gas allowance exceeded: the block's claims take {claim_gas} gas, over its gas limit {gas_limit}"
+    )]
+    ClaimGasExceedsGasLimit { claim_gas: u64, gas_limit: u64 },
 }

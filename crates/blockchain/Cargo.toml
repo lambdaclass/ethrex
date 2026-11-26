@@ -13,10 +13,10 @@ repository.workspace = true
 [dependencies]
 ethrex-rlp.workspace = true
 ethrex-common = { workspace = true, default-features = false }
-ethrex-crypto = { workspace = true, features = ["leansphincs"] }
+ethrex-crypto.workspace = true
 ethrex-storage.workspace = true
 ethrex-trie.workspace = true
-ethrex-vm.workspace = true
+ethrex-vm = { workspace = true, features = ["leansphincs"] }
 ethrex-metrics = { path = "./metrics", version = "29.0.1", default-features = false }
 
 ethrex-guest-program = { workspace = true, default-features = false }
@@ -35,7 +35,7 @@ tokio-util.workspace = true
 tokio = { workspace = true, features = ["full"] }
 ethrex-levm.workspace = true
 tempfile.workspace = true
-# Signs the witnesses the EIP-8504 tests verify.
+# Signs the leanSPHINCS witnesses the EIP-8141 claim tests verify.
 lean_sphincs.workspace = true
 
 [lib]

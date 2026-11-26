@@ -150,12 +150,6 @@ Node options:
           [env: ETHREX_MEMPOOL_MAX_VERIFY_GAS=]
           [default: 100000]
 
-      --mempool.max-sigs-per-tx <COUNT>
-          EIP-8504 MAX_SIGS_PER_TX: maximum number of dependencies a transaction may have for the node to verify their witnesses and admit it to the mempool. Mempool policy, not consensus.
-
-          [env: ETHREX_MEMPOOL_MAX_SIGS_PER_TX=]
-          [default: 16]
-
       --precompute-witnesses
           Once synced, computes execution witnesses upon receiving newPayload messages and stores them in local storage
           
@@ -435,12 +429,6 @@ Node options:
 
           [env: ETHREX_MEMPOOL_MAX_VERIFY_GAS=]
           [default: 100000]
-
-      --mempool.max-sigs-per-tx <COUNT>
-          EIP-8504 MAX_SIGS_PER_TX: maximum number of dependencies a transaction may have for the node to verify their witnesses and admit it to the mempool. Mempool policy, not consensus.
-
-          [env: ETHREX_MEMPOOL_MAX_SIGS_PER_TX=]
-          [default: 16]
 
 P2P options:
       --bootnodes <BOOTNODE_LIST>...

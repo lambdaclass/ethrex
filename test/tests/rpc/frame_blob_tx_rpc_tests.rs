@@ -1,7 +1,7 @@
-//! EIP-8141 §Networking: a frame transaction carrying blobs is submitted in the
-//! EIP-7594 network wrapper,
-//! `0x06 || rlp([tx_payload_body, wrapper_version, blobs, commitments, cell_proofs])`,
-//! exactly as an EIP-4844 transaction is.
+//! EIP-8141 §Networking: a frame transaction carrying blobs is submitted in its
+//! pooled representation,
+//! `0x06 || rlp([tx_body, wrapper_version, witnesses, blob_sidecar])`, whose
+//! `blob_sidecar` is `[blobs, commitments, cell_proofs]` per EIP-7594.
 
 use std::{collections::BTreeMap, fs::File, io::BufReader, path::PathBuf};
 
@@ -70,9 +70,9 @@ fn sample_blob() -> [u8; BYTES_PER_BLOB] {
 }
 
 #[test]
-fn a_frame_tx_sent_in_its_blob_network_wrapper_is_pooled_and_its_blobs_are_served() {
+fn a_frame_tx_sent_with_its_blob_sidecar_is_pooled_and_its_blobs_are_served() {
     // An unoptimized build copies each 128 KiB blob through the stack several
-    // times while decoding the wrapper (as it does for an EIP-4844 wrapper), which
+    // times while decoding the sidecar (as it does for an EIP-4844 wrapper), which
     // overflows a test thread's 2 MiB default stack.
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
@@ -81,14 +81,14 @@ fn a_frame_tx_sent_in_its_blob_network_wrapper_is_pooled_and_its_blobs_are_serve
                 .enable_all()
                 .build()
                 .expect("build the test runtime")
-                .block_on(send_a_frame_tx_in_its_blob_network_wrapper())
+                .block_on(send_a_frame_tx_with_its_blob_sidecar())
         })
         .expect("spawn the test thread")
         .join()
         .expect("the test thread must not panic");
 }
 
-async fn send_a_frame_tx_in_its_blob_network_wrapper() {
+async fn send_a_frame_tx_with_its_blob_sidecar() {
     let (store, chain_id) = setup_store().await;
     let ctx = default_context_with_storage(store).await;
 
@@ -115,19 +115,26 @@ async fn send_a_frame_tx_in_its_blob_network_wrapper() {
         ..Default::default()
     };
 
-    let mut wrapper_payload = Vec::new();
-    Encoder::new(&mut wrapper_payload)
-        .encode_field(&tx)
-        .encode_field(&1u8)
+    // The transaction has no claims, so its list of witnesses is empty, and the
+    // wrapper version is `POOLED_WRAPPER_VERSION`, zero, whatever the sidecar holds.
+    let mut blob_sidecar = Vec::new();
+    Encoder::new(&mut blob_sidecar)
         .encode_field(&bundle.blobs)
         .encode_field(&bundle.commitments)
         .encode_field(&bundle.proofs)
         .finish();
-    let raw = [vec![TxType::Frame as u8], wrapper_payload].concat();
+    let mut pooled_payload = Vec::new();
+    Encoder::new(&mut pooled_payload)
+        .encode_field(&tx)
+        .encode_field(&0u8)
+        .encode_field(&Vec::<Bytes>::new())
+        .encode_raw(&blob_sidecar)
+        .finish();
+    let raw = [vec![TxType::Frame as u8], pooled_payload].concat();
 
     let returned_hash =
         SendRawTransactionRequest::parse(&Some(vec![json!(format!("0x{}", hex::encode(&raw)))]))
-            .expect("the network wrapper must decode")
+            .expect("the pooled representation must decode")
             .handle(ctx.clone())
             .await
             .expect("the frame tx must enter the pool");
@@ -135,7 +142,7 @@ async fn send_a_frame_tx_in_its_blob_network_wrapper() {
     assert_eq!(
         returned_hash,
         json!(format!("{tx_hash:#x}")),
-        "the tx hash covers the plain payload, not the wrapper"
+        "the tx hash covers the transaction body, not its sidecar"
     );
 
     let served_blobs = BlobsV2Request::parse(&Some(vec![json!([versioned_hash])]))
@@ -160,6 +167,6 @@ async fn send_a_frame_tx_in_its_blob_network_wrapper() {
     assert_eq!(
         served_to_peers.encode_canonical_to_vec(),
         raw,
-        "peers receive the same network wrapper"
+        "peers receive the same pooled representation"
     );
 }

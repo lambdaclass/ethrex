@@ -1317,21 +1317,21 @@ fn validate_execution_requests(execution_requests: &[EncodedRequests]) -> Result
     Ok(())
 }
 
-/// `eip8504_active` says whether EIP-8504 is active at the payload's timestamp,
-/// which decides how its `dependencyWitnesses` field is read.
+/// `hegota_active` says whether Hegota is active at the payload's timestamp,
+/// which decides how its `claimWitnesses` field (EIP-8141) is read.
 fn get_block_from_payload(
     payload: &ExecutionPayload,
     parent_beacon_block_root: Option<H256>,
     requests_hash: Option<H256>,
     block_access_list_hash: Option<H256>,
-    eip8504_active: bool,
+    hegota_active: bool,
 ) -> Result<Block, RLPDecodeError> {
     let block_hash = payload.block_hash;
     let block_number = payload.block_number;
     debug!(%block_hash, %block_number, "Received new payload");
 
     let mut payload = payload.clone();
-    payload.normalize_dependency_witnesses(eip8504_active);
+    payload.normalize_claim_witnesses(hegota_active);
     payload.into_block(
         parent_beacon_block_root,
         requests_hash,
@@ -1586,14 +1586,14 @@ fn rebuild_block(
     parent_beacon_block_root: Option<H256>,
     requests_hash: Option<H256>,
     block_access_list_hash: Option<H256>,
-    eip8504_active: bool,
+    hegota_active: bool,
 ) -> Result<Block, RpcErr> {
     get_block_from_payload(
         payload,
         parent_beacon_block_root,
         requests_hash,
         block_access_list_hash,
-        eip8504_active,
+        hegota_active,
     )
     .map_err(|e| RpcErr::Internal(format!("failed to rebuild the block from its payload: {e}")))
 }
@@ -1895,7 +1895,7 @@ mod tests {
             slot_number: Some(0),
             block_access_list: Some(BlockAccessList::default()),
             burned_fees: None,
-            dependency_witnesses: None,
+            claim_witnesses: None,
         }
     }
 

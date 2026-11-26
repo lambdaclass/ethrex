@@ -1,3 +1,4 @@
+pub mod claims;
 mod db;
 mod errors;
 mod execution_result;
@@ -17,6 +18,9 @@ pub use backends::{
 pub use db::{DynVmDatabase, VmDatabase};
 pub use errors::EvmError;
 pub use ethrex_levm::StatelessValidator;
+/// Whether this build links the native leanSPHINCS verifier of EIP-8141's
+/// `LEANSPHINCS_VERIFIER` claims.
+pub use ethrex_levm::claims::LEANSPHINCS_VERIFIER_LINKED;
 pub use ethrex_levm::errors::{InternalError, PrecompileError, VMError};
 pub use ethrex_levm::precompiles::{
     PrecompileCache, PrecompileMoves, is_precompile, precompiles_for_fork,
@@ -27,7 +31,6 @@ pub use ethrex_levm::utils::intrinsic_gas_dimensions;
 /// EIP-7623/7976/7981 floor gas for a transaction. Re-exported so the mempool
 /// can match the VM's `validate_min_gas_limit` check at admission time.
 pub use ethrex_levm::utils::intrinsic_gas_floor;
-pub use ethrex_levm::vm::validate_frame_signatures;
 pub use execution_result::ExecutionResult;
 pub use witness_db::GuestProgramStateWrapper;
 pub mod system_contracts;

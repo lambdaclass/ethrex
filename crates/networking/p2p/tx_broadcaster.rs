@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use ethrex_blockchain::{Blockchain, mempool::ProofWrapperAnnouncement};
+use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
 use ethrex_common::types::{MempoolTransaction, Transaction};
 use ethrex_crypto::NativeCrypto;
@@ -25,7 +25,6 @@ use crate::{
         connection::server::PeerConnection,
         eth::{
             eth72::transactions::NewPooledTransactionHashes72,
-            eth73::proof_wrappers::{MAX_PROOF_WRAPPER_ANNOUNCEMENTS, NewProofWrapperHashes},
             transactions::{NewPooledTransactionHashes, Transactions},
         },
         p2p::Capability,
@@ -304,7 +303,6 @@ impl TxBroadcaster {
     }
 
     async fn do_broadcast_txs(&mut self) -> Result<(), TxBroadcasterError> {
-        self.do_broadcast_proof_wrappers().await?;
         let txs_to_broadcast = self
             .blockchain
             .mempool
@@ -398,60 +396,6 @@ impl TxBroadcaster {
         self.blockchain
             .mempool
             .remove_broadcasted_txs(&broadcasted_hashes)?;
-        Ok(())
-    }
-
-    /// EIP-8504: announces the wrappers queued for broadcast to every connected
-    /// peer that speaks eth/73 and does not know them yet. A dependency
-    /// transaction is never sent in `Transactions` nor announced in
-    /// `NewPooledTransactionHashes`: it travels only inside its wrapper, which a
-    /// peer requests after this announcement.
-    async fn do_broadcast_proof_wrappers(&mut self) -> Result<(), TxBroadcasterError> {
-        let wrappers = self
-            .blockchain
-            .mempool
-            .get_proof_wrappers_for_broadcast()
-            .map_err(|_| TxBroadcasterError::Broadcast)?;
-        if wrappers.is_empty() {
-            return Ok(());
-        }
-        let peers = self.peer_table.get_connected_peers().await?;
-        for (peer_id, mut connection, negotiated_eth) in peers {
-            if !negotiated_eth.is_some_and(|eth| eth.version >= 73) {
-                continue;
-            }
-            let peer_idx = self.peer_index(peer_id);
-            let to_announce: Vec<ProofWrapperAnnouncement> = wrappers
-                .iter()
-                .filter(|wrapper| {
-                    !self
-                        .known_txs
-                        .get(&wrapper.tx_hash)
-                        .is_some_and(|record| record.peers.is_set(peer_idx))
-                })
-                .copied()
-                .collect();
-            if to_announce.is_empty() {
-                continue;
-            }
-            self.do_add_txs(
-                to_announce.iter().map(|wrapper| wrapper.tx_hash).collect(),
-                peer_id,
-            );
-            #[cfg(feature = "metrics")]
-            ethrex_metrics::eip8504::METRICS_EIP8504
-                .wrappers_announced_total
-                .inc_by(to_announce.len() as u64);
-            for chunk in to_announce.chunks(MAX_PROOF_WRAPPER_ANNOUNCEMENTS) {
-                let message =
-                    Message::NewProofWrapperHashes(NewProofWrapperHashes::new(chunk.to_vec()));
-                connection.outgoing_message(message).await.unwrap_or_else(|err| {
-                    debug!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send proof wrapper hashes");
-                });
-            }
-        }
-        let announced: Vec<H256> = wrappers.iter().map(|wrapper| wrapper.tx_hash).collect();
-        self.blockchain.mempool.remove_broadcasted_txs(&announced)?;
         Ok(())
     }
 

@@ -14,7 +14,7 @@ use tracing::warn;
 
 use super::{
     AccountState, Block, BlockBody, BlockHeader, BlockNumber, INITIAL_BASE_FEE,
-    compute_dependency_witnesses_hash, compute_receipts_root, compute_transactions_root,
+    compute_claim_witnesses_hash, compute_receipts_root, compute_transactions_root,
     compute_withdrawals_root,
 };
 use crate::{
@@ -838,10 +838,10 @@ impl Genesis {
             .is_amsterdam_activated(self.timestamp)
             .then_some(self.slot_number.unwrap_or(0));
 
-        // EIP-8504, part of Hegota: a chain that starts in Hegota commits, at
-        // genesis, to an empty list of dependency witnesses.
-        let dependency_witnesses_hash = (self.config.fork(self.timestamp) >= Fork::Hegota)
-            .then(|| compute_dependency_witnesses_hash(&[], &NativeCrypto));
+        // EIP-8141, part of Hegota: a chain that starts in Hegota commits, at
+        // genesis, to empty claim witnesses.
+        let claim_witnesses_hash = (self.config.fork(self.timestamp) >= Fork::Hegota)
+            .then(|| compute_claim_witnesses_hash(&[], &NativeCrypto));
 
         BlockHeader {
             parent_hash: H256::zero(),
@@ -867,7 +867,7 @@ impl Genesis {
             requests_hash,
             block_access_list_hash,
             slot_number,
-            dependency_witnesses_hash,
+            claim_witnesses_hash,
             ..Default::default()
         }
     }
@@ -877,7 +877,7 @@ impl Genesis {
             transactions: vec![],
             ommers: vec![],
             withdrawals: Some(vec![]),
-            dependency_witnesses: (self.config.fork(self.timestamp) >= Fork::Hegota).then(Vec::new),
+            claim_witnesses: (self.config.fork(self.timestamp) >= Fork::Hegota).then(Bytes::new),
         }
     }
 
@@ -1662,10 +1662,10 @@ mod tests {
     }
 
     #[test]
-    fn genesis_commits_to_an_empty_witness_list_only_when_it_starts_in_hegota() {
+    fn genesis_commits_to_empty_claim_witnesses_only_when_it_starts_in_hegota() {
         let plain = Genesis::default().get_block();
-        assert_eq!(plain.header.dependency_witnesses_hash, None);
-        assert_eq!(plain.body.dependency_witnesses, None);
+        assert_eq!(plain.header.claim_witnesses_hash, None);
+        assert_eq!(plain.body.claim_witnesses, None);
 
         let genesis = Genesis {
             config: ChainConfig {
@@ -1675,10 +1675,10 @@ mod tests {
             ..Default::default()
         };
         let block = genesis.get_block();
-        assert_eq!(block.body.dependency_witnesses, Some(Vec::new()));
+        assert_eq!(block.body.claim_witnesses, Some(Bytes::new()));
         assert_eq!(
-            block.header.dependency_witnesses_hash,
-            Some(compute_dependency_witnesses_hash(&[], &NativeCrypto))
+            block.header.claim_witnesses_hash,
+            Some(compute_claim_witnesses_hash(&[], &NativeCrypto))
         );
     }
 }

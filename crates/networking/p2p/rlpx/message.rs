@@ -12,8 +12,6 @@ use super::eth::blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHead
 use super::eth::cells::{Cells, GetCells};
 use super::eth::eth72::status::StatusMessage72;
 use super::eth::eth72::transactions::{NewPooledTransactionHashes72, PooledTransactions72};
-use super::eth::eth73::proof_wrappers::{GetProofWrappers, NewProofWrapperHashes, ProofWrappers};
-use super::eth::eth73::status::StatusMessage73;
 use super::eth::receipts::{
     GetReceipts68, GetReceipts69, GetReceipts70, Receipts68, Receipts69, Receipts70,
 };
@@ -43,26 +41,17 @@ const SNAP_CAPABILITY_OFFSET_ETH_71: u8 = 0x24;
 // eth/72 (EIP-8070) adds GetCells (0x14) and Cells (0x15) in the eth namespace,
 // so the snap offset moves from 0x24 to 0x26.
 const SNAP_CAPABILITY_OFFSET_ETH_72: u8 = 0x26;
-// eth/73 (provisional, EIP-8504) adds NewProofWrapperHashes (0x16), GetProofWrappers
-// (0x17) and ProofWrappers (0x18) in the eth namespace, so the snap offset moves
-// from 0x26 to 0x29.
-const SNAP_CAPABILITY_OFFSET_ETH_73: u8 = 0x29;
 const BASED_CAPABILITY_OFFSET_ETH_68: u8 = 0x30;
 const BASED_CAPABILITY_OFFSET_ETH_69: u8 = 0x31;
 const BASED_CAPABILITY_OFFSET_ETH_70: u8 = 0x31;
 const BASED_CAPABILITY_OFFSET_ETH_71: u8 = 0x33;
 const BASED_CAPABILITY_OFFSET_ETH_72: u8 = 0x35;
-const BASED_CAPABILITY_OFFSET_ETH_73: u8 = 0x38;
 
 // snap/2 max message id is 0x09; must not bleed into the based capability range.
 const _: () = assert!(SNAP_CAPABILITY_OFFSET_ETH_68 + 0x09 < BASED_CAPABILITY_OFFSET_ETH_68);
 const _: () = assert!(SNAP_CAPABILITY_OFFSET_ETH_69 + 0x09 < BASED_CAPABILITY_OFFSET_ETH_69);
 const _: () = assert!(SNAP_CAPABILITY_OFFSET_ETH_70 + 0x09 < BASED_CAPABILITY_OFFSET_ETH_70);
 const _: () = assert!(SNAP_CAPABILITY_OFFSET_ETH_71 + 0x09 < BASED_CAPABILITY_OFFSET_ETH_71);
-const _: () = assert!(SNAP_CAPABILITY_OFFSET_ETH_72 + 0x09 < BASED_CAPABILITY_OFFSET_ETH_72);
-const _: () = assert!(SNAP_CAPABILITY_OFFSET_ETH_73 + 0x09 < BASED_CAPABILITY_OFFSET_ETH_73);
-// The last eth/73 message must sit below the snap range.
-const _: () = assert!(ETH_CAPABILITY_OFFSET + ProofWrappers::CODE < SNAP_CAPABILITY_OFFSET_ETH_73);
 
 #[derive(Debug, Clone, Copy, Default)]
 pub enum EthCapVersion {
@@ -72,28 +61,6 @@ pub enum EthCapVersion {
     V70,
     V71,
     V72,
-    V73,
-}
-
-impl EthCapVersion {
-    /// Whether the session has the EIP-8070 messages and shapes eth/72 introduced.
-    pub const fn has_cells(&self) -> bool {
-        matches!(self, EthCapVersion::V72 | EthCapVersion::V73)
-    }
-
-    /// Whether the session has the EIP-7928 block access list messages eth/71
-    /// introduced.
-    pub const fn has_block_access_lists(&self) -> bool {
-        matches!(
-            self,
-            EthCapVersion::V71 | EthCapVersion::V72 | EthCapVersion::V73
-        )
-    }
-
-    /// Whether the session has the EIP-8504 wrapper messages eth/73 introduced.
-    pub const fn has_proof_wrappers(&self) -> bool {
-        matches!(self, EthCapVersion::V73)
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,7 +91,6 @@ impl EthCapVersion {
             EthCapVersion::V70 => SNAP_CAPABILITY_OFFSET_ETH_70,
             EthCapVersion::V71 => SNAP_CAPABILITY_OFFSET_ETH_71,
             EthCapVersion::V72 => SNAP_CAPABILITY_OFFSET_ETH_72,
-            EthCapVersion::V73 => SNAP_CAPABILITY_OFFSET_ETH_73,
         }
     }
 
@@ -135,7 +101,6 @@ impl EthCapVersion {
             EthCapVersion::V70 => BASED_CAPABILITY_OFFSET_ETH_70,
             EthCapVersion::V71 => BASED_CAPABILITY_OFFSET_ETH_71,
             EthCapVersion::V72 => BASED_CAPABILITY_OFFSET_ETH_72,
-            EthCapVersion::V73 => BASED_CAPABILITY_OFFSET_ETH_73,
         }
     }
 }
@@ -158,7 +123,6 @@ pub enum Message {
     Status70(StatusMessage70),
     Status71(StatusMessage71),
     Status72(StatusMessage72),
-    Status73(StatusMessage73),
     // eth capability
     // https://github.com/ethereum/devp2p/blob/master/caps/eth.md
     GetBlockHeaders(GetBlockHeaders),
@@ -174,10 +138,6 @@ pub enum Message {
     PooledTransactions72(PooledTransactions72),
     GetCells(GetCells),
     Cells(Cells),
-    // eth/73 (provisional, EIP-8504) variants
-    NewProofWrapperHashes(NewProofWrapperHashes),
-    GetProofWrappers(GetProofWrappers),
-    ProofWrappers(ProofWrappers),
     GetReceipts68(GetReceipts68),
     GetReceipts69(GetReceipts69),
     GetReceipts70(GetReceipts70),
@@ -218,7 +178,6 @@ impl Message {
             Message::Status70(_) => eth_version.eth_capability_offset() + StatusMessage70::CODE,
             Message::Status71(_) => eth_version.eth_capability_offset() + StatusMessage71::CODE,
             Message::Status72(_) => eth_version.eth_capability_offset() + StatusMessage72::CODE,
-            Message::Status73(_) => eth_version.eth_capability_offset() + StatusMessage73::CODE,
             Message::Transactions(_) => eth_version.eth_capability_offset() + Transactions::CODE,
             Message::GetBlockHeaders(_) => {
                 eth_version.eth_capability_offset() + GetBlockHeaders::CODE
@@ -245,13 +204,6 @@ impl Message {
             }
             Message::GetCells(_) => eth_version.eth_capability_offset() + GetCells::CODE,
             Message::Cells(_) => eth_version.eth_capability_offset() + Cells::CODE,
-            Message::NewProofWrapperHashes(_) => {
-                eth_version.eth_capability_offset() + NewProofWrapperHashes::CODE
-            }
-            Message::GetProofWrappers(_) => {
-                eth_version.eth_capability_offset() + GetProofWrappers::CODE
-            }
-            Message::ProofWrappers(_) => eth_version.eth_capability_offset() + ProofWrappers::CODE,
             Message::GetReceipts68(_) => eth_version.eth_capability_offset() + GetReceipts68::CODE,
             Message::GetReceipts69(_) => eth_version.eth_capability_offset() + GetReceipts69::CODE,
             Message::GetReceipts70(_) => eth_version.eth_capability_offset() + GetReceipts70::CODE,
@@ -333,9 +285,6 @@ impl Message {
                 StatusMessage72::CODE if matches!(eth_version, EthCapVersion::V72) => {
                     Ok(Message::Status72(StatusMessage72::decode(data)?))
                 }
-                StatusMessage73::CODE if matches!(eth_version, EthCapVersion::V73) => {
-                    Ok(Message::Status73(StatusMessage73::decode(data)?))
-                }
                 Transactions::CODE => Ok(Message::Transactions(Transactions::decode(data)?)),
                 GetBlockHeaders::CODE => {
                     Ok(Message::GetBlockHeaders(GetBlockHeaders::decode(data)?))
@@ -343,10 +292,12 @@ impl Message {
                 BlockHeaders::CODE => Ok(Message::BlockHeaders(BlockHeaders::decode(data)?)),
                 GetBlockBodies::CODE => Ok(Message::GetBlockBodies(GetBlockBodies::decode(data)?)),
                 BlockBodies::CODE => Ok(Message::BlockBodies(BlockBodies::decode(data)?)),
-                NewPooledTransactionHashes::CODE if !eth_version.has_cells() => Ok(
-                    Message::NewPooledTransactionHashes(NewPooledTransactionHashes::decode(data)?),
-                ),
-                NewPooledTransactionHashes72::CODE if eth_version.has_cells() => {
+                NewPooledTransactionHashes::CODE if !matches!(eth_version, EthCapVersion::V72) => {
+                    Ok(Message::NewPooledTransactionHashes(
+                        NewPooledTransactionHashes::decode(data)?,
+                    ))
+                }
+                NewPooledTransactionHashes72::CODE if matches!(eth_version, EthCapVersion::V72) => {
                     Ok(Message::NewPooledTransactionHashes72(
                         NewPooledTransactionHashes72::decode(data)?,
                     ))
@@ -354,24 +305,17 @@ impl Message {
                 GetPooledTransactions::CODE => Ok(Message::GetPooledTransactions(
                     GetPooledTransactions::decode(data)?,
                 )),
-                PooledTransactions::CODE if !eth_version.has_cells() => Ok(
+                PooledTransactions::CODE if !matches!(eth_version, EthCapVersion::V72) => Ok(
                     Message::PooledTransactions(PooledTransactions::decode(data)?),
                 ),
-                PooledTransactions72::CODE if eth_version.has_cells() => Ok(
+                PooledTransactions72::CODE if matches!(eth_version, EthCapVersion::V72) => Ok(
                     Message::PooledTransactions72(PooledTransactions72::decode(data)?),
                 ),
-                GetCells::CODE if eth_version.has_cells() => {
+                GetCells::CODE if matches!(eth_version, EthCapVersion::V72) => {
                     Ok(Message::GetCells(GetCells::decode(data)?))
                 }
-                Cells::CODE if eth_version.has_cells() => Ok(Message::Cells(Cells::decode(data)?)),
-                NewProofWrapperHashes::CODE if eth_version.has_proof_wrappers() => Ok(
-                    Message::NewProofWrapperHashes(NewProofWrapperHashes::decode(data)?),
-                ),
-                GetProofWrappers::CODE if eth_version.has_proof_wrappers() => {
-                    Ok(Message::GetProofWrappers(GetProofWrappers::decode(data)?))
-                }
-                ProofWrappers::CODE if eth_version.has_proof_wrappers() => {
-                    Ok(Message::ProofWrappers(ProofWrappers::decode(data)?))
+                Cells::CODE if matches!(eth_version, EthCapVersion::V72) => {
+                    Ok(Message::Cells(Cells::decode(data)?))
                 }
                 GetReceipts68::CODE if matches!(eth_version, EthCapVersion::V68) => {
                     Ok(Message::GetReceipts68(GetReceipts68::decode(data)?))
@@ -379,14 +323,11 @@ impl Message {
                 GetReceipts69::CODE if matches!(eth_version, EthCapVersion::V69) => {
                     Ok(Message::GetReceipts69(GetReceipts69::decode(data)?))
                 }
-                // eth/71 (EIP-8159) and later versions build on the eth/70 receipt layout.
+                // eth/71 (EIP-8159) and eth/72 (EIP-8070) build on the eth/70 receipt layout.
                 GetReceipts70::CODE
                     if matches!(
                         eth_version,
-                        EthCapVersion::V70
-                            | EthCapVersion::V71
-                            | EthCapVersion::V72
-                            | EthCapVersion::V73
+                        EthCapVersion::V70 | EthCapVersion::V71 | EthCapVersion::V72
                     ) =>
                 {
                     Ok(Message::GetReceipts70(GetReceipts70::decode(data)?))
@@ -400,10 +341,7 @@ impl Message {
                 Receipts70::CODE
                     if matches!(
                         eth_version,
-                        EthCapVersion::V70
-                            | EthCapVersion::V71
-                            | EthCapVersion::V72
-                            | EthCapVersion::V73
+                        EthCapVersion::V70 | EthCapVersion::V71 | EthCapVersion::V72
                     ) =>
                 {
                     Ok(Message::Receipts70(Receipts70::decode(data)?))
@@ -411,10 +349,16 @@ impl Message {
                 BlockRangeUpdate::CODE => {
                     Ok(Message::BlockRangeUpdate(BlockRangeUpdate::decode(data)?))
                 }
-                GetBlockAccessLists::CODE if eth_version.has_block_access_lists() => Ok(
-                    Message::GetBlockAccessLists(GetBlockAccessLists::decode(data)?),
-                ),
-                BlockAccessLists::CODE if eth_version.has_block_access_lists() => {
+                GetBlockAccessLists::CODE
+                    if matches!(eth_version, EthCapVersion::V71 | EthCapVersion::V72) =>
+                {
+                    Ok(Message::GetBlockAccessLists(GetBlockAccessLists::decode(
+                        data,
+                    )?))
+                }
+                BlockAccessLists::CODE
+                    if matches!(eth_version, EthCapVersion::V71 | EthCapVersion::V72) =>
+                {
                     Ok(Message::BlockAccessLists(BlockAccessLists::decode(data)?))
                 }
                 _ => Err(RLPDecodeError::MalformedData),
@@ -487,7 +431,6 @@ impl Message {
             Message::Status70(msg) => msg.encode(buf),
             Message::Status71(msg) => msg.encode(buf),
             Message::Status72(msg) => msg.encode(buf),
-            Message::Status73(msg) => msg.encode(buf),
             Message::Transactions(msg) => msg.encode(buf),
             Message::GetBlockHeaders(msg) => msg.encode(buf),
             Message::BlockHeaders(msg) => msg.encode(buf),
@@ -500,9 +443,6 @@ impl Message {
             Message::PooledTransactions72(msg) => msg.encode(buf),
             Message::GetCells(msg) => msg.encode(buf),
             Message::Cells(msg) => msg.encode(buf),
-            Message::NewProofWrapperHashes(msg) => msg.encode(buf),
-            Message::GetProofWrappers(msg) => msg.encode(buf),
-            Message::ProofWrappers(msg) => msg.encode(buf),
             Message::GetReceipts68(msg) => msg.encode(buf),
             Message::GetReceipts69(msg) => msg.encode(buf),
             Message::GetReceipts70(msg) => msg.encode(buf),
@@ -564,7 +504,9 @@ impl Message {
             match msg_id - eth_version.eth_capability_offset() {
                 // Receipts68, Receipts69 and Receipts70 share one code.
                 BlockHeaders::CODE | BlockBodies::CODE | Receipts68::CODE => true,
-                BlockAccessLists::CODE => eth_version.has_block_access_lists(),
+                BlockAccessLists::CODE => {
+                    matches!(eth_version, EthCapVersion::V71 | EthCapVersion::V72)
+                }
                 _ => false,
             }
         } else if msg_id < eth_version.based_capability_offset() {
@@ -629,8 +571,6 @@ impl Message {
             Message::GetCells(message) => Some(message.id),
             Message::Cells(message) => Some(message.id),
             Message::PooledTransactions72(message) => Some(message.id),
-            Message::GetProofWrappers(message) => Some(message.id),
-            Message::ProofWrappers(message) => Some(message.id),
             // The rest of the message types does not have a request id.
             Message::Hello(_)
             | Message::Disconnect(_)
@@ -641,11 +581,9 @@ impl Message {
             | Message::Status70(_)
             | Message::Status71(_)
             | Message::Status72(_)
-            | Message::Status73(_)
             | Message::Transactions(_)
             | Message::NewPooledTransactionHashes(_)
             | Message::NewPooledTransactionHashes72(_)
-            | Message::NewProofWrapperHashes(_)
             | Message::BlockRangeUpdate(_) => None,
             #[cfg(feature = "l2")]
             Message::L2(_) => None,
@@ -666,7 +604,6 @@ impl Message {
             Message::Status70(_) => "Status",
             Message::Status71(_) => "Status",
             Message::Status72(_) => "Status",
-            Message::Status73(_) => "Status",
             Message::GetBlockHeaders(_) => "GetBlockHeaders",
             Message::BlockHeaders(_) => "BlockHeaders",
             Message::Transactions(_) => "Transactions",
@@ -679,9 +616,6 @@ impl Message {
             Message::PooledTransactions72(_) => "PooledTransactions",
             Message::GetCells(_) => "GetCells",
             Message::Cells(_) => "Cells",
-            Message::NewProofWrapperHashes(_) => "NewProofWrapperHashes",
-            Message::GetProofWrappers(_) => "GetProofWrappers",
-            Message::ProofWrappers(_) => "ProofWrappers",
             Message::GetReceipts68(_) => "GetReceipts",
             Message::GetReceipts69(_) => "GetReceipts",
             Message::GetReceipts70(_) => "GetReceipts",
@@ -722,7 +656,6 @@ impl Display for Message {
             Message::Status70(_) => "eth:Status(70)".fmt(f),
             Message::Status71(_) => "eth:Status(71)".fmt(f),
             Message::Status72(_) => "eth:Status(72)".fmt(f),
-            Message::Status73(_) => "eth:Status(73)".fmt(f),
             Message::GetBlockHeaders(_) => "eth:getBlockHeaders".fmt(f),
             Message::BlockHeaders(_) => "eth:BlockHeaders".fmt(f),
             Message::BlockBodies(_) => "eth:BlockBodies".fmt(f),
@@ -733,9 +666,6 @@ impl Display for Message {
             Message::PooledTransactions72(_) => "eth::PooledTransactions(72)".fmt(f),
             Message::GetCells(_) => "eth:GetCells(72)".fmt(f),
             Message::Cells(_) => "eth:Cells(72)".fmt(f),
-            Message::NewProofWrapperHashes(_) => "eth:NewProofWrapperHashes(73)".fmt(f),
-            Message::GetProofWrappers(_) => "eth:GetProofWrappers(73)".fmt(f),
-            Message::ProofWrappers(_) => "eth:ProofWrappers(73)".fmt(f),
             Message::Transactions(_) => "eth:TransactionsMessage".fmt(f),
             Message::GetBlockBodies(_) => "eth:GetBlockBodies".fmt(f),
             Message::GetReceipts68(_) => "eth:GetReceipts(68)".fmt(f),

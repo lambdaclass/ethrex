@@ -6,7 +6,6 @@ mod eth69;
 mod eth70;
 mod eth71;
 pub mod eth72;
-pub mod eth73;
 pub mod receipts;
 pub(crate) mod status;
 pub mod transactions;

@@ -65,6 +65,7 @@
 //! ```
 
 pub mod call_frame;
+pub mod claims;
 pub mod constants;
 pub mod db;
 pub mod debug;

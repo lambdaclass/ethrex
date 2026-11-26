@@ -273,7 +273,6 @@ pub async fn init_l2(
         gap_admit_occupancy_threshold: opts.node_opts.mempool_gap_admit_occupancy_threshold,
         mempool_prewarm_enabled: true,
         max_verify_gas: opts.node_opts.mempool_max_verify_gas,
-        max_sigs_per_tx: opts.node_opts.mempool_max_sigs_per_tx,
     };
 
     let blockchain = init_blockchain(store.clone(), blockchain_opts.clone());
@@ -528,7 +527,6 @@ pub async fn init_native_rollup_l2(
         min_tip_wei: opts.node_opts.mempool_min_tip,
         mempool_prewarm_enabled: true,
         max_verify_gas: opts.node_opts.mempool_max_verify_gas,
-        max_sigs_per_tx: opts.node_opts.mempool_max_sigs_per_tx,
     };
 
     let blockchain = init_blockchain(store.clone(), blockchain_opts);

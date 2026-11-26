@@ -91,7 +91,7 @@ fn frame_tx_with_keys(frames: Vec<Frame>, nonce_keys: Vec<U256>) -> FrameTransac
         nonce_seq: 0,
         sender: FUNDED_SENDER,
         frames,
-        signatures: Vec::new(),
+        claims: Vec::new(),
         max_fee: U256::from(1_000_000_000_000_000_000u64),
         max_priority_fee_per_gas: U256::from(1),
         blob_versioned_hashes: Vec::new(),
@@ -586,38 +586,19 @@ fn a_first_use_keyed_nonce_halts_the_frame_without_its_state_budget() {
 /// is what consumes the nonce, and it is that frame's `limits.state` that pays.
 mod key_zero_from_a_fresh_sender {
     use super::*;
-    use ethrex_common::types::{FRAME_SIG_SCHEME_SECP256K1, FrameSignature};
-    use k256::ecdsa::SigningKey;
+    use ethrex_common::types::{Claim, SECP256K1_VERIFIER};
 
     /// APPROVE(scope=1): payment approval from a paymaster's own code.
     const APPROVE_PAYMENT_CODE: &[u8] = &[0x60, 0x01, 0x60, 0x00, 0x60, 0x00, 0xAA];
     const PAYMASTER: Address = Address::repeat_byte(0xFA);
 
-    fn key_and_address(seed: u8) -> (SigningKey, Address) {
-        let signing_key = SigningKey::from_bytes(&[seed; 32].into()).unwrap();
-        let uncompressed = signing_key.verifying_key().to_encoded_point(false);
-        let pub_hash = ethrex_crypto::keccak::keccak_hash(&uncompressed.as_bytes()[1..]);
-        (signing_key, Address::from_slice(&pub_hash[12..]))
-    }
-
-    fn sign(key: &SigningKey, sig_hash: H256, signer: Address) -> FrameSignature {
-        let (raw_sig, recovery_id) = key.sign_prehash_recoverable(sig_hash.as_bytes()).unwrap();
-        let mut bytes = vec![0u8; 65];
-        bytes[0] = recovery_id.to_byte();
-        bytes[1..].copy_from_slice(&raw_sig.to_bytes());
-        FrameSignature {
-            scheme: FRAME_SIG_SCHEME_SECP256K1,
-            signer: Some(signer),
-            msg: Bytes::new(),
-            signature: Bytes::from(bytes),
-        }
-    }
-
-    /// A signed `[VERIFY(exec) on the sender's default code, VERIFY(pay) on the
+    /// A `[VERIFY(exec) on the sender's default code, VERIFY(pay) on the
     /// paymaster]` transaction from a sender that exists nowhere, with `pay_state`
-    /// as the paymaster frame's state budget.
+    /// as the paymaster frame's state budget. The sender's default code approves
+    /// on the transaction's secp256k1 claim for the sender; the claim's witness
+    /// travels beside the transaction and is not part of executing it.
     fn sponsored_tx_from_nowhere(pay_state: u64) -> (FrameTransaction, Address) {
-        let (key, sender) = key_and_address(0x5A);
+        let sender = Address::repeat_byte(0x5A);
         let mut tx = frame_tx_with_keys(
             vec![
                 frame(FrameMode::Verify, 0x02, sender, 100_000, &[]),
@@ -629,16 +610,10 @@ mod key_zero_from_a_fresh_sender {
             vec![],
         );
         tx.sender = sender;
-        tx.signatures = vec![FrameSignature {
-            scheme: FRAME_SIG_SCHEME_SECP256K1,
-            signer: Some(sender),
-            msg: Bytes::new(),
-            signature: Bytes::from(vec![0u8; 65]),
+        tx.claims = vec![Claim {
+            verifier: SECP256K1_VERIFIER,
+            ..Default::default()
         }];
-        let sig_hash = tx.compute_sig_hash();
-        tx.signatures[0] = sign(&key, sig_hash, sender);
-        tx.inner_hash = Default::default();
-        tx.cached_canonical = Default::default();
         (tx, sender)
     }
 

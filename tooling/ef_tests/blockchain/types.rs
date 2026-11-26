@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use ethrex_common::types::{
-    Account as ethrexAccount, AccountInfo, Block as CoreBlock, BlockBody, Code, EIP1559Transaction,
-    EIP2930Transaction, EIP4844Transaction, EIP7702Transaction, Frame, FrameSignature,
+    Account as ethrexAccount, AccountInfo, Block as CoreBlock, BlockBody, Claim, Code,
+    EIP1559Transaction, EIP2930Transaction, EIP4844Transaction, EIP7702Transaction, Frame,
     FrameTransaction, LegacyTransaction, Transaction as ethrexTransaction, TxKind, code_hash,
 };
 use ethrex_common::types::{Genesis, GenesisAccount, Withdrawal};
@@ -279,22 +279,24 @@ pub struct FrameItem {
     pub data: Bytes,
 }
 
-/// One entry of an EIP-8141 frame transaction's `signatures` list. `signer` is
-/// absent for an `ARBITRARY` entry, which the protocol assigns no signer.
+/// One entry of an EIP-8141 frame transaction's `claims` list. A protocol
+/// verifier's claim leaves `gas_limit` and `witness_len` at zero.
 #[derive(Debug, PartialEq, Eq, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct FrameSignatureItem {
-    pub scheme: U256,
-    #[serde(default, deserialize_with = "deserialize_empty_as_none_address")]
-    pub signer: Option<Address>,
+pub struct FrameClaimItem {
+    pub verifier: Address,
+    #[serde(with = "ethrex_common::serde_utils::bytes")]
+    pub key: Bytes,
     #[serde(with = "ethrex_common::serde_utils::bytes")]
     pub msg: Bytes,
-    #[serde(with = "ethrex_common::serde_utils::bytes")]
-    pub signature: Bytes,
+    #[serde(default)]
+    pub gas_limit: U256,
+    #[serde(default)]
+    pub witness_len: U256,
 }
 
 pub type FrameList = Vec<FrameItem>;
-pub type FrameSignatureList = Vec<FrameSignatureItem>;
+pub type FrameClaimList = Vec<FrameClaimItem>;
 
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -325,8 +327,8 @@ pub struct Header {
     // Amsterdam fork fields (EIP-7928)
     pub block_access_list_hash: Option<H256>,
     pub slot_number: Option<U256>,
-    /// EIP-8504: commitment to the block's dependency witnesses.
-    pub dependency_witnesses_hash: Option<H256>,
+    /// EIP-8141: commitment to the block's claim witnesses.
+    pub claim_witnesses_hash: Option<H256>,
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Clone)]
@@ -365,9 +367,10 @@ pub struct Block {
     #[serde(default)]
     pub uncle_headers: Vec<Header>,
     pub withdrawals: Option<Vec<Withdrawal>>,
-    /// EIP-8504: the block's dependency witnesses, absent before the EIP.
-    #[serde(default, with = "ethrex_common::serde_utils::bytes::vec_opt")]
-    pub dependency_witnesses: Option<Vec<Bytes>>,
+    /// EIP-8141: the block's claim witnesses as one byte string, absent before
+    /// Hegota.
+    #[serde(default, with = "ethrex_common::serde_utils::bytes::opt")]
+    pub claim_witnesses: Option<Bytes>,
     /// Execution witness from zkevm fixtures (standard format: state/codes/headers).
     #[serde(default, rename = "executionWitness")]
     pub execution_witness: Option<serde_json::Value>,
@@ -402,7 +405,7 @@ impl From<Block> for CoreBlock {
                 transactions: val.transactions.iter().map(|t| t.clone().into()).collect(),
                 ommers: val.uncle_headers.iter().map(|h| h.clone().into()).collect(),
                 withdrawals: val.withdrawals,
-                dependency_witnesses: val.dependency_witnesses,
+                claim_witnesses: val.claim_witnesses,
             },
         )
     }
@@ -434,10 +437,10 @@ pub struct Transaction {
     pub hash: Option<H256>,
     pub sender: Option<Address>,
     pub to: TxKind,
-    /// EIP-8141 only: a type-0x06 transaction carries frames and an outer
-    /// signature list in place of a single ECDSA signature.
+    /// EIP-8141 only: a type-0x06 transaction carries claims and frames in
+    /// place of a single ECDSA signature.
     pub frames: Option<FrameList>,
-    pub signatures: Option<FrameSignatureList>,
+    pub claims: Option<FrameClaimList>,
     /// EIP-8250: the nonce keys of a frame transaction, whose `nonce` then carries
     /// the shared sequence. Absent means the empty key set, the account nonce.
     pub nonce_keys: Option<Vec<U256>>,
@@ -470,7 +473,7 @@ impl From<Header> for BlockHeader {
             requests_hash: val.requests_hash,
             block_access_list_hash: val.block_access_list_hash,
             slot_number: val.slot_number.map(|x| x.try_into().unwrap()),
-            dependency_witnesses_hash: val.dependency_witnesses_hash,
+            claim_witnesses_hash: val.claim_witnesses_hash,
             ..Default::default()
         }
     }
@@ -661,15 +664,16 @@ impl From<Transaction> for FrameTransaction {
                     data: f.data,
                 })
                 .collect(),
-            signatures: val
-                .signatures
+            claims: val
+                .claims
                 .unwrap_or_default()
                 .into_iter()
-                .map(|s| FrameSignature {
-                    scheme: s.scheme.try_into().unwrap(),
-                    signer: s.signer,
-                    msg: s.msg,
-                    signature: s.signature,
+                .map(|claim| Claim {
+                    verifier: claim.verifier,
+                    key: claim.key,
+                    msg: claim.msg,
+                    gas_limit: claim.gas_limit.try_into().unwrap_or(u64::MAX),
+                    witness_len: claim.witness_len.try_into().unwrap_or(u64::MAX),
                 })
                 .collect(),
             max_fee: val.max_fee.unwrap_or_default(),

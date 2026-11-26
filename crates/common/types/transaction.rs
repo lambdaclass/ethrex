@@ -87,10 +87,9 @@ pub enum P2PTransaction {
     EIP4844TransactionWithBlobs(WrappedEIP4844Transaction),
     EIP7702Transaction(EIP7702Transaction),
     FeeTokenTransaction(FeeTokenTransaction),
-    FrameTransaction(FrameTransaction),
-    /// An EIP-8141 frame transaction carrying blobs, in its EIP-7594 network
-    /// wrapper. A blobless frame transaction travels as `FrameTransaction`.
-    FrameTransactionWithBlobs(WrappedFrameTransaction),
+    /// An EIP-8141 frame transaction in its pooled representation, with the
+    /// witnesses of its claims and, when it carries blobs, its blob sidecar.
+    FrameTransaction(PooledFrameTransaction),
 }
 
 impl TryInto<Transaction> for P2PTransaction {
@@ -102,16 +101,17 @@ impl TryInto<Transaction> for P2PTransaction {
             P2PTransaction::EIP2930Transaction(itx) => Ok(Transaction::EIP2930Transaction(itx)),
             P2PTransaction::EIP1559Transaction(itx) => Ok(Transaction::EIP1559Transaction(itx)),
             P2PTransaction::EIP7702Transaction(itx) => Ok(Transaction::EIP7702Transaction(itx)),
-            P2PTransaction::FrameTransaction(itx) => Ok(Transaction::FrameTransaction(itx)),
+            P2PTransaction::FrameTransaction(_) => Err("Can't convert a pooled frame transaction into a regular transaction. Its witnesses would be lost.".to_string()),
             _ => Err("Can't convert blob p2p transaction into regular transaction. Blob bundle would be lost.".to_string()),
         }
     }
 }
 
 impl P2PTransaction {
-    /// The network form of a blob-carrying `tx` with its `blobs_bundle`: the
-    /// EIP-7594 wrapper of an EIP-4844 transaction or of an EIP-8141 frame
-    /// transaction with blobs. `None` for a transaction that carries no blobs.
+    /// The network form of an EIP-4844 `tx` with its `blobs_bundle`, the EIP-7594
+    /// wrapper. `None` for any other transaction: a frame transaction with blobs
+    /// travels in its own pooled representation, which also carries the witnesses
+    /// of its claims ([`PooledFrameTransaction`]).
     pub fn with_blobs_bundle(tx: Transaction, blobs_bundle: BlobsBundle) -> Option<Self> {
         let wrapper_version = (blobs_bundle.version != 0).then_some(blobs_bundle.version);
         match tx {
@@ -122,43 +122,35 @@ impl P2PTransaction {
                     blobs_bundle,
                 },
             )),
-            Transaction::FrameTransaction(tx) if !tx.blob_versioned_hashes.is_empty() => {
-                Some(Self::FrameTransactionWithBlobs(WrappedFrameTransaction {
-                    tx,
-                    wrapper_version,
-                    blobs_bundle,
-                }))
-            }
             _ => None,
         }
     }
 
     /// Splits a transaction received from a peer into the transaction and, for a
-    /// network-wrapped blob-carrying one, its blobs bundle.
+    /// network-wrapped EIP-4844 one, its blobs bundle. A frame transaction is not
+    /// split this way: its pooled representation also carries the witnesses of
+    /// its claims, and it is admitted whole.
     pub fn into_transaction_and_blobs(self) -> Result<(Transaction, Option<BlobsBundle>), String> {
         match self {
             Self::EIP4844TransactionWithBlobs(wrapped) => Ok((
                 Transaction::EIP4844Transaction(wrapped.tx),
                 Some(wrapped.blobs_bundle),
             )),
-            Self::FrameTransactionWithBlobs(wrapped) => Ok((
-                Transaction::FrameTransaction(wrapped.tx),
-                Some(wrapped.blobs_bundle),
-            )),
             other => Ok((other.try_into()?, None)),
         }
     }
 
-    /// The versioned hashes and blobs bundle of a network-wrapped blob-carrying
-    /// transaction.
+    /// The versioned hashes and blobs bundle of a blob-carrying transaction in its
+    /// network form.
     pub fn blob_parts(&self) -> Option<(&[H256], &BlobsBundle)> {
         match self {
             Self::EIP4844TransactionWithBlobs(wrapped) => {
                 Some((&wrapped.tx.blob_versioned_hashes, &wrapped.blobs_bundle))
             }
-            Self::FrameTransactionWithBlobs(wrapped) => {
-                Some((&wrapped.tx.blob_versioned_hashes, &wrapped.blobs_bundle))
-            }
+            Self::FrameTransaction(pooled) => pooled
+                .blobs_bundle
+                .as_ref()
+                .map(|bundle| (pooled.tx.blob_versioned_hashes.as_slice(), bundle)),
             _ => None,
         }
     }
@@ -194,14 +186,11 @@ impl RLPDecode for P2PTransaction {
                 EnvelopeTxType::EIP7702 => {
                     P2PTransaction::EIP7702Transaction(EIP7702Transaction::decode(tx_encoding)?)
                 }
+                // A frame transaction travels between peers only in its pooled
+                // representation (EIP-8141 §Networking); a bare `tx_body` does not
+                // decode as one.
                 EnvelopeTxType::Frame => {
-                    if WrappedFrameTransaction::is_wrapped(tx_encoding)? {
-                        P2PTransaction::FrameTransactionWithBlobs(WrappedFrameTransaction::decode(
-                            tx_encoding,
-                        )?)
-                    } else {
-                        P2PTransaction::FrameTransaction(FrameTransaction::decode(tx_encoding)?)
-                    }
+                    P2PTransaction::FrameTransaction(PooledFrameTransaction::decode(tx_encoding)?)
                 }
                 EnvelopeTxType::FeeToken => {
                     P2PTransaction::FeeTokenTransaction(FeeTokenTransaction::decode(tx_encoding)?)
@@ -278,23 +267,29 @@ impl RLPDecode for WrappedEIP4844Transaction {
     }
 }
 
-/// An EIP-8141 frame transaction carrying blobs, in the network wrapper EIP-8141
-/// takes from EIP-7594: `rlp([tx_payload_body, wrapper_version, blobs, commitments,
-/// cell_proofs])`. It is used wherever an EIP-4844 transaction travels with its
-/// sidecar (`PooledTransactions`, `eth_sendRawTransaction`), and never inside a
-/// block body.
+/// The pooled, or submission, representation of an EIP-8141 frame transaction
+/// (§Networking): `rlp([tx_body, wrapper_version, witnesses, blob_sidecar])`. A
+/// frame transaction has this form in `PooledTransactions` and
+/// `eth_sendRawTransaction`, and never inside a block body, where it is the bare
+/// `tx_body` and its witnesses sit in the block's `claim_witnesses`.
+///
+/// `witnesses[i]` is the witness of `tx.claims[i]`. `blob_sidecar` is the empty
+/// list when the transaction carries no blobs, and `[blobs, commitments,
+/// cell_proofs]` per EIP-7594 when it does.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct WrappedFrameTransaction {
+pub struct PooledFrameTransaction {
     pub tx: FrameTransaction,
-    pub wrapper_version: Option<u8>,
-    pub blobs_bundle: BlobsBundle,
+    /// One witness for each entry of `tx.claims`, in the same order.
+    pub witnesses: Vec<Bytes>,
+    /// The blob sidecar of a transaction that carries blobs.
+    pub blobs_bundle: Option<BlobsBundle>,
 }
 
-impl WrappedFrameTransaction {
-    /// Whether a type-6 payload is the network wrapper rather than a bare frame
-    /// transaction: the wrapper's first item is the transaction body, a list, where
-    /// a bare transaction's first item is its `chain_id`.
-    pub fn is_wrapped(rlp: &[u8]) -> Result<bool, RLPDecodeError> {
+impl PooledFrameTransaction {
+    /// Whether a type-6 payload is the pooled representation rather than a bare
+    /// `tx_body`: the pooled form's first item is the transaction body, a list,
+    /// where a bare transaction's first item is its `chain_id`.
+    pub fn is_pooled(rlp: &[u8]) -> Result<bool, RLPDecodeError> {
         let (is_list, payload, _) = decode_rlp_item(rlp)?;
         if !is_list {
             return Err(RLPDecodeError::UnexpectedString);
@@ -302,282 +297,69 @@ impl WrappedFrameTransaction {
         let (first_is_list, _, _) = decode_rlp_item(payload)?;
         Ok(first_is_list)
     }
+
+    /// Total size of the witnesses, in bytes.
+    pub fn witness_bytes(&self) -> usize {
+        self.witnesses.iter().map(Bytes::len).sum()
+    }
 }
 
-impl RLPEncode for WrappedFrameTransaction {
+impl RLPEncode for PooledFrameTransaction {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        let encoder = Encoder::new(buf);
-        encoder
-            .encode_field(&self.tx)
-            .encode_optional_field(&self.wrapper_version)
-            .encode_field(&self.blobs_bundle.blobs)
-            .encode_field(&self.blobs_bundle.commitments)
-            .encode_field(&self.blobs_bundle.proofs)
-            .finish();
-    }
-}
-
-impl RLPDecode for WrappedFrameTransaction {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(WrappedFrameTransaction, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (tx, decoder) = decoder.decode_field("tx")?;
-        let (wrapper_version, decoder) = decoder.decode_optional_field();
-        let (blobs, decoder) = decoder.decode_field("blobs")?;
-        let (commitments, decoder) = decoder.decode_field("commitments")?;
-        let (proofs, decoder) = decoder.decode_field("proofs")?;
-        let wrapped = WrappedFrameTransaction {
-            tx,
-            wrapper_version,
-            blobs_bundle: BlobsBundle {
-                blobs,
-                commitments,
-                proofs,
-                version: wrapper_version.unwrap_or_default(),
-            },
-        };
-        Ok((wrapped, decoder.finish()?))
-    }
-}
-
-/// EIP-8504's wrapper: one dependency transaction, a frame transaction with at
-/// least one proof frame, together with its witnesses. Until inclusion in a block
-/// such a transaction is handled only in this form.
-///
-/// On the network it is `rlp([[tx], mode, [deps, witnesses]])`: `tx` is the
-/// transaction's pooled network form as a byte string, `mode` is `0`, `deps` holds
-/// the transaction's dependencies as 96-byte triples and `witnesses` one signature
-/// for each of them. A user submits the same content as
-/// `FRAME_TX_TYPE || rlp([tx_payload_body, witnesses])`, or with the blob sidecar
-/// fields between the two items when the transaction carries blobs.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ProofWrapper {
-    pub tx: FrameTransaction,
-    /// The blob sidecar of a transaction that carries blobs.
-    pub blobs_bundle: Option<BlobsBundle>,
-    /// The dependencies as the wrapper states them. A wrapper is only valid when
-    /// they are exactly `tx.dependencies()`, encoded, in that order; see
-    /// [`Self::states_its_dependencies`].
-    pub deps: Vec<Bytes>,
-    /// One witness for each entry of `deps`, in the same order.
-    pub witnesses: Vec<Bytes>,
-}
-
-impl ProofWrapper {
-    /// The only wrapper mode this EIP defines.
-    pub const MODE: u8 = 0;
-
-    /// Builds the wrapper of `tx` from the witnesses it was submitted with,
-    /// deriving `deps` from the transaction.
-    pub fn new(
-        tx: FrameTransaction,
-        blobs_bundle: Option<BlobsBundle>,
-        witnesses: Vec<Bytes>,
-    ) -> Self {
-        let deps = Self::encoded_dependencies(&tx);
-        Self {
-            tx,
-            blobs_bundle,
-            deps,
-            witnesses,
-        }
-    }
-
-    /// `[encode_dependency(d) for d in dependencies(tx)]`.
-    fn encoded_dependencies(tx: &FrameTransaction) -> Vec<Bytes> {
-        tx.dependencies()
-            .iter()
-            .map(|dependency| Bytes::copy_from_slice(&dependency.encode()))
-            .collect()
-    }
-
-    /// Whether `deps` is the encoded list of the transaction's dependencies and
-    /// `witnesses` has one item for each of them.
-    pub fn states_its_dependencies(&self) -> bool {
-        self.deps == Self::encoded_dependencies(&self.tx) && self.witnesses.len() == self.deps.len()
-    }
-
-    /// The hash of the wrapper's transaction.
-    pub fn tx_hash(&self, crypto: &dyn Crypto) -> H256 {
-        let mut canonical = vec![TxType::Frame as u8];
-        self.tx.encode(&mut canonical);
-        H256(crypto.keccak256(&canonical))
-    }
-
-    /// The Keccak-256 hash of the wrapper's RLP serialization, which identifies it
-    /// on the network.
-    pub fn hash(&self, crypto: &dyn Crypto) -> H256 {
-        H256(crypto.keccak256(&self.encode_to_vec()))
-    }
-
-    /// Whether a type-6 payload is the submitted form of a dependency
-    /// transaction. Its first item is the transaction body, a list, as in the blob
-    /// network wrapper, and it is told apart from that wrapper by its number of
-    /// items: two without blobs and six with them, where the blob wrapper has four
-    /// or five.
-    pub fn is_submission(rlp: &[u8]) -> Result<bool, RLPDecodeError> {
-        if !WrappedFrameTransaction::is_wrapped(rlp)? {
-            return Ok(false);
-        }
-        Ok(matches!(Self::item_count(rlp)?, 2 | 6))
-    }
-
-    /// The number of items of the RLP list `rlp`.
-    fn item_count(rlp: &[u8]) -> Result<usize, RLPDecodeError> {
-        let (is_list, mut items, _) = decode_rlp_item(rlp)?;
-        if !is_list {
-            return Err(RLPDecodeError::UnexpectedString);
-        }
-        let mut count = 0usize;
-        while !items.is_empty() {
-            let (_, _, rest) = decode_rlp_item(items)?;
-            items = rest;
-            count += 1;
-        }
-        Ok(count)
-    }
-
-    /// Decodes the submitted form, without its type byte, and builds the wrapper.
-    pub fn decode_submission(rlp: &[u8]) -> Result<Self, RLPDecodeError> {
-        let with_blobs = match Self::item_count(rlp)? {
-            2 => false,
-            6 => true,
-            count => {
-                return Err(RLPDecodeError::Custom(format!(
-                    "a dependency transaction is submitted as 2 items, or 6 with blobs, got {count}"
-                )));
-            }
-        };
-        let decoder = Decoder::new(rlp)?;
-        let (tx, decoder) = decoder.decode_field("tx")?;
-        let (blobs_bundle, decoder) = if with_blobs {
-            let (version, decoder) = decoder.decode_field("wrapper_version")?;
-            let (blobs, decoder) = decoder.decode_field("blobs")?;
-            let (commitments, decoder) = decoder.decode_field("commitments")?;
-            let (proofs, decoder) = decoder.decode_field("proofs")?;
-            let blobs_bundle = BlobsBundle {
-                blobs,
-                commitments,
-                proofs,
-                version,
-            };
-            (Some(blobs_bundle), decoder)
-        } else {
-            (None, decoder)
-        };
-        let (witnesses, decoder) = decoder.decode_field("witnesses")?;
-        decoder.finish()?;
-        Ok(Self::new(tx, blobs_bundle, witnesses))
-    }
-
-    /// Encodes the submitted form: the type byte and the transaction with its
-    /// witnesses.
-    pub fn encode_submission(&self, buf: &mut dyn bytes::BufMut) {
-        buf.put_u8(TxType::Frame as u8);
+        let mut blob_sidecar = Vec::new();
         match &self.blobs_bundle {
-            None => Encoder::new(buf)
-                .encode_field(&self.tx)
-                .encode_field(&self.witnesses)
-                .finish(),
-            Some(bundle) => Encoder::new(buf)
-                .encode_field(&self.tx)
-                .encode_field(&bundle.version)
+            Some(bundle) => Encoder::new(&mut blob_sidecar)
                 .encode_field(&bundle.blobs)
                 .encode_field(&bundle.commitments)
                 .encode_field(&bundle.proofs)
-                .encode_field(&self.witnesses)
                 .finish(),
+            None => Encoder::new(&mut blob_sidecar).finish(),
         }
-    }
-
-    /// The transaction in its pooled network form: the type byte and either the
-    /// transaction or, when it carries blobs, its blob network wrapper.
-    fn pooled_transaction(&self) -> Vec<u8> {
-        let mut buf = vec![TxType::Frame as u8];
-        match &self.blobs_bundle {
-            None => self.tx.encode(&mut buf),
-            Some(bundle) => {
-                let wrapper_version = (bundle.version != 0).then_some(bundle.version);
-                Encoder::new(&mut buf)
-                    .encode_field(&self.tx)
-                    .encode_optional_field(&wrapper_version)
-                    .encode_field(&bundle.blobs)
-                    .encode_field(&bundle.commitments)
-                    .encode_field(&bundle.proofs)
-                    .finish();
-            }
-        }
-        buf
-    }
-}
-
-/// The most bytes a wrapper adds to its transaction's pooled network form when
-/// the transaction has `dependencies` dependencies: a 96-byte triple and a
-/// signature for each, with their RLP headers, and the headers of the lists
-/// around them. Nodes use it to bound the size of a wrapper they accept.
-pub const fn proof_wrapper_overhead(dependencies: usize) -> usize {
-    // A 96-byte string has a 2-byte header and a signature a 3-byte one.
-    let per_dependency = (2 + DEPENDENCY_TRIPLE_BYTES) + (3 + LEANSPHINCS_SIGNATURE_SIZE);
-    // The wrapper, `transactions`, the transaction string, `content`, `deps` and
-    // `witnesses` have a header of at most 4 bytes each; `mode` is one byte.
-    dependencies * per_dependency + 6 * 4 + 1
-}
-
-impl RLPEncode for ProofWrapper {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        let mut transactions = Vec::new();
-        Encoder::new(&mut transactions)
-            .encode_bytes(&self.pooled_transaction())
-            .finish();
-        let mut content = Vec::new();
-        Encoder::new(&mut content)
-            .encode_field(&self.deps)
-            .encode_field(&self.witnesses)
-            .finish();
         Encoder::new(buf)
-            .encode_raw(&transactions)
-            .encode_field(&Self::MODE)
-            .encode_raw(&content)
+            .encode_field(&self.tx)
+            .encode_field(&POOLED_WRAPPER_VERSION)
+            .encode_field(&self.witnesses)
+            .encode_raw(&blob_sidecar)
             .finish();
     }
 }
 
-impl RLPDecode for ProofWrapper {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(ProofWrapper, &[u8]), RLPDecodeError> {
+impl RLPDecode for PooledFrameTransaction {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(PooledFrameTransaction, &[u8]), RLPDecodeError> {
         let decoder = Decoder::new(rlp)?;
-        let (transactions, decoder) = decoder.decode_field::<Vec<Bytes>>("transactions")?;
-        let (mode, decoder) = decoder.decode_field::<u8>("mode")?;
-        let ((deps, witnesses), decoder) =
-            decoder.decode_field::<(Vec<Bytes>, Vec<Bytes>)>("content")?;
-        let rest = decoder.finish()?;
-
-        if mode != Self::MODE {
+        let (tx, decoder) = decoder.decode_field("tx_body")?;
+        let (wrapper_version, decoder) = decoder.decode_field::<u8>("wrapper_version")?;
+        if wrapper_version != POOLED_WRAPPER_VERSION {
             return Err(RLPDecodeError::Custom(format!(
-                "unknown wrapper mode {mode}"
+                "unknown pooled wrapper version {wrapper_version}"
             )));
         }
-        let [pooled] = transactions.as_slice() else {
-            return Err(RLPDecodeError::Custom(
-                "a wrapper carries exactly one transaction".to_string(),
-            ));
-        };
-        let (tx_type, payload) = pooled.split_first().ok_or(RLPDecodeError::InvalidLength)?;
-        if *tx_type != TxType::Frame as u8 {
-            return Err(RLPDecodeError::Custom(
-                "a wrapper carries a frame transaction".to_string(),
-            ));
-        }
-        let (tx, blobs_bundle) = if WrappedFrameTransaction::is_wrapped(payload)? {
-            let wrapped = WrappedFrameTransaction::decode(payload)?;
-            (wrapped.tx, Some(wrapped.blobs_bundle))
+        let (witnesses, decoder) = decoder.decode_field("witnesses")?;
+        let (blob_sidecar, decoder) = decoder.get_encoded_item_ref()?;
+        let rest = decoder.finish()?;
+
+        let sidecar_decoder = Decoder::new(blob_sidecar)?;
+        let blobs_bundle = if sidecar_decoder.is_done() {
+            sidecar_decoder.finish()?;
+            None
         } else {
-            (FrameTransaction::decode(payload)?, None)
+            let (blobs, sidecar_decoder) = sidecar_decoder.decode_field("blobs")?;
+            let (commitments, sidecar_decoder) = sidecar_decoder.decode_field("commitments")?;
+            let (proofs, sidecar_decoder) = sidecar_decoder.decode_field("cell_proofs")?;
+            sidecar_decoder.finish()?;
+            Some(BlobsBundle {
+                blobs,
+                commitments,
+                proofs,
+                // The sidecar always carries cell proofs, the EIP-7594 form.
+                version: 1,
+            })
         };
         Ok((
-            ProofWrapper {
+            PooledFrameTransaction {
                 tx,
-                blobs_bundle,
-                deps,
                 witnesses,
+                blobs_bundle,
             },
             rest,
         ))
@@ -2229,21 +2011,17 @@ pub enum FrameMode {
     /// `TXTRACE` and `EVENTDATACOPY` are valid. One that fails reverts
     /// the execution body without invalidating the transaction.
     Assert = 3,
-    /// EIP-8504 proof frame: it declares the transaction's dependencies, which
-    /// are satisfied outside the EVM, and executes no code.
-    Proof = 4,
 }
 
 impl FrameMode {
     /// Convert from the lower 8 bits of the mode field.
-    /// Returns None for reserved values (5-255).
+    /// Returns None for reserved values (4-255).
     pub fn from_u8(val: u8) -> Option<Self> {
         match val {
             0 => Some(FrameMode::Default),
             1 => Some(FrameMode::Verify),
             2 => Some(FrameMode::Sender),
             3 => Some(FrameMode::Assert),
-            4 => Some(FrameMode::Proof),
             _ => None,
         }
     }
@@ -2256,7 +2034,6 @@ impl From<FrameMode> for u8 {
             FrameMode::Verify => 1,
             FrameMode::Sender => 2,
             FrameMode::Assert => 3,
-            FrameMode::Proof => 4,
         }
     }
 }
@@ -2264,7 +2041,7 @@ impl From<FrameMode> for u8 {
 /// EIP-8141 Frame: a single execution step within a frame transaction.
 ///
 /// `mode` is the execution mode (0=DEFAULT, 1=VERIFY, 2=SENDER, 3=ASSERT under
-/// EIP-7906, 4=PROOF under EIP-8504; 5-255 reserved).
+/// EIP-7906; 4-255 reserved).
 /// `flags` bits: 0-1 = APPROVE scope restriction, 2 = atomic batch flag (valid
 /// on DEFAULT and SENDER frames only), 3-7 reserved (must be zero).
 #[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
@@ -2309,30 +2086,6 @@ impl Frame {
     pub fn is_expiry_verifier(&self) -> bool {
         self.execution_mode() == FrameMode::Verify
             && self.target == Some(frame_tx_expiry_verifier())
-    }
-
-    /// An EIP-8504 proof frame. Contracts and the protocol identify it by its
-    /// mode, not by its target.
-    pub fn is_proof(&self) -> bool {
-        self.mode == PROOF_FRAME_MODE
-    }
-
-    /// The dependencies a proof frame declares, in order and as encoded: a zero
-    /// `data_hash` is returned as zero. Empty for any other frame. Trailing bytes
-    /// that do not fill a triple are ignored; `validate_static_constraints`
-    /// rejects such a frame.
-    pub fn declared_dependencies(&self) -> Vec<Dependency> {
-        if !self.is_proof() {
-            return Vec::new();
-        }
-        self.data
-            .chunks_exact(DEPENDENCY_TRIPLE_BYTES)
-            .map(|triple| Dependency {
-                scheme: triple[31],
-                data_hash: H256::from_slice(&triple[32..64]),
-                verification_key_hash: H256::from_slice(&triple[64..96]),
-            })
-            .collect()
     }
 
     /// EIP-8272 §Recent root verifier frame: a VERIFY frame to `RECENT_ROOT_ADDRESS`
@@ -2415,58 +2168,165 @@ impl RLPDecode for Frame {
     }
 }
 
-/// EIP-8141 transaction signature. RLP: `[scheme, signer, msg, signature]`.
-/// `scheme`: 0 = ARBITRARY (`signer` MUST be empty; `signature` is arbitrary bytes),
-/// 1 = SECP256K1 (sig = v||r||s, 65 bytes), 2 = P256 (sig = r||s||qx||qy, 128 bytes).
-/// `signer`: `None` (empty) is required for ARBITRARY and allowed for SECP256K1/P256
-/// (empty ⇒ the resolved signer is `tx.sender`, for introspection too); `Some(addr)` pins it.
-/// `msg`: empty = signs compute_sig_hash(tx); 32 bytes = signs that explicit digest.
-/// Raw `signature` bytes are intentionally not EVM-introspectable.
-#[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
-pub struct FrameSignature {
-    pub scheme: u8,
-    #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::H160Wrapper>)]
-    pub signer: Option<Address>,
-    #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
-    pub msg: Bytes,
-    #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
-    pub signature: Bytes,
+/// One of the three protocol verifiers of EIP-8141: reserved claim-only
+/// addresses whose claims the protocol checks with a native function. A protocol
+/// verifier fixes its own verification gas and witness length, which is why a
+/// claim that names one declares both as zero.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProtocolVerifier {
+    Secp256k1,
+    P256,
+    LeanSphincs,
 }
 
-impl RLPEncode for FrameSignature {
+impl ProtocolVerifier {
+    /// The protocol verifier at `address`, if it is one of the three.
+    pub fn from_address(address: &Address) -> Option<Self> {
+        if *address == SECP256K1_VERIFIER {
+            Some(Self::Secp256k1)
+        } else if *address == P256_VERIFIER {
+            Some(Self::P256)
+        } else if *address == LEANSPHINCS_VERIFIER {
+            Some(Self::LeanSphincs)
+        } else {
+            None
+        }
+    }
+
+    /// The gas charged for verifying one claim of this verifier.
+    pub const fn verification_gas(self) -> u64 {
+        match self {
+            Self::Secp256k1 => SECP256K1_VERIFICATION_GAS,
+            Self::P256 => P256_VERIFICATION_GAS,
+            Self::LeanSphincs => LEANSPHINCS_VERIFICATION_GAS,
+        }
+    }
+
+    /// The exact length in bytes of a witness of this verifier.
+    pub const fn witness_len(self) -> u64 {
+        match self {
+            Self::Secp256k1 => SECP256K1_WITNESS_SIZE as u64,
+            Self::P256 => P256_WITNESS_SIZE as u64,
+            Self::LeanSphincs => LEANSPHINCS_SIGNATURE_SIZE as u64,
+        }
+    }
+}
+
+/// EIP-8141 claim. RLP: `[verifier, key, msg, gas_limit, witness_len]`.
+///
+/// A claim states that the verifier at `verifier` attests that a key authorizes a
+/// message. The bytes that satisfy it, its witness, are not part of the
+/// transaction: they travel beside it in the pooled representation and in the
+/// block's `claim_witnesses`.
+///
+/// `key`: empty resolves to `tx.sender`; 20 bytes is an address; 32 bytes is used
+/// as is. Either non-empty form must be non-zero.
+/// `msg`: empty stands for `compute_sig_hash(tx)`; otherwise an explicit non-zero
+/// 32-byte digest.
+/// `gas_limit` and `witness_len` are zero for a protocol verifier, which fixes
+/// both. For any other verifier they are the gas its verification is given, and
+/// charged in full, and the exact length of the witness.
+#[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
+pub struct Claim {
+    #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
+    pub verifier: Address,
+    #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
+    pub key: Bytes,
+    #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
+    pub msg: Bytes,
+    pub gas_limit: u64,
+    pub witness_len: u64,
+}
+
+impl Claim {
+    /// The protocol verifier this claim names, if any.
+    pub fn protocol_verifier(&self) -> Option<ProtocolVerifier> {
+        ProtocolVerifier::from_address(&self.verifier)
+    }
+
+    /// EIP-8141 `resolve_key`: the 32-byte key the claim is about. `None` for a
+    /// `key` the EIP rejects: a length other than 0, 20 or 32, or all zeros.
+    pub fn resolved_key(&self, tx_sender: Address) -> Option<H256> {
+        match self.key.len() {
+            0 => Some(H256::from(tx_sender)),
+            20 => {
+                let address = Address::from_slice(&self.key);
+                (!address.is_zero()).then(|| H256::from(address))
+            }
+            32 => {
+                let key = H256::from_slice(&self.key);
+                (!key.is_zero()).then_some(key)
+            }
+            _ => None,
+        }
+    }
+
+    /// The 32-byte message the claim is about: `sig_hash` for an empty `msg`,
+    /// otherwise `msg` itself. `None` for a `msg` the EIP rejects: a length other
+    /// than 0 or 32, or all zeros.
+    pub fn resolved_msg(&self, sig_hash: H256) -> Option<H256> {
+        match self.msg.len() {
+            0 => Some(sig_hash),
+            32 => {
+                let msg = H256::from_slice(&self.msg);
+                (!msg.is_zero()).then_some(msg)
+            }
+            _ => None,
+        }
+    }
+
+    /// EIP-8141 `resolve_claim_gas`: the gas charged for verifying the claim.
+    pub fn resolved_gas(&self) -> u64 {
+        self.protocol_verifier()
+            .map_or(self.gas_limit, ProtocolVerifier::verification_gas)
+    }
+
+    /// EIP-8141 `resolve_witness_len`: the exact length of the claim's witness.
+    pub fn resolved_witness_len(&self) -> u64 {
+        self.protocol_verifier()
+            .map_or(self.witness_len, ProtocolVerifier::witness_len)
+    }
+
+    /// EIP-8141 `resolve_dependency`. `None` when the claim's `key` or `msg` is
+    /// one the EIP rejects.
+    pub fn resolve_dependency(&self, tx_sender: Address, sig_hash: H256) -> Option<Dependency> {
+        Some(Dependency {
+            verifier: self.verifier,
+            key: self.resolved_key(tx_sender)?,
+            msg: self.resolved_msg(sig_hash)?,
+            gas_limit: self.resolved_gas(),
+            witness_len: self.resolved_witness_len(),
+        })
+    }
+}
+
+impl RLPEncode for Claim {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        // `signer` encodes as an address or RLP null (empty) for `None`, mirroring
-        // `Frame.target`; an empty signer is required for ARBITRARY signatures.
-        let signer_kind = match self.signer {
-            Some(addr) => TxKind::Call(addr),
-            None => TxKind::Create,
-        };
         Encoder::new(buf)
-            .encode_field(&self.scheme)
-            .encode_field(&signer_kind)
+            .encode_field(&self.verifier)
+            .encode_field(&self.key)
             .encode_field(&self.msg)
-            .encode_field(&self.signature)
+            .encode_field(&self.gas_limit)
+            .encode_field(&self.witness_len)
             .finish();
     }
 }
 
-impl RLPDecode for FrameSignature {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(FrameSignature, &[u8]), RLPDecodeError> {
+impl RLPDecode for Claim {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Claim, &[u8]), RLPDecodeError> {
         let decoder = Decoder::new(rlp)?;
-        let (scheme, decoder) = decoder.decode_field("scheme")?;
-        let (signer_kind, decoder): (TxKind, _) = decoder.decode_field("signer")?;
-        let signer = match signer_kind {
-            TxKind::Call(addr) => Some(addr),
-            TxKind::Create => None,
-        };
+        let (verifier, decoder) = decoder.decode_field("verifier")?;
+        let (key, decoder) = decoder.decode_field("key")?;
         let (msg, decoder) = decoder.decode_field("msg")?;
-        let (signature, decoder) = decoder.decode_field("signature")?;
+        let (gas_limit, decoder) = decoder.decode_field("gas_limit")?;
+        let (witness_len, decoder) = decoder.decode_field("witness_len")?;
         Ok((
-            FrameSignature {
-                scheme,
-                signer,
+            Claim {
+                verifier,
+                key,
                 msg,
-                signature,
+                gas_limit,
+                witness_len,
             },
             decoder.finish()?,
         ))
@@ -2489,10 +2349,11 @@ pub struct FrameTransaction {
     pub nonce_seq: u64,
     #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
     pub sender: Address,
+    /// EIP-8141 claims: what the transaction asserts about keys and messages.
+    /// Every claim's witness is verified before any frame executes, and frames
+    /// test for a claim with `HASCLAIM`.
+    pub claims: Vec<Claim>,
     pub frames: Vec<Frame>,
-    /// EIP-8141 outer signature list. Validated
-    /// before any frame executes; referenced by VERIFY frames and SIGPARAM.
-    pub signatures: Vec<FrameSignature>,
     /// EIP-8141 `fees.max_fee`: one budget, in wei, for all of the transaction's
     /// execution, state and blob gas. The fee fields are bounded at 2**256, not
     /// 2**64: a frame transaction may legitimately name a fee no balance could
@@ -2518,8 +2379,8 @@ impl Default for FrameTransaction {
             nonce_keys: Vec::new(),
             nonce_seq: 0,
             sender: Address::zero(),
+            claims: Vec::new(),
             frames: Vec::new(),
-            signatures: Vec::new(),
             max_fee: U256::zero(),
             max_priority_fee_per_gas: U256::zero(),
             blob_versioned_hashes: Vec::new(),
@@ -2558,21 +2419,58 @@ pub const FRAME_TX_RECENT_ROOT_TUPLE_BYTES: usize = 72;
 /// raised EIP-7976 floor always applies and neither needs a fork parameter.
 const FRAME_TX_STANDARD_TOKEN_COST: u64 = 4;
 const FRAME_TX_TOTAL_COST_FLOOR_PER_TOKEN: u64 = 16;
-/// EIP-8504: gas a transaction pays for each of its dependencies, for the
-/// witness the block carries on its behalf (provisional). A witness is priced
-/// byte for byte like transaction data at the calldata floor, so a signature
-/// costs the same beside the transaction as it would inside it.
-pub const LEANSPHINCS_WITNESS_GAS: u64 = LEANSPHINCS_SIGNATURE_SIZE as u64
-    * FRAME_TX_STANDARD_TOKEN_COST
-    * FRAME_TX_TOTAL_COST_FLOOR_PER_TOKEN;
-/// EIP-8141 signature schemes: ARBITRARY=0, SECP256K1=1, P256=2.
-pub const FRAME_SIG_SCHEME_ARBITRARY: u8 = 0;
-pub const FRAME_SIG_SCHEME_SECP256K1: u8 = 1;
-pub const FRAME_SIG_SCHEME_P256: u8 = 2;
+/// EIP-8141 `MAX_CLAIMS`: the most claims a frame transaction may declare.
+pub const MAX_CLAIMS: usize = 64;
+/// EIP-8141 `MAX_CLAIM_WITNESS_BYTES`: the longest witness a custom verifier's
+/// claim may declare.
+pub const MAX_CLAIM_WITNESS_BYTES: u64 = 1_048_576;
+/// EIP-8141 `MAX_BLOCK_WITNESS_BYTES`: the longest `claim_witnesses` byte string
+/// a block may carry (provisional).
+pub const MAX_BLOCK_WITNESS_BYTES: usize = 2_097_152;
+/// EIP-8141 `WITNESS_BYTE_GAS`: gas per byte of a protocol verifier's witness
+/// (provisional).
+pub const WITNESS_BYTE_GAS: u64 = 4;
+/// EIP-8141 `CLAIM_WITNESSES_VERSION_RAW`: the version byte that opens a block's
+/// `claim_witnesses` when it lists raw witnesses.
+pub const CLAIM_WITNESSES_VERSION_RAW: u8 = 0x00;
+/// EIP-8141 `POOLED_WRAPPER_VERSION`: the only wrapper version of the pooled
+/// representation of a frame transaction.
+pub const POOLED_WRAPPER_VERSION: u8 = 0;
+/// EIP-8141 `SECP256K1_VERIFICATION_GAS`.
+pub const SECP256K1_VERIFICATION_GAS: u64 = 2800;
+/// EIP-8141 `P256_VERIFICATION_GAS`.
+pub const P256_VERIFICATION_GAS: u64 = 6700;
+/// EIP-8141 `LEANSPHINCS_VERIFICATION_GAS`.
+pub const LEANSPHINCS_VERIFICATION_GAS: u64 = 13200;
+/// Bytes of the witness of a `SECP256K1_VERIFIER` claim: `v || r || s`.
+pub const SECP256K1_WITNESS_SIZE: usize = 65;
+/// Bytes of the witness of a `P256_VERIFIER` claim: `r || s || qx || qy`.
+pub const P256_WITNESS_SIZE: usize = 128;
+/// EIP-8141 `LEANSPHINCS_SIGNATURE_SIZE`: bytes of a leanSPHINCS signature, the
+/// witness of a `LEANSPHINCS_VERIFIER` claim.
+pub const LEANSPHINCS_SIGNATURE_SIZE: usize = 7740;
+/// EIP-8141 `SECP256K1_VERIFIER`, a reserved claim-only address: it names the
+/// native secp256k1 verifier in a claim and is not a precompile, so calling it
+/// from the EVM is calling an account without code. The EIP leaves the three
+/// protocol verifier addresses to be determined; these follow `ENTRY_POINT`
+/// (`0xaa`), outside the precompile range and the range EIP-7587 reserves.
+pub const SECP256K1_VERIFIER: Address = ethereum_types::H160(hex_literal::hex!(
+    "00000000000000000000000000000000000000ab"
+));
+/// EIP-8141 `P256_VERIFIER`, a reserved claim-only address (see
+/// [`SECP256K1_VERIFIER`]).
+pub const P256_VERIFIER: Address = ethereum_types::H160(hex_literal::hex!(
+    "00000000000000000000000000000000000000ac"
+));
+/// EIP-8141 `LEANSPHINCS_VERIFIER`, a reserved claim-only address (see
+/// [`SECP256K1_VERIFIER`]).
+pub const LEANSPHINCS_VERIFIER: Address = ethereum_types::H160(hex_literal::hex!(
+    "00000000000000000000000000000000000000ad"
+));
 /// EIP-8141 §Mempool `MAX_VERIFY_GAS`: the maximum gas
-/// a public-mempool node should expend validating signatures and simulating the
-/// validation prefix. Signature validation counts against this budget (rule #6),
-/// so a frame tx whose `signature_verification_cost()` alone exceeds it can never
+/// a public-mempool node should expend verifying claims and simulating the
+/// validation prefix. Claim verification counts against this budget (rule #6),
+/// so a frame tx whose `claim_verification_cost()` alone exceeds it can never
 /// satisfy the prefix budget and must be rejected at admission.
 pub const FRAME_TX_MAX_VERIFY_GAS: u64 = 100_000;
 /// EIP-8141 `MAX_VERIFY_STATE_GAS`: the most state gas the frames of a validation
@@ -2592,24 +2490,6 @@ pub const APPROVE_EXECUTION_AND_PAYMENT: u8 = 0x3;
 /// (FRAME_CANONICAL_PAYMASTER_CODE_HASH is unresolved in the draft EIP), so
 /// this de-facto limits sponsored frame txs to 1 per paymaster in the pool.
 pub const FRAME_TX_MAX_PENDING_NONCANONICAL_PAYMASTER: u8 = 1;
-/// EIP-8504: the frame mode of a proof frame.
-pub const PROOF_FRAME_MODE: u8 = 4;
-/// EIP-8504: the scheme byte of a leanSPHINCS dependency.
-pub const LEANSPHINCS_SCHEME: u8 = 0x10;
-/// EIP-8504: bytes of one `(scheme, data_hash, verification_key_hash)` triple in
-/// a proof frame's data.
-pub const DEPENDENCY_TRIPLE_BYTES: usize = 96;
-/// EIP-8504: the most triples one proof frame may declare (provisional).
-pub const MAX_DEPENDENCIES_PER_FRAME: usize = 256;
-/// EIP-8504: execution gas a proof frame declares, and consumes, per triple
-/// (provisional).
-pub const LEANSPHINCS_VERIFICATION_GAS: u64 = 3000;
-/// EIP-8504: bytes of a leanSPHINCS signature (provisional).
-pub const LEANSPHINCS_SIGNATURE_SIZE: usize = 7740;
-/// EIP-8504: the most dependencies a transaction may have to enter the public
-/// mempool (provisional). It bounds the witnesses a node verifies for one
-/// transaction and is not a validity rule.
-pub const MAX_SIGS_PER_TX: usize = 16;
 
 /// Returns the ENTRY_POINT `Address` (0x…00aa) used as caller for
 /// DEFAULT/VERIFY frames per EIP-8141.
@@ -2786,183 +2666,216 @@ impl FrameFeeBudget {
     }
 }
 
-/// EIP-8504 dependency: `(scheme, data_hash, verification_key_hash)`.
+/// EIP-8141 dependency: a claim with its key, message, gas and witness length
+/// resolved, `(verifier, key, msg, gas_limit, witness_len)`.
 ///
-/// `(LEANSPHINCS_SCHEME, m, pk)` states that the 32-byte message `m` is signed
-/// under the leanSPHINCS public key `pk`. A witness, the signature itself,
-/// satisfies it; witnesses travel beside the transaction and in the block.
+/// It states that the verifier at `verifier` attests that `key` authorizes
+/// `msg`. A witness of exactly `witness_len` bytes that the verifier accepts
+/// satisfies it; a block carries one witness for each of its distinct
+/// dependencies.
 ///
-/// The derived ordering is the one the EIP specifies: first by `scheme`, then by
-/// `data_hash`, and finally by `verification_key_hash`, the two 32-byte fields
-/// compared byte by byte.
+/// The derived ordering is the one the EIP's `deduplicate_and_sort` uses, the
+/// order of the tuple: `verifier`, `key` and `msg` compared byte by byte, then
+/// `gas_limit` and `witness_len` as integers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Dependency {
-    pub scheme: u8,
-    pub data_hash: H256,
-    pub verification_key_hash: H256,
+    pub verifier: Address,
+    pub key: H256,
+    pub msg: H256,
+    pub gas_limit: u64,
+    pub witness_len: u64,
 }
 
 impl Dependency {
-    /// The 96-byte encoding of the dependency, laid out as a proof frame triple:
-    /// 31 zero bytes and the scheme byte, then `data_hash`, then
-    /// `verification_key_hash`.
-    pub fn encode(&self) -> [u8; DEPENDENCY_TRIPLE_BYTES] {
-        let mut encoded = [0u8; DEPENDENCY_TRIPLE_BYTES];
-        encoded[31] = self.scheme;
-        encoded[32..64].copy_from_slice(self.data_hash.as_bytes());
-        encoded[64..96].copy_from_slice(self.verification_key_hash.as_bytes());
-        encoded
+    /// The protocol verifier this dependency names, if any.
+    pub fn protocol_verifier(&self) -> Option<ProtocolVerifier> {
+        ProtocolVerifier::from_address(&self.verifier)
+    }
+
+    /// The input a verifier receives: `key || msg || witness`.
+    pub fn verifier_input(&self, witness: &[u8]) -> Vec<u8> {
+        let mut input = Vec::with_capacity(64 + witness.len());
+        input.extend_from_slice(self.key.as_bytes());
+        input.extend_from_slice(self.msg.as_bytes());
+        input.extend_from_slice(witness);
+        input
     }
 }
 
-/// Sorts dependencies in the EIP-8504 order and removes repeated ones.
+/// EIP-8141 `deduplicate_and_sort`.
 fn deduplicate_and_sort(mut dependencies: Vec<Dependency>) -> Vec<Dependency> {
     dependencies.sort_unstable();
     dependencies.dedup();
     dependencies
 }
 
-/// EIP-8504 `block_dependencies`: the combined dependencies of a block's
+/// EIP-8141 `block_dependencies`: the combined dependencies of a block's frame
 /// transactions, sorted and deduplicated. A block carries exactly one witness
-/// for each, in this order.
-pub fn block_dependencies(transactions: &[Transaction]) -> Vec<Dependency> {
-    deduplicate_and_sort(
-        transactions
-            .iter()
-            .filter_map(|tx| match tx {
-                Transaction::FrameTransaction(frame_tx) => Some(frame_tx.dependencies()),
-                _ => None,
-            })
-            .flatten()
-            .collect(),
-    )
+/// for each, in this order. `None` when a claim of one of the transactions has a
+/// `key` or `msg` the EIP rejects, which makes that transaction, and so the
+/// block, invalid.
+pub fn block_dependencies(transactions: &[Transaction]) -> Option<Vec<Dependency>> {
+    let mut dependencies = Vec::new();
+    for tx in transactions {
+        if let Transaction::FrameTransaction(frame_tx) = tx {
+            dependencies.extend(frame_tx.dependencies()?);
+        }
+    }
+    Some(deduplicate_and_sort(dependencies))
+}
+
+/// The byte string a block carries as `claim_witnesses` for `witnesses`, one for
+/// each entry of its `block_dependencies` in that order (EIP-8141 §Block
+/// Witnesses): empty when there are none, otherwise the raw version byte
+/// followed by the RLP list of the witnesses.
+pub fn encode_claim_witnesses(witnesses: &[Bytes]) -> Bytes {
+    if witnesses.is_empty() {
+        return Bytes::new();
+    }
+    // An RLP list of byte strings: the payload is the items one after another.
+    let mut payload = Vec::new();
+    for witness in witnesses {
+        witness.encode(&mut payload);
+    }
+    let mut encoded = vec![CLAIM_WITNESSES_VERSION_RAW];
+    ethrex_rlp::encode::encode_length(payload.len(), &mut encoded);
+    encoded.extend_from_slice(&payload);
+    Bytes::from(encoded)
+}
+
+/// The length in bytes of the `claim_witnesses` byte string that carries
+/// `witnesses` ([`encode_claim_witnesses`]), without building it.
+pub fn claim_witnesses_len<'a>(witnesses: impl IntoIterator<Item = &'a Bytes>) -> usize {
+    claim_witnesses_len_for_payload(witnesses.into_iter().map(RLPEncode::length).sum())
+}
+
+/// The length in bytes of the `claim_witnesses` byte string whose witnesses,
+/// each RLP-encoded as a byte string, add up to `payload_len` bytes.
+pub const fn claim_witnesses_len_for_payload(payload_len: usize) -> usize {
+    if payload_len == 0 {
+        // A byte string is at least one byte long once encoded, so there are no
+        // witnesses.
+        return 0;
+    }
+    1 + ethrex_rlp::encode::list_length(payload_len)
+}
+
+/// Why a block's `claim_witnesses` byte string does not decode.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum ClaimWitnessesDecodeError {
+    #[error("claim witnesses are {0} bytes, more than MAX_BLOCK_WITNESS_BYTES")]
+    TooLong(usize),
+    #[error("unknown claim witnesses version {0:#04x}")]
+    UnknownVersion(u8),
+    #[error("claim witnesses are not a list of byte strings: {0}")]
+    Malformed(String),
+    #[error("claim witnesses hold an empty list, which is encoded as the empty byte string")]
+    EmptyList,
+}
+
+/// Decodes a block's `claim_witnesses` byte string into its witnesses. The empty
+/// byte string holds none. Anything else is the raw version byte followed by the
+/// RLP list of at least one witness, with nothing after it; an empty list has
+/// the empty byte string as its only encoding.
+pub fn decode_claim_witnesses(
+    claim_witnesses: &[u8],
+) -> Result<Vec<Bytes>, ClaimWitnessesDecodeError> {
+    if claim_witnesses.len() > MAX_BLOCK_WITNESS_BYTES {
+        return Err(ClaimWitnessesDecodeError::TooLong(claim_witnesses.len()));
+    }
+    let Some((version, encoded)) = claim_witnesses.split_first() else {
+        return Ok(Vec::new());
+    };
+    if *version != CLAIM_WITNESSES_VERSION_RAW {
+        return Err(ClaimWitnessesDecodeError::UnknownVersion(*version));
+    }
+    let witnesses = Vec::<Bytes>::decode(encoded)
+        .map_err(|error| ClaimWitnessesDecodeError::Malformed(error.to_string()))?;
+    if witnesses.is_empty() {
+        return Err(ClaimWitnessesDecodeError::EmptyList);
+    }
+    Ok(witnesses)
 }
 
 impl FrameTransaction {
-    /// EIP-8504 `dependencies(tx)`: the triples of every proof frame, each zero
-    /// `data_hash` replaced with the transaction's signature hash, sorted and
-    /// deduplicated. The substitution happens only here: the frame's encoded data
-    /// keeps the zero bytes, so the signature hash covers them.
-    pub fn dependencies(&self) -> Vec<Dependency> {
-        if !self.has_proof_frames() {
-            return Vec::new();
+    /// EIP-8141 `tx_dependencies`: the resolved dependency of every claim, sorted
+    /// and deduplicated. `None` when a claim has a `key` or `msg` the EIP
+    /// rejects; `validate_static_constraints` rejects such a transaction.
+    pub fn dependencies(&self) -> Option<Vec<Dependency>> {
+        if self.claims.is_empty() {
+            return Some(Vec::new());
         }
+        self.claim_dependencies().map(deduplicate_and_sort)
+    }
+
+    /// The resolved dependency of each claim, in the order of `claims`, so entry
+    /// `i` is the dependency `witnesses[i]` of the pooled representation must
+    /// satisfy. `None` under the same condition as [`Self::dependencies`].
+    pub fn claim_dependencies(&self) -> Option<Vec<Dependency>> {
         let sig_hash = self.compute_sig_hash();
-        deduplicate_and_sort(
-            self.frames
-                .iter()
-                .flat_map(Frame::declared_dependencies)
-                .map(|mut dependency| {
-                    if dependency.data_hash.is_zero() {
-                        dependency.data_hash = sig_hash;
-                    }
-                    dependency
-                })
-                .collect(),
-        )
-    }
-
-    /// Whether the transaction has at least one proof frame, which makes it a
-    /// dependency transaction: it is handled together with its witnesses until
-    /// it is included in a block.
-    pub fn has_proof_frames(&self) -> bool {
-        self.frames.iter().any(Frame::is_proof)
-    }
-
-    /// Canonical signature hash (EIP-8141): the raw `signature` bytes of every
-    /// signature with empty `msg` are replaced by their byte length, RLP-encoded
-    /// as an unsigned integer. A signature over this hash cannot commit to its own
-    /// bytes, but committing to their length fixes what the payer is charged for
-    /// them. Frame data is fully covered. Signatures with an explicit 32-byte
-    /// `msg` keep their bytes (they sign that digest, not this hash).
-    pub fn compute_sig_hash(&self) -> H256 {
-        let mut buf = vec![TxType::Frame as u8];
-        let elided_signatures: Vec<FrameSignature> = self
-            .signatures
+        self.claims
             .iter()
-            .map(|s| {
-                if s.msg.is_empty() {
-                    // An unsigned integer RLP-encodes as its minimal big-endian
-                    // bytes, so the length can stand in the bytes field directly.
-                    let length = (s.signature.len() as u64).to_be_bytes();
-                    let first_nonzero = length.iter().position(|b| *b != 0).unwrap_or(8);
-                    FrameSignature {
-                        scheme: s.scheme,
-                        signer: s.signer,
-                        msg: s.msg.clone(),
-                        signature: Bytes::copy_from_slice(&length[first_nonzero..]),
-                    }
-                } else {
-                    s.clone()
-                }
-            })
-            .collect();
-        // RLP-encode the tx with elided signature bytes, frames verbatim.
-        Encoder::new(&mut buf)
-            .encode_field(&self.chain_id)
-            .encode_field(&self.nonce_keys)
-            .encode_field(&self.nonce_seq)
-            .encode_field(&self.sender)
-            .encode_field(&self.frames)
-            .encode_field(&elided_signatures)
-            .encode_field(&(self.max_fee, self.max_priority_fee_per_gas))
-            .encode_field(&self.blob_versioned_hashes)
-            .finish();
+            .map(|claim| claim.resolve_dependency(self.sender, sig_hash))
+            .collect()
+    }
+
+    /// Canonical signature hash (EIP-8141 `compute_sig_hash`):
+    /// `keccak(FRAME_TX_TYPE || 0x00 || rlp(tx_body))`. The transaction carries no
+    /// witness bytes, so the hash covers all of it without eliding anything, and
+    /// the extra zero byte keeps it apart from the transaction hash, which is
+    /// `keccak(FRAME_TX_TYPE || rlp(tx_body))`.
+    pub fn compute_sig_hash(&self) -> H256 {
+        let mut buf = vec![TxType::Frame as u8, 0x00];
+        self.encode(&mut buf);
         keccak(&buf)
     }
 
-    /// Per EIP-8141: 100 gas per ARBITRARY signature, 2800 per SECP256K1, 6700
-    /// per P256. Unknown schemes are rejected by static validation, so they are
-    /// treated as 0 here (validation runs first).
-    pub fn signature_verification_cost(&self) -> u64 {
-        self.signatures
+    /// EIP-8141 `claim_verification_cost`: the gas of verifying every claim, a
+    /// protocol verifier's fixed cost or a custom verifier's whole `gas_limit`.
+    /// Saturates; `validate_static_constraints` rejects a sum past 2**64.
+    pub fn claim_verification_cost(&self) -> u64 {
+        self.claims
             .iter()
-            .map(|s| match s.scheme {
-                FRAME_SIG_SCHEME_ARBITRARY => 100u64,
-                FRAME_SIG_SCHEME_SECP256K1 => 2800u64,
-                FRAME_SIG_SCHEME_P256 => 6700u64,
-                _ => 0,
+            .fold(0u64, |acc, claim| acc.saturating_add(claim.resolved_gas()))
+    }
+
+    /// EIP-8141 `protocol_witness_cost`: `WITNESS_BYTE_GAS` per byte of the
+    /// witness of every claim that names a protocol verifier. These witnesses are
+    /// not counted toward the calldata floor.
+    pub fn protocol_witness_cost(&self) -> u64 {
+        self.claims
+            .iter()
+            .filter_map(Claim::protocol_verifier)
+            .fold(0u64, |acc, verifier| {
+                acc.saturating_add(WITNESS_BYTE_GAS.saturating_mul(verifier.witness_len()))
             })
-            .sum()
+    }
+
+    /// Total declared witness length of the claims that name a custom verifier.
+    /// A custom verifier can accept arbitrary bytes, so its witness is priced by
+    /// length as non-zero calldata and counted toward the calldata floor.
+    fn custom_witness_len(&self) -> u64 {
+        self.claims
+            .iter()
+            .filter(|claim| claim.protocol_verifier().is_none())
+            .fold(0u64, |acc, claim| acc.saturating_add(claim.witness_len))
     }
 
     /// Iterate the EIP-8141 data fields priced by their content: each frame's
-    /// `data`, each signature's `signer` and `msg`, and the `signature` bytes of
-    /// signatures with an explicit `msg`. The `signature` bytes of an empty-`msg`
-    /// signature are priced by length alone (see [`Self::elided_signature_len`]).
-    /// The RLP framing and the remaining scalar fields are not included.
+    /// `data` and each claim's `verifier`, `key` and `msg`. The RLP framing and
+    /// the remaining scalar fields are not included.
     fn data_fields(&self) -> impl Iterator<Item = &[u8]> {
-        const EMPTY: &[u8] = &[];
-        self.frames
-            .iter()
-            .map(|f| f.data.as_ref())
-            .chain(self.signatures.iter().flat_map(|s| {
-                [
-                    s.signer.as_ref().map_or(EMPTY, |a| a.as_bytes()),
-                    s.msg.as_ref(),
-                    if s.msg.is_empty() {
-                        EMPTY
-                    } else {
-                        s.signature.as_ref()
-                    },
-                ]
-            }))
+        self.frames.iter().map(|f| f.data.as_ref()).chain(
+            self.claims
+                .iter()
+                .flat_map(|c| [c.verifier.as_bytes(), c.key.as_ref(), c.msg.as_ref()]),
+        )
     }
 
-    /// Total length of the `signature` bytes of signatures with an empty `msg`.
-    /// EIP-8141's canonical signature hash commits only to their length, so the
-    /// intrinsic cost prices them as if all non-zero: the payer's charge then
-    /// depends only on what the signature hash covers.
-    fn elided_signature_len(&self) -> u64 {
-        self.signatures
-            .iter()
-            .filter(|s| s.msg.is_empty())
-            .fold(0u64, |acc, s| acc.saturating_add(s.signature.len() as u64))
-    }
-
-    /// EIP-7623 calldata cost over the frame and signature data and EIP-8250's
-    /// nonce calldata: 4 gas per zero byte, 16 per non-zero byte, and 16 per byte
-    /// of an empty-`msg` signature whatever its value.
+    /// EIP-7623 calldata cost over the frame data, the claim metadata and
+    /// EIP-8250's nonce calldata, 4 gas per zero byte and 16 per non-zero byte,
+    /// plus 16 gas per byte of every custom verifier's witness whatever its value
+    /// (EIP-8141 `frame_data_cost + claim_metadata_cost + custom_witness_cost`).
     pub fn data_cost(&self) -> u64 {
         let nonce_calldata = self.nonce_calldata();
         self.data_fields()
@@ -2971,24 +2884,25 @@ impl FrameTransaction {
             .fold(0u64, |acc, byte| {
                 acc.saturating_add(if *byte == 0 { 4 } else { 16 })
             })
-            .saturating_add(self.elided_signature_len().saturating_mul(16))
+            .saturating_add(self.custom_witness_len().saturating_mul(16))
     }
 
-    /// EIP-7623 token count over the frame and signature data and EIP-8250's nonce
-    /// calldata, used for the calldata floor. Frame transactions exist only from
-    /// Hegota onward, which is after Amsterdam, so EIP-7976's unweighted count
-    /// (every byte costs `STANDARD_TOKEN_COST`) always applies.
+    /// EIP-7623 token count over the frame data, the claim metadata, the custom
+    /// verifiers' witnesses and EIP-8250's nonce calldata, used for the calldata
+    /// floor. Frame transactions exist only from Hegota onward, which is after
+    /// Amsterdam, so EIP-7976's unweighted count (every byte costs
+    /// `STANDARD_TOKEN_COST`) always applies.
     pub fn calldata_tokens(&self) -> u64 {
         self.data_fields()
             .fold(0u64, |acc, field| acc.saturating_add(field.len() as u64))
-            .saturating_add(self.elided_signature_len())
+            .saturating_add(self.custom_witness_len())
             .saturating_add(self.nonce_calldata().len() as u64)
             .saturating_mul(FRAME_TX_STANDARD_TOKEN_COST)
     }
 
     /// EIP-8250 `nonce_calldata`: `rlp(nonce_keys) || rlp(nonce_seq)`, the bytes the
-    /// keyed nonce fields add to the payload. They are priced exactly as frame and
-    /// signature data, so they enter both [`Self::data_cost`] and
+    /// keyed nonce fields add to the payload. They are priced exactly as frame data
+    /// and claim metadata, so they enter both [`Self::data_cost`] and
     /// [`Self::calldata_tokens`]. A single-use key set (keyed, at `MAX_NONCE_SEQ`)
     /// is exempt from pricing its `nonce_seq`, so the single-use form never costs
     /// more than first use at sequence zero; the field is still encoded and signed.
@@ -3030,19 +2944,15 @@ impl FrameTransaction {
     /// frame. A matching frame anywhere else is not the protocol verifier and fails
     /// the structural rules ([`FrameValidationError::RecentRootFrameMisplaced`]).
     pub fn recent_root_verifier_index(&self) -> Option<usize> {
-        // EIP-8504: proof frames run no code and take no position of their own, so
-        // "first" and "second" are counted over the frames left without them.
-        let mut frames = self
-            .frames
-            .iter()
-            .enumerate()
-            .filter(|(_, frame)| !frame.is_proof());
-        let (first_index, first) = frames.next()?;
-        if first.is_recent_root_verifier() {
-            return Some(first_index);
+        match self.frames.as_slice() {
+            [first, ..] if first.is_recent_root_verifier() => Some(0),
+            [first, second, ..]
+                if first.is_expiry_verifier() && second.is_recent_root_verifier() =>
+            {
+                Some(1)
+            }
+            _ => None,
         }
-        let (second_index, second) = frames.next()?;
-        (first.is_expiry_verifier() && second.is_recent_root_verifier()).then_some(second_index)
     }
 
     /// The `(source_id, slot, root)` tuples the recent root verifier frame declares,
@@ -3054,35 +2964,26 @@ impl FrameTransaction {
             .unwrap_or_default()
     }
 
-    /// The EIP-7623 calldata floor: the least the frame and signature data may
-    /// cost, whatever execution actually consumes.
+    /// The EIP-7623 calldata floor: the least the frame data, the claim metadata
+    /// and the custom verifiers' witnesses may cost, whatever execution actually
+    /// consumes.
     pub fn calldata_floor_gas(&self) -> u64 {
         self.calldata_tokens()
             .saturating_mul(FRAME_TX_TOTAL_COST_FLOOR_PER_TOKEN)
     }
 
     /// The mandatory costs, always charged in full: the intrinsic cost, the
-    /// per-frame cost, signature verification, value transfers, EIP-8250's
-    /// keyed-nonce access, and EIP-8504's witnesses. They are the terms EIP-8141's
-    /// `frame_tx_intrinsic_gas` and `calldata_floor_gas` share, so each is charged
-    /// once on either side.
+    /// per-frame cost, claim verification, the protocol verifiers' witnesses,
+    /// value transfers, and EIP-8250's keyed-nonce access. They are the terms
+    /// EIP-8141's `frame_tx_intrinsic_gas` and `calldata_floor_gas` share, so each
+    /// is charged once on either side.
     pub fn mandatory_gas(&self) -> u64 {
         FRAME_TX_INTRINSIC_COST
             .saturating_add((self.frames.len() as u64).saturating_mul(FRAME_TX_PER_FRAME_COST))
-            .saturating_add(self.signature_verification_cost())
+            .saturating_add(self.claim_verification_cost())
+            .saturating_add(self.protocol_witness_cost())
             .saturating_add(self.value_transfer_gas())
             .saturating_add(self.keyed_nonce_access_cost())
-            .saturating_add(self.dependency_witness_gas())
-    }
-
-    /// EIP-8504: `LEANSPHINCS_WITNESS_GAS` for every entry of `dependencies()`, so
-    /// a triple declared more than once is paid for once. The witnesses are not
-    /// transaction data, so nothing else prices their bytes; charging them here
-    /// puts them on both sides of the `max_gas` comparison, and the calldata floor
-    /// cannot absorb them. A dependency that two transactions share is paid by
-    /// both, although the block carries a single witness for it.
-    pub fn dependency_witness_gas(&self) -> u64 {
-        (self.dependencies().len() as u64).saturating_mul(LEANSPHINCS_WITNESS_GAS)
     }
 
     /// EIP-8250 `keyed_nonce_access_cost`: `KEYED_NONCE_ACCESS_COST` for every key,
@@ -3224,8 +3125,7 @@ impl FrameTransaction {
             })
     }
 
-    /// Validate static constraints per EIP-8141 spec, with the constraints
-    /// EIP-8504 adds for proof frames.
+    /// Validate static constraints per EIP-8141 spec.
     /// Returns an error string if the transaction is invalid.
     pub fn validate_static_constraints(&self) -> Result<(), String> {
         // EIP-8250: the account nonce cannot be used at `MAX_NONCE_SEQ`, which only
@@ -3255,39 +3155,76 @@ impl FrameTransaction {
                 return Err(format!("Blob versioned hash {i}: wrong version byte"));
             }
         }
-        // EIP-8141 signature list validation: scheme must be a known value; msg
-        // must be empty or a non-zero 32-byte digest.
-        for (i, sig) in self.signatures.iter().enumerate() {
-            match sig.scheme {
-                // ARBITRARY (0) carries no recoverable signer; per EIP-8141 the
-                // signer MUST be empty.
-                FRAME_SIG_SCHEME_ARBITRARY => {
-                    if sig.signer.is_some() {
-                        return Err(format!(
-                            "Signature {i}: ARBITRARY signatures must not name a signer"
-                        ));
-                    }
-                }
-                FRAME_SIG_SCHEME_SECP256K1 | FRAME_SIG_SCHEME_P256 => {}
-                other => {
-                    return Err(format!("Signature {i}: unsupported scheme {other}"));
-                }
+        // EIP-8141 claims: at most `MAX_CLAIMS`, each with a `key` and a `msg` of
+        // an accepted form. A protocol verifier fixes its own gas and witness
+        // length, so its claim declares both as zero; any other verifier's claim
+        // declares the gas its verification is given and the length of its witness.
+        if self.claims.len() > MAX_CLAIMS {
+            return Err(format!("Claim count must be at most {MAX_CLAIMS}"));
+        }
+        let mut total_claim_gas: u64 = 0;
+        for (i, claim) in self.claims.iter().enumerate() {
+            let protocol_verifier = claim.protocol_verifier();
+            let Some(resolved_key) = claim.resolved_key(self.sender) else {
+                return Err(format!(
+                    "Claim {i}: key must be empty, or a non-zero 20-byte or 32-byte value"
+                ));
+            };
+            // The key of a secp256k1 or P-256 claim is an address, so it has no
+            // bits above the low 20 bytes.
+            if matches!(
+                protocol_verifier,
+                Some(ProtocolVerifier::Secp256k1 | ProtocolVerifier::P256)
+            ) && resolved_key
+                .as_bytes()
+                .iter()
+                .take(12)
+                .any(|byte| *byte != 0)
+            {
+                return Err(format!(
+                    "Claim {i}: the key of a secp256k1 or P-256 claim must be an address"
+                ));
             }
-            match sig.msg.len() {
+            match claim.msg.len() {
                 0 => {}
                 32 => {
-                    if sig.msg.iter().all(|&b| b == 0) {
-                        return Err(format!(
-                            "Signature {i}: explicit msg must not be zero digest"
-                        ));
+                    if claim.msg.iter().all(|&b| b == 0) {
+                        return Err(format!("Claim {i}: explicit msg must not be zero digest"));
                     }
                 }
                 other => {
                     return Err(format!(
-                        "Signature {i}: msg must be empty or 32 bytes, got {other}"
+                        "Claim {i}: msg must be empty or 32 bytes, got {other}"
                     ));
                 }
             }
+            if protocol_verifier.is_some() {
+                if claim.gas_limit != 0 {
+                    return Err(format!(
+                        "Claim {i}: gas_limit must be zero for a protocol verifier"
+                    ));
+                }
+                if claim.witness_len != 0 {
+                    return Err(format!(
+                        "Claim {i}: witness_len must be zero for a protocol verifier"
+                    ));
+                }
+            } else {
+                if claim.gas_limit == 0 {
+                    return Err(format!(
+                        "Claim {i}: gas_limit must not be zero for a custom verifier"
+                    ));
+                }
+                if claim.witness_len > MAX_CLAIM_WITNESS_BYTES {
+                    return Err(format!(
+                        "Claim {i}: witness_len {} exceeds {MAX_CLAIM_WITNESS_BYTES}",
+                        claim.witness_len
+                    ));
+                }
+            }
+            total_claim_gas = total_claim_gas
+                .checked_add(claim.resolved_gas())
+                .ok_or_else(|| format!("Claim {i}: cumulative claim gas overflow"))?;
         }
         // Tracked as u128 so the running addition itself cannot overflow; the
         // bound below rejects tx-level totals that don't fit in signed i64.
@@ -3295,70 +3232,10 @@ impl FrameTransaction {
         let mut expiry_frame_count: usize = 0;
         let mut seen_assert = false;
         for (i, frame) in self.frames.iter().enumerate() {
-            // Reject reserved execution modes. EIP-7906 adds ASSERT (3) to the modes
-            // EIP-8141 accepts, and EIP-8504 adds PROOF (4).
+            // Reject reserved execution modes (4-255). EIP-7906 adds ASSERT (3) to
+            // the modes EIP-8141 accepts.
             if FrameMode::from_u8(frame.mode).is_none() {
                 return Err(format!("Frame {i}: reserved execution mode {}", frame.mode));
-            }
-            // EIP-8504 constraints on a proof frame. They apply in addition to the
-            // rules below, which also hold for proof frames.
-            if frame.is_proof() {
-                let len = frame.data.len();
-                if len == 0 || !len.is_multiple_of(DEPENDENCY_TRIPLE_BYTES) {
-                    return Err(format!(
-                        "Frame {i}: proof frame data must be a nonzero multiple of {DEPENDENCY_TRIPLE_BYTES} bytes (got {len})"
-                    ));
-                }
-                let triples = len / DEPENDENCY_TRIPLE_BYTES;
-                if triples > MAX_DEPENDENCIES_PER_FRAME {
-                    return Err(format!(
-                        "Frame {i}: proof frame declares {triples} dependencies, more than {MAX_DEPENDENCIES_PER_FRAME}"
-                    ));
-                }
-                for (j, triple) in frame.data.chunks_exact(DEPENDENCY_TRIPLE_BYTES).enumerate() {
-                    // The scheme occupies a 32-byte word: 31 zero bytes, then the
-                    // scheme byte. leanSPHINCS is the only scheme.
-                    if triple[..31].iter().any(|b| *b != 0) || triple[31] != LEANSPHINCS_SCHEME {
-                        return Err(format!(
-                            "Frame {i}: dependency {j} of the proof frame has an unknown scheme"
-                        ));
-                    }
-                }
-                if frame.target.is_some() {
-                    return Err(format!("Frame {i}: proof frame must have no target"));
-                }
-                if !frame.value.is_zero() {
-                    return Err(format!("Frame {i}: proof frame must have value == 0"));
-                }
-                if frame.flags != 0 {
-                    return Err(format!(
-                        "Frame {i}: proof frame must have flags == 0 (flags={:#04x})",
-                        frame.flags
-                    ));
-                }
-                // The frame must not belong to an atomic batch. Its own flags are
-                // zero, so only the preceding frame's batch flag needs checking.
-                let predecessor_batches = i
-                    .checked_sub(1)
-                    .and_then(|prev| self.frames.get(prev))
-                    .is_some_and(|prev| prev.is_atomic_batch());
-                if predecessor_batches {
-                    return Err(format!("Frame {i}: proof frame in an atomic batch"));
-                }
-                // `triples` is at most 256, so the product cannot overflow.
-                let expected_gas = (triples as u64).saturating_mul(LEANSPHINCS_VERIFICATION_GAS);
-                if frame.gas_limit != expected_gas {
-                    return Err(format!(
-                        "Frame {i}: proof frame must declare {expected_gas} execution gas (got {})",
-                        frame.gas_limit
-                    ));
-                }
-                if frame.state_gas_limit != 0 {
-                    return Err(format!(
-                        "Frame {i}: proof frame must have state_gas_limit == 0 (got {})",
-                        frame.state_gas_limit
-                    ));
-                }
             }
             // EIP-7906: ASSERT frames form a contiguous trailing suffix, so the diff
             // they observe is the transaction's final outcome.
@@ -3530,15 +3407,11 @@ impl FrameTransaction {
         // shape or the structural rules.
         let recent_root_index = self.recent_root_verifier_index();
         // Collect the frame indices left after the protocol verifier frames, in order.
-        // EIP-8504: proof frames are skipped like the expiry verifier frame, so one
-        // may sit anywhere among the frames that make the shape.
         let non_expiry: Vec<usize> = self
             .frames
             .iter()
             .enumerate()
-            .filter(|(idx, f)| {
-                !f.is_expiry_verifier() && !f.is_proof() && Some(*idx) != recent_root_index
-            })
+            .filter(|(idx, f)| !f.is_expiry_verifier() && Some(*idx) != recent_root_index)
             .map(|(i, _)| i)
             .collect();
 
@@ -3633,7 +3506,7 @@ impl FrameTransaction {
     /// - No frame in the prefix has the atomic-batch flag set.
     /// - An expiry verifier frame, if present, is the first frame of the transaction.
     /// - No VERIFY frame follows the validation prefix.
-    /// - Total gas budget: Σ(prefix frame gas_limits) + signature_verification_cost() ≤ `max_verify_gas`.
+    /// - Total gas budget: Σ(prefix frame gas_limits) + claim_verification_cost() ≤ `max_verify_gas`.
     ///
     /// `max_verify_gas` is the node's `MAX_VERIFY_GAS` budget; the spec value is
     /// [`FRAME_TX_MAX_VERIFY_GAS`], but it is mempool policy and therefore
@@ -3734,13 +3607,10 @@ impl FrameTransaction {
         // only as the first frame of the frame list. Expiry frames are otherwise
         // transparent to prefix matching, so a misplaced one would silently pin
         // the transaction's validity to a deadline outside the recognized shapes.
-        // EIP-8504: proof frames are skipped by this rule too, so "first" means
-        // first among the other frames.
         if let Some((frame_index, _)) = self
             .frames
             .iter()
             .enumerate()
-            .filter(|(_, frame)| !frame.is_proof())
             .skip(1)
             .find(|(_, frame)| frame.is_expiry_verifier())
         {
@@ -3773,18 +3643,17 @@ impl FrameTransaction {
             return Err(FrameValidationError::VerifyFrameAfterPrefix { frame_index });
         }
 
-        // Gas budget: prefix frame gas limits + signature cost ≤ MAX_VERIFY_GAS.
+        // Gas budget: prefix frame gas limits + claim verification cost ≤
+        // MAX_VERIFY_GAS. Every claim is verified on admission, so the cost of all
+        // of them counts, whichever frames go on to test for them.
         // EIP-8272 counts the recent root verifier frame's `limits.execution` too.
-        // EIP-8504: a proof frame is never among `frame_indices`, so its
-        // `limits.execution` stays out of this sum. The witnesses it stands for are
-        // bounded by `MAX_SIGS_PER_TX`, not by this budget.
         let prefix_gas: u64 = prefix
             .frame_indices
             .iter()
             .chain(prefix.recent_root_index.iter())
             .map(|&i| self.frames[i].gas_limit)
             .fold(0u64, |acc, g| acc.saturating_add(g));
-        let total_verify_gas = prefix_gas.saturating_add(self.signature_verification_cost());
+        let total_verify_gas = prefix_gas.saturating_add(self.claim_verification_cost());
         if total_verify_gas > max_verify_gas {
             return Err(FrameValidationError::VerifyGasBudgetExceeded {
                 actual: total_verify_gas,
@@ -3889,8 +3758,8 @@ impl RLPEncode for FrameTransaction {
             .encode_field(&self.nonce_keys)
             .encode_field(&self.nonce_seq)
             .encode_field(&self.sender)
+            .encode_field(&self.claims)
             .encode_field(&self.frames)
-            .encode_field(&self.signatures)
             .encode_field(&(self.max_fee, self.max_priority_fee_per_gas))
             .encode_field(&self.blob_versioned_hashes)
             .finish();
@@ -3908,8 +3777,8 @@ impl RLPDecode for FrameTransaction {
         // decoding like any other frame-transaction field too wide for its type.
         let (nonce_seq, decoder) = decoder.decode_field("nonce_seq")?;
         let (sender, decoder) = decoder.decode_field("sender")?;
+        let (claims, decoder) = decoder.decode_field("claims")?;
         let (frames, decoder) = decoder.decode_field("frames")?;
-        let (signatures, decoder) = decoder.decode_field("signatures")?;
         // Decode the nested `fees` list, `[max_fee, max_priority_fee_per_gas]`,
         // field by field rather than as one tuple. A fee wider than 256 bits is
         // rejected here, during decoding, and the field name is the only thing that
@@ -3927,8 +3796,8 @@ impl RLPDecode for FrameTransaction {
             nonce_keys,
             nonce_seq,
             sender,
+            claims,
             frames,
-            signatures,
             max_fee,
             max_priority_fee_per_gas,
             blob_versioned_hashes,
@@ -4067,8 +3936,7 @@ mod canonic_encoding {
                 P2PTransaction::EIP4844TransactionWithBlobs(_) => TxType::EIP4844,
                 P2PTransaction::EIP7702Transaction(_) => TxType::EIP7702,
                 P2PTransaction::FeeTokenTransaction(_) => TxType::FeeToken,
-                P2PTransaction::FrameTransaction(_)
-                | P2PTransaction::FrameTransactionWithBlobs(_) => TxType::Frame,
+                P2PTransaction::FrameTransaction(_) => TxType::Frame,
             }
         }
 
@@ -4086,7 +3954,6 @@ mod canonic_encoding {
                 P2PTransaction::EIP7702Transaction(t) => t.encode(buf),
                 P2PTransaction::FeeTokenTransaction(t) => t.encode(buf),
                 P2PTransaction::FrameTransaction(t) => t.encode(buf),
-                P2PTransaction::FrameTransactionWithBlobs(t) => t.encode(buf),
             };
         }
 
@@ -4113,7 +3980,6 @@ mod canonic_encoding {
                 P2PTransaction::EIP7702Transaction(t) => t.length(),
                 P2PTransaction::FeeTokenTransaction(t) => t.length(),
                 P2PTransaction::FrameTransaction(t) => t.length(),
-                P2PTransaction::FrameTransactionWithBlobs(t) => t.length(),
             };
             prefix_len + inner_len
         }
@@ -4138,10 +4004,9 @@ mod canonic_encoding {
                 P2PTransaction::FeeTokenTransaction(t) => {
                     Transaction::FeeTokenTransaction(t.clone()).compute_hash(&NativeCrypto)
                 }
+                // The hash covers the transaction body alone, so it is the same
+                // whatever witnesses travel with it.
                 P2PTransaction::FrameTransaction(t) => {
-                    Transaction::FrameTransaction(t.clone()).compute_hash(&NativeCrypto)
-                }
-                P2PTransaction::FrameTransactionWithBlobs(t) => {
                     Transaction::FrameTransaction(t.tx.clone()).compute_hash(&NativeCrypto)
                 }
             }
@@ -4296,26 +4161,29 @@ mod serde_impl {
         pub data: Bytes,
     }
 
-    /// JSON shape of an EIP-8141 outer signature.
+    /// JSON shape of an EIP-8141 claim.
     #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
     #[serde(rename_all = "camelCase")]
-    pub struct SignatureEntry {
-        #[serde(with = "crate::serde_utils::u64::hex_str")]
-        pub scheme: u64,
-        pub signer: Option<Address>,
+    pub struct ClaimEntry {
+        pub verifier: Address,
+        #[serde(with = "crate::serde_utils::bytes")]
+        pub key: Bytes,
         #[serde(with = "crate::serde_utils::bytes")]
         pub msg: Bytes,
-        #[serde(with = "crate::serde_utils::bytes")]
-        pub signature: Bytes,
+        #[serde(with = "crate::serde_utils::u64::hex_str")]
+        pub gas_limit: u64,
+        #[serde(with = "crate::serde_utils::u64::hex_str")]
+        pub witness_len: u64,
     }
 
-    impl From<&FrameSignature> for SignatureEntry {
-        fn from(value: &FrameSignature) -> SignatureEntry {
-            SignatureEntry {
-                scheme: value.scheme as u64,
-                signer: value.signer,
+    impl From<&Claim> for ClaimEntry {
+        fn from(value: &Claim) -> ClaimEntry {
+            ClaimEntry {
+                verifier: value.verifier,
+                key: value.key.clone(),
                 msg: value.msg.clone(),
-                signature: value.signature.clone(),
+                gas_limit: value.gas_limit,
+                witness_len: value.witness_len,
             }
         }
     }
@@ -4635,16 +4503,12 @@ mod serde_impl {
             // The sender is not serialized here: the RPC transaction object
             // carries it as `from`, as for every other transaction type.
             s.serialize_field(
-                "frames",
-                &self.frames.iter().map(FrameEntry::from).collect::<Vec<_>>(),
+                "claims",
+                &self.claims.iter().map(ClaimEntry::from).collect::<Vec<_>>(),
             )?;
             s.serialize_field(
-                "signatures",
-                &self
-                    .signatures
-                    .iter()
-                    .map(SignatureEntry::from)
-                    .collect::<Vec<_>>(),
+                "frames",
+                &self.frames.iter().map(FrameEntry::from).collect::<Vec<_>>(),
             )?;
             // EIP-8141 `fees`: one `max_fee` budget for all execution, state and
             // blob gas, and the priority fee per gas.
@@ -6424,11 +6288,9 @@ mod tests {
                     data: Bytes::from_static(b"call_data"),
                 },
             ],
-            signatures: vec![FrameSignature {
-                scheme: FRAME_SIG_SCHEME_SECP256K1,
-                signer: Some(Address::from_low_u64_be(0xABCD)),
-                msg: Bytes::new(),
-                signature: Bytes::from(vec![0u8; 65]),
+            claims: vec![Claim {
+                verifier: SECP256K1_VERIFIER,
+                ..Default::default()
             }],
             // 0.01 ETH: a budget of 30 gwei over ~330k gas.
             max_fee: U256::from(10_000_000_000_000_000u64),
@@ -6675,20 +6537,25 @@ mod tests {
     }
 
     #[test]
-    fn frame_transaction_serializes_signatures_as_array() {
-        // RPC must expose the full signature objects, not just a count.
+    fn frame_transaction_serializes_claims_as_array() {
+        // RPC must expose the full claim objects, not just a count.
         let tx = make_test_frame_tx();
         let json = serde_json::to_value(&tx).unwrap();
-        let sigs = json
-            .get("signatures")
-            .expect("signatures field present")
+        let claims = json
+            .get("claims")
+            .expect("claims field present")
             .as_array()
-            .expect("signatures serialized as an array");
-        assert_eq!(sigs.len(), tx.signatures.len());
-        assert_eq!(sigs[0].get("scheme").unwrap(), "0x1");
-        assert!(sigs[0].get("signer").is_some());
-        assert!(sigs[0].get("signature").is_some());
-        assert!(sigs[0].get("msg").is_some());
+            .expect("claims serialized as an array");
+        assert_eq!(claims.len(), tx.claims.len());
+        assert_eq!(
+            claims[0].get("verifier").unwrap(),
+            "0x00000000000000000000000000000000000000ab"
+        );
+        assert_eq!(claims[0].get("key").unwrap(), "0x");
+        assert_eq!(claims[0].get("msg").unwrap(), "0x");
+        assert_eq!(claims[0].get("gasLimit").unwrap(), "0x0");
+        assert_eq!(claims[0].get("witnessLen").unwrap(), "0x0");
+        assert!(json.get("signatures").is_none());
     }
 
     fn make_frame_tx_with_gas_limits(limits: Vec<u64>) -> FrameTransaction {
@@ -6710,7 +6577,7 @@ mod tests {
             nonce_seq: 0,
             sender: Address::from_low_u64_be(0xABCD),
             frames,
-            signatures: vec![],
+            claims: vec![],
             max_fee: U256::from(10_000_000_000_000_000u64),
             max_priority_fee_per_gas: U256::from(1_000_000_000u64),
             blob_versioned_hashes: vec![],
@@ -6794,7 +6661,7 @@ mod tests {
             nonce_seq: 0,
             sender: Address::from_low_u64_be(0xABCD),
             frames,
-            signatures: vec![],
+            claims: vec![],
             max_fee: U256::from(10_000_000_000_000_000u64),
             max_priority_fee_per_gas: U256::from(1_000_000_000u64),
             blob_versioned_hashes: vec![],
@@ -6904,7 +6771,7 @@ mod tests {
                 value: U256::from(1u64),
                 data: Bytes::new(),
             }],
-            signatures: vec![],
+            claims: vec![],
             max_fee: U256::from(10_000_000_000_000_000u64),
             max_priority_fee_per_gas: U256::from(1_000_000_000u64),
             blob_versioned_hashes: vec![],
@@ -7094,29 +6961,60 @@ mod tests {
     }
 
     #[test]
-    fn signature_rlp_roundtrip() {
-        let sig = FrameSignature {
-            scheme: FRAME_SIG_SCHEME_P256,
-            signer: Some(Address::from_low_u64_be(0x1234)),
+    fn claim_rlp_roundtrip() {
+        let claim = Claim {
+            verifier: Address::from_low_u64_be(0x1234),
+            key: Bytes::from(vec![5u8; 20]),
             msg: Bytes::from(vec![7u8; 32]),
-            signature: Bytes::from(vec![9u8; 128]),
+            gas_limit: 50_000,
+            witness_len: 128,
         };
         let mut buf = Vec::new();
-        sig.encode(&mut buf);
-        let (decoded, rest) = FrameSignature::decode_unfinished(&buf).unwrap();
+        claim.encode(&mut buf);
+        let (decoded, rest) = Claim::decode_unfinished(&buf).unwrap();
         assert!(rest.is_empty());
-        assert_eq!(decoded, sig);
+        assert_eq!(decoded, claim);
+
+        // A claim of four or six items is not a claim, and neither is one whose
+        // verifier is not 20 bytes long.
+        let mut short = Vec::new();
+        Encoder::new(&mut short)
+            .encode_field(&claim.verifier)
+            .encode_field(&claim.key)
+            .encode_field(&claim.msg)
+            .encode_field(&claim.gas_limit)
+            .finish();
+        assert!(Claim::decode(&short).is_err());
+        let mut long = Vec::new();
+        Encoder::new(&mut long)
+            .encode_field(&claim.verifier)
+            .encode_field(&claim.key)
+            .encode_field(&claim.msg)
+            .encode_field(&claim.gas_limit)
+            .encode_field(&claim.witness_len)
+            .encode_field(&0u8)
+            .finish();
+        assert!(Claim::decode(&long).is_err());
+        let mut wide_verifier = Vec::new();
+        Encoder::new(&mut wide_verifier)
+            .encode_field(&H256::repeat_byte(1))
+            .encode_field(&claim.key)
+            .encode_field(&claim.msg)
+            .encode_field(&claim.gas_limit)
+            .encode_field(&claim.witness_len)
+            .finish();
+        assert!(Claim::decode(&wide_verifier).is_err());
     }
 
     #[test]
-    fn frame_tx_with_signatures_rlp_roundtrip() {
+    fn frame_tx_with_claims_rlp_roundtrip() {
         let tx = make_test_frame_tx();
-        assert!(!tx.signatures.is_empty());
+        assert!(!tx.claims.is_empty());
         let mut buf = Vec::new();
         tx.encode(&mut buf);
         let (decoded, rest) = FrameTransaction::decode_unfinished(&buf).unwrap();
         assert!(rest.is_empty());
-        assert_eq!(decoded.signatures, tx.signatures);
+        assert_eq!(decoded.claims, tx.claims);
         assert_eq!(decoded.frames, tx.frames);
         assert_eq!(decoded.nonce_keys, tx.nonce_keys);
         assert_eq!(decoded.nonce_seq, tx.nonce_seq);
@@ -7125,141 +7023,351 @@ mod tests {
     #[test]
     fn p2p_frame_transaction_rlp_roundtrip() {
         // A frame tx (EIP-8141) must survive a full P2PTransaction RLP
-        // encode/decode round-trip so it can be served over the wire on request.
+        // encode/decode round-trip in its pooled representation, with its
+        // witnesses, so it can be served over the wire on request.
         let ft = make_test_frame_tx();
-        assert!(!ft.signatures.is_empty());
+        assert!(!ft.claims.is_empty());
         assert!(!ft.frames.is_empty());
-        let original = P2PTransaction::FrameTransaction(ft);
+        let hash = Transaction::FrameTransaction(ft.clone()).compute_hash(&NativeCrypto);
+        let original = P2PTransaction::FrameTransaction(PooledFrameTransaction {
+            tx: ft,
+            witnesses: vec![Bytes::from(vec![7u8; SECP256K1_WITNESS_SIZE])],
+            blobs_bundle: None,
+        });
 
         let encoded = original.encode_to_vec();
         let (decoded, rest) = P2PTransaction::decode_unfinished(&encoded).unwrap();
         assert!(rest.is_empty());
         assert_eq!(decoded, original);
         assert_eq!(decoded.tx_type(), TxType::Frame);
+        // The hash identifies the transaction body, whatever witnesses travel
+        // with it.
+        assert_eq!(decoded.compute_hash(), hash);
 
-        // The decoded variant converts cleanly into a regular Transaction
-        // (frame txs carry no blobs bundle).
-        let as_tx: Transaction = decoded.try_into().unwrap();
-        assert!(matches!(as_tx, Transaction::FrameTransaction(_)));
+        // It does not convert into a bare transaction: that would drop its
+        // witnesses.
+        assert!(TryInto::<Transaction>::try_into(decoded).is_err());
     }
 
     #[test]
-    fn static_validation_rejects_unknown_scheme() {
+    fn static_validation_accepts_every_form_of_claim() {
         let mut tx = make_test_frame_tx();
-        tx.signatures[0].scheme = 3;
-        assert!(
+        tx.claims = vec![
+            // Protocol verifiers, with each accepted form of `key` and `msg`.
+            Claim {
+                verifier: SECP256K1_VERIFIER,
+                ..Default::default()
+            },
+            Claim {
+                verifier: P256_VERIFIER,
+                key: Bytes::from(vec![5u8; 20]),
+                msg: Bytes::from(vec![9u8; 32]),
+                ..Default::default()
+            },
+            Claim {
+                verifier: LEANSPHINCS_VERIFIER,
+                key: Bytes::from(vec![6u8; 32]),
+                ..Default::default()
+            },
+            // A custom verifier declares its gas and its witness length.
+            Claim {
+                verifier: Address::from_low_u64_be(0xC0DE),
+                key: Bytes::from(vec![6u8; 32]),
+                msg: Bytes::from(vec![9u8; 32]),
+                gas_limit: 1,
+                witness_len: MAX_CLAIM_WITNESS_BYTES,
+            },
+        ];
+        tx.validate_static_constraints()
+            .expect("every claim is well formed");
+        assert_eq!(tx.claim_verification_cost(), 2800 + 6700 + 13200 + 1);
+    }
+
+    /// The error static validation reports for a transaction whose only claim is
+    /// `claim`.
+    fn claim_error(claim: Claim) -> String {
+        let mut tx = make_test_frame_tx();
+        tx.claims = vec![claim];
+        tx.validate_static_constraints()
+            .expect_err("the claim is malformed")
+    }
+
+    #[test]
+    fn static_validation_rejects_a_malformed_key() {
+        for key in [
+            vec![1u8; 19],
+            vec![1u8; 21],
+            vec![1u8; 31],
+            vec![1u8; 33],
+            vec![0u8; 20],
+            vec![0u8; 32],
+        ] {
+            let error = claim_error(Claim {
+                verifier: LEANSPHINCS_VERIFIER,
+                key: Bytes::from(key),
+                ..Default::default()
+            });
+            assert!(error.contains("key must be empty"), "{error}");
+        }
+        // The key of a secp256k1 or P-256 claim is an address: a 32-byte key with
+        // any of its upper 12 bytes set is rejected, and one without is accepted.
+        let mut wide = vec![0u8; 32];
+        wide[11] = 1;
+        wide[31] = 1;
+        for verifier in [SECP256K1_VERIFIER, P256_VERIFIER] {
+            let error = claim_error(Claim {
+                verifier,
+                key: Bytes::from(wide.clone()),
+                ..Default::default()
+            });
+            assert!(error.contains("must be an address"), "{error}");
+            let mut tx = make_test_frame_tx();
+            let mut padded = vec![0u8; 32];
+            padded[31] = 1;
+            tx.claims = vec![Claim {
+                verifier,
+                key: Bytes::from(padded),
+                ..Default::default()
+            }];
             tx.validate_static_constraints()
-                .unwrap_err()
-                .contains("unsupported scheme"),
-        );
-    }
-
-    #[test]
-    fn static_validation_accepts_arbitrary_with_empty_signer() {
+                .expect("an address in 32 bytes");
+        }
+        // leanSPHINCS keys and custom verifiers' keys use all 32 bytes.
         let mut tx = make_test_frame_tx();
-        // ARBITRARY (scheme 0) requires an empty signer and costs 100 verify gas.
-        tx.signatures[0].scheme = FRAME_SIG_SCHEME_ARBITRARY;
-        tx.signatures[0].signer = None;
-        assert!(tx.validate_static_constraints().is_ok());
-        assert_eq!(tx.signature_verification_cost(), 100);
-    }
-
-    #[test]
-    fn static_validation_rejects_arbitrary_with_signer() {
-        let mut tx = make_test_frame_tx();
-        tx.signatures[0].scheme = FRAME_SIG_SCHEME_ARBITRARY;
-        tx.signatures[0].signer = Some(Address::from_low_u64_be(0xABCD));
-        assert!(
-            tx.validate_static_constraints()
-                .unwrap_err()
-                .contains("ARBITRARY signatures must not name a signer"),
-        );
+        tx.claims = vec![Claim {
+            verifier: LEANSPHINCS_VERIFIER,
+            key: Bytes::from(wide),
+            ..Default::default()
+        }];
+        tx.validate_static_constraints()
+            .expect("a 32-byte public key");
     }
 
     #[test]
     fn static_validation_rejects_bad_msg_length() {
-        let mut tx = make_test_frame_tx();
-        tx.signatures[0].msg = Bytes::from(vec![1u8; 16]);
-        assert!(
-            tx.validate_static_constraints()
-                .unwrap_err()
-                .contains("32 bytes"),
-        );
+        let error = claim_error(Claim {
+            verifier: SECP256K1_VERIFIER,
+            msg: Bytes::from(vec![1u8; 16]),
+            ..Default::default()
+        });
+        assert!(error.contains("32 bytes"), "{error}");
     }
 
     #[test]
     fn static_validation_rejects_zero_explicit_msg() {
-        let mut tx = make_test_frame_tx();
-        tx.signatures[0].msg = Bytes::from(vec![0u8; 32]);
-        assert!(
-            tx.validate_static_constraints()
-                .unwrap_err()
-                .contains("zero digest"),
-        );
+        let error = claim_error(Claim {
+            verifier: SECP256K1_VERIFIER,
+            msg: Bytes::from(vec![0u8; 32]),
+            ..Default::default()
+        });
+        assert!(error.contains("zero digest"), "{error}");
     }
 
     #[test]
-    fn sig_hash_elides_empty_msg_signature_bytes() {
-        let mut a = make_test_frame_tx();
-        let mut b = make_test_frame_tx();
-        // empty-msg signature: changing raw bytes must NOT change the hash.
-        assert!(a.signatures[0].msg.is_empty());
-        a.signatures[0].signature = Bytes::from(vec![1u8; 65]);
-        b.signatures[0].signature = Bytes::from(vec![2u8; 65]);
-        assert_eq!(a.compute_sig_hash(), b.compute_sig_hash());
+    fn static_validation_fixes_the_gas_and_witness_length_of_protocol_claims() {
+        for verifier in [SECP256K1_VERIFIER, P256_VERIFIER, LEANSPHINCS_VERIFIER] {
+            let error = claim_error(Claim {
+                verifier,
+                gas_limit: 1,
+                ..Default::default()
+            });
+            assert!(error.contains("gas_limit must be zero"), "{error}");
+            let error = claim_error(Claim {
+                verifier,
+                witness_len: 65,
+                ..Default::default()
+            });
+            assert!(error.contains("witness_len must be zero"), "{error}");
+        }
+    }
+
+    #[test]
+    fn static_validation_bounds_the_gas_and_witness_length_of_custom_claims() {
+        let custom = Claim {
+            verifier: Address::from_low_u64_be(0xC0DE),
+            gas_limit: 1,
+            ..Default::default()
+        };
+        let error = claim_error(Claim {
+            gas_limit: 0,
+            ..custom.clone()
+        });
+        assert!(error.contains("gas_limit must not be zero"), "{error}");
+        let error = claim_error(Claim {
+            witness_len: MAX_CLAIM_WITNESS_BYTES + 1,
+            ..custom.clone()
+        });
+        assert!(error.contains("witness_len"), "{error}");
+
+        // The claims' gas adds up to less than 2**64.
+        let mut tx = make_test_frame_tx();
+        tx.claims = vec![
+            Claim {
+                gas_limit: u64::MAX,
+                ..custom.clone()
+            },
+            Claim {
+                gas_limit: 1,
+                ..custom
+            },
+        ];
+        let error = tx.validate_static_constraints().expect_err("overflow");
+        assert!(error.contains("cumulative claim gas overflow"), "{error}");
+    }
+
+    #[test]
+    fn static_validation_bounds_the_number_of_claims() {
+        let mut tx = make_test_frame_tx();
+        tx.claims = vec![tx.claims[0].clone(); MAX_CLAIMS];
+        tx.validate_static_constraints().expect("MAX_CLAIMS claims");
+        tx.claims.push(tx.claims[0].clone());
+        let error = tx.validate_static_constraints().expect_err("too many");
+        assert!(error.contains("Claim count"), "{error}");
+    }
+
+    #[test]
+    fn reserved_frame_modes_are_rejected() {
+        // Mode 4 is not a frame mode of this proposal: it is reserved like every
+        // mode above EIP-7906's ASSERT.
+        for mode in [4u8, 5, 255] {
+            let mut tx = make_test_frame_tx();
+            tx.frames[1].mode = mode;
+            let error = tx.validate_static_constraints().expect_err("reserved");
+            assert!(error.contains("reserved execution mode"), "{error}");
+        }
+    }
+
+    #[test]
+    fn the_signature_hash_is_domain_separated_from_the_transaction_hash() {
+        let tx = make_test_frame_tx();
+        let mut body = Vec::new();
+        tx.encode(&mut body);
+
+        // tx_hash = keccak(0x06 || rlp(tx_body)).
+        let mut tx_preimage = vec![0x06];
+        tx_preimage.extend_from_slice(&body);
+        let tx_hash = Transaction::FrameTransaction(tx.clone()).compute_hash(&NativeCrypto);
+        assert_eq!(tx_hash, keccak(&tx_preimage));
+
+        // sig_hash = keccak(0x06 || 0x00 || rlp(tx_body)).
+        let mut sig_preimage = vec![0x06, 0x00];
+        sig_preimage.extend_from_slice(&body);
+        assert_eq!(tx.compute_sig_hash(), keccak(&sig_preimage));
+
+        assert_ne!(tx.compute_sig_hash(), tx_hash);
     }
 
     #[test]
     fn sig_hash_covers_frame_data_now() {
         let mut a = make_test_frame_tx();
         let mut b = make_test_frame_tx();
-        // frame 0 is a VERIFY frame; its data is now COVERED (not elided).
+        // frame 0 is a VERIFY frame; its data is COVERED (not elided).
         a.frames[0].data = Bytes::from_static(b"aaaa");
         b.frames[0].data = Bytes::from_static(b"bbbb");
         assert_ne!(a.compute_sig_hash(), b.compute_sig_hash());
     }
 
     #[test]
-    fn sig_hash_covers_explicit_msg_signature_bytes() {
-        let mut a = make_test_frame_tx();
-        let mut b = make_test_frame_tx();
-        a.signatures[0].msg = Bytes::from(vec![9u8; 32]);
-        b.signatures[0].msg = Bytes::from(vec![9u8; 32]);
-        a.signatures[0].signature = Bytes::from(vec![1u8; 65]);
-        b.signatures[0].signature = Bytes::from(vec![2u8; 65]);
-        // explicit-msg signatures keep their bytes -> different hash.
-        assert_ne!(a.compute_sig_hash(), b.compute_sig_hash());
+    fn both_hashes_cover_every_field_of_every_claim() {
+        let base = make_test_frame_tx();
+        let hashes = |tx: &FrameTransaction| {
+            (
+                tx.compute_sig_hash(),
+                Transaction::FrameTransaction(tx.clone()).compute_hash(&NativeCrypto),
+            )
+        };
+        let (base_sig_hash, base_tx_hash) = hashes(&base);
+        let custom = Claim {
+            verifier: Address::from_low_u64_be(0xC0DE),
+            key: Bytes::from(vec![6u8; 32]),
+            msg: Bytes::from(vec![9u8; 32]),
+            gas_limit: 10,
+            witness_len: 20,
+        };
+        let variants = [
+            Claim {
+                verifier: Address::from_low_u64_be(0xC0DF),
+                ..custom.clone()
+            },
+            Claim {
+                key: Bytes::from(vec![7u8; 32]),
+                ..custom.clone()
+            },
+            Claim {
+                msg: Bytes::from(vec![8u8; 32]),
+                ..custom.clone()
+            },
+            Claim {
+                gas_limit: 11,
+                ..custom.clone()
+            },
+            Claim {
+                witness_len: 21,
+                ..custom.clone()
+            },
+        ];
+        let mut with_custom = base.clone();
+        with_custom.claims.push(custom);
+        let (custom_sig_hash, custom_tx_hash) = hashes(&with_custom);
+        assert_ne!(custom_sig_hash, base_sig_hash);
+        assert_ne!(custom_tx_hash, base_tx_hash);
+        for variant in variants {
+            let mut tx = base.clone();
+            tx.claims.push(variant);
+            let (sig_hash, tx_hash) = hashes(&tx);
+            assert_ne!(sig_hash, custom_sig_hash);
+            assert_ne!(tx_hash, custom_tx_hash);
+        }
     }
 
     #[test]
-    fn max_gas_includes_signature_costs() {
+    fn max_gas_includes_claim_costs() {
         let mut tx = make_test_frame_tx();
         let base = tx.max_gas();
-        // Add a P256 signature; cost must rise by at least 6700 + its calldata.
-        tx.signatures.push(FrameSignature {
-            scheme: FRAME_SIG_SCHEME_P256,
-            signer: Some(Address::from_low_u64_be(1)),
-            msg: Bytes::new(),
-            signature: Bytes::from(vec![0u8; 128]),
+        // Add a P-256 claim: its verification, its witness at `WITNESS_BYTE_GAS`
+        // per byte and its 20-byte verifier as calldata.
+        tx.claims.push(Claim {
+            verifier: P256_VERIFIER,
+            key: Bytes::from(Address::from_low_u64_be(1).as_bytes().to_vec()),
+            ..Default::default()
         });
-        assert!(tx.max_gas() >= base + 6700);
-        assert_eq!(tx.signature_verification_cost(), 2800 + 6700);
+        assert_eq!(tx.claim_verification_cost(), 2800 + 6700);
+        assert_eq!(tx.protocol_witness_cost(), WITNESS_BYTE_GAS * (65 + 128));
+        // verifier: 19 zero bytes and one non-zero; key: the same.
+        let metadata = 2 * (19 * 4 + 16);
+        assert_eq!(
+            tx.max_gas(),
+            base + 6700 + WITNESS_BYTE_GAS * 128 + metadata
+        );
     }
 
     #[test]
-    fn golden_frame_tx_rlp_and_sig_hash() {
-        // Regression lock for the EIP-8141 wire format: the `limits = [execution,
-        // state]` frame tuple, the nested `fees` list, and the signatures list.
-        // The layout itself is pinned against reference-produced bytes by
-        // `reference_frame_tx_reencodes_byte_identically`; this test locks the
-        // exact bytes and signature hash for a transaction that exercises a
-        // non-zero state budget, and must only change with a deliberate,
-        // reviewed format change.
+    fn golden_frame_tx_rlp_and_hashes() {
+        // Regression lock for the wire format of the declarative-claims
+        // proposal for EIP-8141: `claims` ahead of `frames`, each claim a
+        // five-item list, the `limits = [execution, state]` frame tuple and the
+        // nested `fees` list, with EIP-8250's `nonce_keys` and `nonce_seq` in
+        // place of `nonce`. The expected bytes and hashes were computed with an
+        // independent RLP encoder and Keccak-256 written from their
+        // specifications, and must only change with a deliberate format change.
         let tx = FrameTransaction {
             chain_id: 1,
             nonce_keys: vec![U256::zero()],
             nonce_seq: 7,
             sender: Address::from_low_u64_be(0xABCD),
+            claims: vec![
+                Claim {
+                    verifier: SECP256K1_VERIFIER,
+                    ..Default::default()
+                },
+                Claim {
+                    verifier: Address::from_low_u64_be(0xC0DE),
+                    key: Bytes::from(vec![0x22u8; 32]),
+                    msg: Bytes::from(vec![0x33u8; 32]),
+                    gas_limit: 50_000,
+                    witness_len: 100,
+                },
+            ],
             frames: vec![
                 Frame {
                     mode: 1,
@@ -7280,12 +7388,6 @@ mod tests {
                     data: Bytes::new(),
                 },
             ],
-            signatures: vec![FrameSignature {
-                scheme: FRAME_SIG_SCHEME_SECP256K1,
-                signer: Some(Address::from_low_u64_be(0xABCD)),
-                msg: Bytes::new(),
-                signature: Bytes::from(vec![0x01u8; 65]),
-            }],
             max_fee: U256::from(0x6fc23ac00u64),
             max_priority_fee_per_gas: U256::from(0x3b9aca00u64),
             blob_versioned_hashes: vec![],
@@ -7293,45 +7395,50 @@ mod tests {
             cached_canonical: OnceCell::new(),
         };
 
+        const GOLDEN_RLP: &str = "f8cf01c1800794000000000000000000000000000000000000abcdf877d99400000000000000000000000000000000000000ab80808080f85b94000000000000000000000000000000000000c0dea02222222222222222222222222222222222222222222222222222222222222222a0333333333333333333333333333333333333333333333333333333333333333382c35064efcf010380c7825208831e848080821122de0280940000000000000000000000000000000000001234c4829c40808080cb8506fc23ac00843b9aca00c0";
         let mut buf = Vec::new();
         tx.encode(&mut buf);
-        let rlp_hex = hex::encode(&buf);
-        // GOLDEN_RLP: EIP-8250 layout, `nonce_keys = [0]` (`c180`) then `nonce_seq`,
-        // and `fees = [max_fee, max_priority_fee_per_gas]`. Computed with the
-        // execution-specs Bogota frame transaction.
-        assert_eq!(
-            rlp_hex,
-            "f8b401c1800794000000000000000000000000000000000000abcdefcf010380c7825208831e848080821122de0280940000000000000000000000000000000000001234c4829c40808080f85cf85a0194000000000000000000000000000000000000abcd80b8410101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101cb8506fc23ac00843b9aca00c0"
-        );
+        assert_eq!(hex::encode(&buf), GOLDEN_RLP);
 
         // Round-trips losslessly.
         let (decoded, rest) = FrameTransaction::decode_unfinished(&buf).unwrap();
         assert!(rest.is_empty());
         assert_eq!(decoded, tx);
 
-        let sig_hash = tx.compute_sig_hash();
-        // GOLDEN_SIG_HASH: computed with the execution-specs Bogota frame
-        // transaction, which replaces the empty-msg signature by its length.
         assert_eq!(
-            format!("{:#x}", sig_hash),
-            "0x333553372a297d192dfe71c852fd03b83823647cd4f7c813f3bc21c252edc7ec",
+            format!(
+                "{:#x}",
+                Transaction::FrameTransaction(tx.clone()).compute_hash(&NativeCrypto)
+            ),
+            "0x35e8f477d9a81bcc1f76b4448d9b4785de07a92c5795c4e5af5afd10a7b7b003",
+        );
+        assert_eq!(
+            format!("{:#x}", tx.compute_sig_hash()),
+            "0xa7d942fb1bec3f3382d28582ddc29bf1877f768105e9ce54ab623e7c6f7ec435",
         );
 
-        // Elision invariant: changing empty-msg signature bytes must NOT change sig_hash.
-        let mut tx2 = tx.clone();
-        tx2.signatures[0].signature = Bytes::from(vec![0x02u8; 65]);
+        // The pooled representation of the same transaction, with a witness for
+        // each claim and no blob sidecar, and the claim witnesses of a block that
+        // carries those two witnesses.
+        let witnesses = vec![
+            Bytes::from(vec![0x01u8; 65]),
+            Bytes::from(vec![0x02u8; 100]),
+        ];
+        let witnesses_rlp = format!("f8a9b841{}b864{}", "01".repeat(65), "02".repeat(100));
+        let pooled = P2PTransaction::FrameTransaction(PooledFrameTransaction {
+            tx,
+            witnesses: witnesses.clone(),
+            blobs_bundle: None,
+        });
         assert_eq!(
-            tx.compute_sig_hash(),
-            tx2.compute_sig_hash(),
-            "sig_hash must be independent of empty-msg signature bytes",
+            hex::encode(pooled.encode_canonical_to_vec()),
+            format!("06f9017e{GOLDEN_RLP}80{witnesses_rlp}c0")
         );
-
-        // ...but it commits to their length, which fixes what the payer is charged.
-        let mut tx3 = tx.clone();
-        tx3.signatures[0].signature = Bytes::from(vec![0x01u8; 66]);
+        let claim_witnesses = encode_claim_witnesses(&witnesses);
+        assert_eq!(hex::encode(&claim_witnesses), format!("00{witnesses_rlp}"));
         assert_eq!(
-            format!("{:#x}", tx3.compute_sig_hash()),
-            "0x10ec6d45726bafe828f1d303cd8b6f2ff1bcb5a133ca00bfa67de4b018c925c9",
+            format!("{:#x}", keccak(&claim_witnesses)),
+            "0x61c1c477ec626cb1b673eb94bd38e73d245556044df47a9f13cb31eb12c3265c",
         );
     }
 
@@ -7370,450 +7477,609 @@ mod tests {
         );
     }
 
-    // ── Proof frames (EIP-8504) ──
+    // ── Claims and their dependencies (EIP-8141) ──
 
-    /// A proof frame that declares the given `(data_hash, public key)` pairs under
-    /// the leanSPHINCS scheme, with the gas the EIP requires.
-    fn proof_frame(declarations: &[(H256, H256)]) -> Frame {
-        let mut data = Vec::new();
-        for (data_hash, public_key) in declarations {
-            data.extend_from_slice(&[0u8; 31]);
-            data.push(LEANSPHINCS_SCHEME);
-            data.extend_from_slice(data_hash.as_bytes());
-            data.extend_from_slice(public_key.as_bytes());
-        }
-        Frame {
-            mode: PROOF_FRAME_MODE,
-            flags: 0,
-            target: None,
-            gas_limit: declarations.len() as u64 * LEANSPHINCS_VERIFICATION_GAS,
-            state_gas_limit: 0,
-            value: U256::zero(),
-            data: Bytes::from(data),
-        }
-    }
-
-    /// The test transaction with `frame` inserted between its VERIFY and SENDER
-    /// frames.
-    fn frame_tx_with_proof_frame(frame: Frame) -> FrameTransaction {
-        let mut tx = make_test_frame_tx();
-        tx.frames.insert(1, frame);
-        tx
-    }
-
-    #[test]
-    fn proof_frame_is_an_accepted_mode_and_the_next_one_is_reserved() {
-        let key = H256::repeat_byte(0xAA);
-        let mut tx = frame_tx_with_proof_frame(proof_frame(&[(H256::zero(), key)]));
-        tx.validate_static_constraints()
-            .expect("a well-formed proof frame is valid");
-        tx.frames[1].mode = PROOF_FRAME_MODE + 1;
-        let err = tx
-            .validate_static_constraints()
-            .expect_err("mode 5 is reserved");
-        assert!(err.contains("reserved execution mode 5"), "{err}");
-    }
-
-    #[test]
-    fn proof_frame_may_sit_at_any_position() {
-        let frame = proof_frame(&[(H256::zero(), H256::repeat_byte(0xAA))]);
-        for position in 0..=2 {
-            let mut tx = make_test_frame_tx();
-            tx.frames.insert(position, frame.clone());
-            tx.validate_static_constraints()
-                .unwrap_or_else(|e| panic!("position {position}: {e}"));
+    fn custom_claim(verifier: u64, key: u8, msg: u8, gas_limit: u64, witness_len: u64) -> Claim {
+        Claim {
+            verifier: Address::from_low_u64_be(verifier),
+            key: Bytes::from(vec![key; 32]),
+            msg: Bytes::from(vec![msg; 32]),
+            gas_limit,
+            witness_len,
         }
     }
 
     #[test]
-    fn proof_frame_static_constraints_are_enforced() {
-        let key = H256::repeat_byte(0xAA);
-        let valid = proof_frame(&[(H256::zero(), key)]);
-        let reject = |frame: Frame, expected: &str| {
-            let err = frame_tx_with_proof_frame(frame)
-                .validate_static_constraints()
-                .expect_err(expected);
-            assert!(err.contains(expected), "expected {expected:?}, got {err:?}");
+    fn a_claim_resolves_its_key_its_message_its_gas_and_its_witness_length() {
+        let sender = Address::from_low_u64_be(0xABCD);
+        let sig_hash = H256::repeat_byte(0x51);
+
+        // An empty key is the sender and an empty msg the signature hash; a
+        // protocol verifier fixes the gas and the witness length.
+        let claim = Claim {
+            verifier: SECP256K1_VERIFIER,
+            ..Default::default()
         };
+        assert_eq!(
+            claim.resolve_dependency(sender, sig_hash),
+            Some(Dependency {
+                verifier: SECP256K1_VERIFIER,
+                key: H256::from(sender),
+                msg: sig_hash,
+                gas_limit: 2800,
+                witness_len: 65,
+            })
+        );
 
-        let mut empty = valid.clone();
-        empty.data = Bytes::new();
-        empty.gas_limit = 0;
-        reject(empty, "nonzero multiple of 96 bytes");
+        // A 20-byte key is left-padded, and an explicit msg is kept.
+        let other = Address::from_low_u64_be(0x77);
+        let claim = Claim {
+            verifier: P256_VERIFIER,
+            key: Bytes::from(other.as_bytes().to_vec()),
+            msg: Bytes::from(vec![9u8; 32]),
+            ..Default::default()
+        };
+        assert_eq!(
+            claim.resolve_dependency(sender, sig_hash),
+            Some(Dependency {
+                verifier: P256_VERIFIER,
+                key: H256::from(other),
+                msg: H256::repeat_byte(9),
+                gas_limit: 6700,
+                witness_len: 128,
+            })
+        );
 
-        let mut ragged = valid.clone();
-        ragged.data = Bytes::from([valid.data.as_ref(), &[0u8]].concat());
-        reject(ragged, "nonzero multiple of 96 bytes");
+        // A 32-byte key is used as is.
+        let claim = Claim {
+            verifier: LEANSPHINCS_VERIFIER,
+            key: Bytes::from(vec![6u8; 32]),
+            ..Default::default()
+        };
+        assert_eq!(
+            claim.resolve_dependency(sender, sig_hash),
+            Some(Dependency {
+                verifier: LEANSPHINCS_VERIFIER,
+                key: H256::repeat_byte(6),
+                msg: sig_hash,
+                gas_limit: 13200,
+                witness_len: 7740,
+            })
+        );
 
-        let too_many = proof_frame(&vec![(H256::zero(), key); MAX_DEPENDENCIES_PER_FRAME + 1]);
-        reject(too_many, "more than 256");
+        // A custom verifier's claim keeps what it declares.
+        assert_eq!(
+            custom_claim(0xC0DE, 1, 2, 30_000, 500).resolve_dependency(sender, sig_hash),
+            Some(Dependency {
+                verifier: Address::from_low_u64_be(0xC0DE),
+                key: H256::repeat_byte(1),
+                msg: H256::repeat_byte(2),
+                gas_limit: 30_000,
+                witness_len: 500,
+            })
+        );
 
-        let mut padded_scheme = valid.clone();
-        let mut data = valid.data.to_vec();
-        data[0] = 1;
-        padded_scheme.data = Bytes::from(data);
-        reject(padded_scheme, "unknown scheme");
-
-        let mut other_scheme = valid.clone();
-        let mut data = valid.data.to_vec();
-        data[31] = 0x11;
-        other_scheme.data = Bytes::from(data);
-        reject(other_scheme, "unknown scheme");
-
-        let mut with_target = valid.clone();
-        with_target.target = Some(Address::from_low_u64_be(0xABCD));
-        reject(with_target, "must have no target");
-
-        let mut with_value = valid.clone();
-        with_value.value = U256::one();
-        reject(with_value, "must have value == 0");
-
-        let mut with_flags = valid.clone();
-        with_flags.flags = APPROVE_EXECUTION;
-        reject(with_flags, "must have flags == 0");
-
-        let mut wrong_gas = valid.clone();
-        wrong_gas.gas_limit += 1;
-        reject(wrong_gas, "must declare 3000 execution gas");
-
-        let mut with_state_gas = valid;
-        with_state_gas.state_gas_limit = 1;
-        reject(with_state_gas, "must have state_gas_limit == 0");
-
-        // The largest frame the EIP allows is accepted.
-        let full = proof_frame(&vec![(H256::zero(), key); MAX_DEPENDENCIES_PER_FRAME]);
-        frame_tx_with_proof_frame(full)
-            .validate_static_constraints()
-            .expect("256 triples are allowed");
+        // A key or a msg the EIP rejects has no dependency.
+        let malformed_key = Claim {
+            verifier: SECP256K1_VERIFIER,
+            key: Bytes::from(vec![1u8; 5]),
+            ..Default::default()
+        };
+        assert_eq!(malformed_key.resolve_dependency(sender, sig_hash), None);
+        let zero_msg = Claim {
+            verifier: SECP256K1_VERIFIER,
+            msg: Bytes::from(vec![0u8; 32]),
+            ..Default::default()
+        };
+        assert_eq!(zero_msg.resolve_dependency(sender, sig_hash), None);
     }
 
     #[test]
-    fn proof_frame_cannot_follow_an_atomic_batch_frame() {
+    fn dependencies_are_the_resolved_claims_sorted_and_deduplicated() {
         let mut tx = make_test_frame_tx();
-        tx.frames = vec![
-            tx.frames[0].clone(),
-            Frame {
-                mode: FrameMode::Sender as u8,
-                flags: 0x04, // atomic batch
-                target: Some(Address::from_low_u64_be(0x1234)),
-                gas_limit: 21_000,
-                state_gas_limit: 0,
-                value: U256::zero(),
-                data: Bytes::new(),
+        tx.claims = vec![
+            custom_claim(0xC0DE, 2, 2, 10, 10),
+            Claim {
+                verifier: SECP256K1_VERIFIER,
+                ..Default::default()
             },
-            proof_frame(&[(H256::zero(), H256::repeat_byte(0xAA))]),
+            // The same claim twice, and once more with the sender spelled out:
+            // three claims, one dependency.
+            Claim {
+                verifier: SECP256K1_VERIFIER,
+                ..Default::default()
+            },
+            Claim {
+                verifier: SECP256K1_VERIFIER,
+                key: Bytes::from(tx.sender.as_bytes().to_vec()),
+                ..Default::default()
+            },
+            custom_claim(0xC0DE, 1, 2, 10, 10),
         ];
-        let err = tx
-            .validate_static_constraints()
-            .expect_err("a proof frame cannot end an atomic batch");
-        assert!(err.contains("proof frame in an atomic batch"), "{err}");
-    }
-
-    #[test]
-    fn dependencies_substitute_the_signature_hash_then_sort_and_deduplicate() {
-        let key_a = H256::repeat_byte(0xAA);
-        let key_b = H256::repeat_byte(0xBB);
-        let explicit = H256::repeat_byte(0x01);
-        let mut tx = make_test_frame_tx();
-        // Two proof frames; the triple (zero, key_a) is declared in both, and
-        // (explicit, key_b) twice in the same frame.
-        tx.frames.insert(
-            1,
-            proof_frame(&[(H256::zero(), key_b), (explicit, key_b), (explicit, key_b)]),
-        );
-        tx.frames
-            .push(proof_frame(&[(H256::zero(), key_a), (H256::zero(), key_b)]));
-        tx.validate_static_constraints()
-            .expect("repeated declarations are allowed");
-
         let sig_hash = tx.compute_sig_hash();
-        assert_ne!(sig_hash, H256::zero());
-        let dependency = |data_hash, verification_key_hash| Dependency {
-            scheme: LEANSPHINCS_SCHEME,
-            data_hash,
-            verification_key_hash,
+        let secp = Dependency {
+            verifier: SECP256K1_VERIFIER,
+            key: H256::from(tx.sender),
+            msg: sig_hash,
+            gas_limit: 2800,
+            witness_len: 65,
         };
-        let mut expected = vec![
-            dependency(explicit, key_b),
-            dependency(sig_hash, key_a),
-            dependency(sig_hash, key_b),
-        ];
-        expected.sort();
-        assert_eq!(tx.dependencies(), expected);
+        let custom = |key: u8| Dependency {
+            verifier: Address::from_low_u64_be(0xC0DE),
+            key: H256::repeat_byte(key),
+            msg: H256::repeat_byte(2),
+            gas_limit: 10,
+            witness_len: 10,
+        };
 
-        // The frames keep the zero bytes: the substitution happens only in the
-        // derived list, so the signature hash it uses covers the data as encoded.
+        // In claim order, one per claim.
         assert_eq!(
-            tx.frames[1].declared_dependencies()[0].data_hash,
-            H256::zero()
+            tx.claim_dependencies(),
+            Some(vec![custom(2), secp, secp, secp, custom(1)])
         );
-        assert!(tx.has_proof_frames());
-        assert!(make_test_frame_tx().dependencies().is_empty());
-        assert!(!make_test_frame_tx().has_proof_frames());
+        // Sorted by verifier first, then by key, and deduplicated.
+        assert_eq!(tx.dependencies(), Some(vec![secp, custom(1), custom(2)]));
+
+        assert_eq!(FrameTransaction::default().dependencies(), Some(Vec::new()));
+
+        // One malformed claim leaves the transaction without dependencies.
+        tx.claims[0].key = Bytes::from(vec![1u8; 5]);
+        assert_eq!(tx.dependencies(), None);
+        assert_eq!(tx.claim_dependencies(), None);
     }
 
     #[test]
-    fn dependencies_are_ordered_by_scheme_then_message_then_key() {
-        let low = H256::from_low_u64_be(1);
-        let high = H256::repeat_byte(0xFF);
-        let dependency = |scheme, data_hash, verification_key_hash| Dependency {
-            scheme,
-            data_hash,
-            verification_key_hash,
-        };
-        let mut dependencies = vec![
-            dependency(0x11, low, low),
-            dependency(0x10, high, low),
-            dependency(0x10, low, high),
-            dependency(0x10, low, low),
+    fn dependencies_are_ordered_as_the_tuple_of_their_fields() {
+        let dependency =
+            |verifier: u64, key: u8, msg: u8, gas_limit: u64, witness_len: u64| Dependency {
+                verifier: Address::from_low_u64_be(verifier),
+                key: H256::repeat_byte(key),
+                msg: H256::repeat_byte(msg),
+                gas_limit,
+                witness_len,
+            };
+        let sorted = vec![
+            dependency(1, 1, 1, 1, 1),
+            dependency(1, 1, 1, 1, 2),
+            dependency(1, 1, 1, 2, 1),
+            dependency(1, 1, 2, 1, 1),
+            dependency(1, 2, 1, 1, 1),
+            dependency(2, 1, 1, 1, 1),
+            // Addresses compare as byte strings, not as numbers.
+            dependency(0x0100, 0, 0, 0, 0),
         ];
-        dependencies.sort();
-        assert_eq!(
-            dependencies,
-            vec![
-                dependency(0x10, low, low),
-                dependency(0x10, low, high),
-                dependency(0x10, high, low),
-                dependency(0x11, low, low),
-            ]
-        );
-    }
-
-    #[test]
-    fn encoded_dependency_has_the_layout_of_a_triple() {
-        let dependency = Dependency {
-            scheme: LEANSPHINCS_SCHEME,
-            data_hash: H256::repeat_byte(0x01),
-            verification_key_hash: H256::repeat_byte(0x02),
-        };
-        let frame = proof_frame(&[(dependency.data_hash, dependency.verification_key_hash)]);
-        assert_eq!(dependency.encode().as_slice(), frame.data.as_ref());
-        assert_eq!(frame.declared_dependencies(), vec![dependency]);
+        let mut shuffled = sorted.clone();
+        shuffled.reverse();
+        shuffled.sort();
+        assert_eq!(shuffled, sorted);
     }
 
     #[test]
     fn block_dependencies_merge_the_transactions_of_a_block() {
-        let shared = H256::repeat_byte(0x07);
-        let key_a = H256::repeat_byte(0xAA);
-        let key_b = H256::repeat_byte(0xBB);
-
-        // Both transactions declare the same explicit message under key_a, and
-        // each declares its own signature hash under its own key.
+        // Two transactions that make the same explicit-msg claim share one
+        // dependency; their claims over their own signature hashes do not.
+        let shared = Claim {
+            verifier: LEANSPHINCS_VERIFIER,
+            key: Bytes::from(vec![6u8; 32]),
+            msg: Bytes::from(vec![9u8; 32]),
+            ..Default::default()
+        };
+        let own = Claim {
+            verifier: LEANSPHINCS_VERIFIER,
+            key: Bytes::from(vec![6u8; 32]),
+            ..Default::default()
+        };
         let mut first = make_test_frame_tx();
-        first
-            .frames
-            .push(proof_frame(&[(shared, key_a), (H256::zero(), key_a)]));
+        first.claims = vec![shared.clone(), own.clone()];
         let mut second = make_test_frame_tx();
         second.nonce_seq += 1;
-        second
-            .frames
-            .push(proof_frame(&[(shared, key_a), (H256::zero(), key_b)]));
+        second.claims = vec![own, shared];
+        assert_ne!(first.compute_sig_hash(), second.compute_sig_hash());
 
         let transactions = vec![
             Transaction::FrameTransaction(first.clone()),
-            Transaction::EIP1559Transaction(Default::default()),
+            Transaction::EIP1559Transaction(EIP1559Transaction::default()),
             Transaction::FrameTransaction(second.clone()),
         ];
-        let dependencies = block_dependencies(&transactions);
+        let dependencies = block_dependencies(&transactions).expect("well-formed claims");
 
-        let mut expected: Vec<Dependency> = [first.dependencies(), second.dependencies()].concat();
+        let mut expected: Vec<Dependency> = [
+            first.dependencies().unwrap(),
+            second.dependencies().unwrap(),
+        ]
+        .concat();
         expected.sort();
         expected.dedup();
         assert_eq!(dependencies.len(), 3);
         assert_eq!(dependencies, expected);
+
+        // A malformed claim anywhere in the block leaves it without dependencies.
+        let mut malformed = second;
+        malformed.claims[0].msg = Bytes::from(vec![1u8; 3]);
+        let transactions = vec![
+            Transaction::FrameTransaction(first),
+            Transaction::FrameTransaction(malformed),
+        ];
+        assert_eq!(block_dependencies(&transactions), None);
+    }
+
+    // ── Gas accounting (EIP-8141 §Gas Accounting) ──
+
+    /// `max_gas` of `tx` computed term by term from the EIP's formulas, with
+    /// EIP-8250's two additions. Returns `(frame_tx_intrinsic_gas,
+    /// calldata_floor_gas, max_gas)`.
+    fn gas_by_the_formulas(tx: &FrameTransaction) -> (u64, u64, u64) {
+        let tokens_in = |data: &[u8]| {
+            let zero_bytes = data.iter().filter(|byte| **byte == 0).count() as u64;
+            zero_bytes + (data.len() as u64 - zero_bytes) * 4
+        };
+        let floor_tokens_in = |data: &[u8]| data.len() as u64 * 4;
+        let calldata_cost = |data: &[u8]| 4 * tokens_in(data);
+        let is_protocol = |claim: &Claim| {
+            [SECP256K1_VERIFIER, P256_VERIFIER, LEANSPHINCS_VERIFIER].contains(&claim.verifier)
+        };
+
+        let claim_verification_cost: u64 = tx.claims.iter().map(Claim::resolved_gas).sum();
+        let protocol_witness_cost: u64 = tx
+            .claims
+            .iter()
+            .filter(|claim| is_protocol(claim))
+            .map(|claim| WITNESS_BYTE_GAS * claim.resolved_witness_len())
+            .sum();
+        let custom_witness_cost: u64 = tx
+            .claims
+            .iter()
+            .filter(|claim| !is_protocol(claim))
+            .map(|claim| 4 * claim.witness_len * 4)
+            .sum();
+        let claim_metadata_cost: u64 = tx
+            .claims
+            .iter()
+            .map(|claim| {
+                calldata_cost(claim.verifier.as_bytes())
+                    + calldata_cost(&claim.key)
+                    + calldata_cost(&claim.msg)
+            })
+            .sum();
+        let frame_data_cost: u64 = tx
+            .frames
+            .iter()
+            .map(|frame| calldata_cost(&frame.data))
+            .sum();
+        let value_transfer_cost = tx.value_transfer_gas();
+        // EIP-8250 prices the nonce fields as calldata and charges each keyed
+        // nonce slot.
+        let nonce_calldata = tx.nonce_calldata();
+        let keyed_nonce_access_cost = tx.keyed_nonce_access_cost();
+
+        let frame_tx_intrinsic_gas = FRAME_TX_INTRINSIC_COST
+            + tx.frames.len() as u64 * FRAME_TX_PER_FRAME_COST
+            + frame_data_cost
+            + claim_metadata_cost
+            + claim_verification_cost
+            + protocol_witness_cost
+            + custom_witness_cost
+            + value_transfer_cost
+            + calldata_cost(&nonce_calldata)
+            + keyed_nonce_access_cost;
+        let execution_limits: u64 = tx.frames.iter().map(|frame| frame.gas_limit).sum();
+        let state_limits: u64 = tx.frames.iter().map(|frame| frame.state_gas_limit).sum();
+        let standard_gas_limit = frame_tx_intrinsic_gas + execution_limits + state_limits;
+
+        let calldata_floor_tokens: u64 = tx
+            .frames
+            .iter()
+            .map(|frame| floor_tokens_in(&frame.data))
+            .sum::<u64>()
+            + tx.claims
+                .iter()
+                .map(|claim| {
+                    floor_tokens_in(claim.verifier.as_bytes())
+                        + floor_tokens_in(&claim.key)
+                        + floor_tokens_in(&claim.msg)
+                })
+                .sum::<u64>()
+            + tx.claims
+                .iter()
+                .filter(|claim| !is_protocol(claim))
+                .map(|claim| claim.witness_len * 4)
+                .sum::<u64>()
+            + floor_tokens_in(&nonce_calldata);
+        let calldata_floor_gas = FRAME_TX_INTRINSIC_COST
+            + tx.frames.len() as u64 * FRAME_TX_PER_FRAME_COST
+            + claim_verification_cost
+            + protocol_witness_cost
+            + value_transfer_cost
+            + keyed_nonce_access_cost
+            + 16 * calldata_floor_tokens;
+
+        (
+            frame_tx_intrinsic_gas,
+            calldata_floor_gas,
+            standard_gas_limit.max(calldata_floor_gas + state_limits),
+        )
     }
 
     #[test]
-    fn witness_gas_is_charged_once_per_dependency_on_both_sides_of_max_gas() {
-        assert_eq!(LEANSPHINCS_WITNESS_GAS, 495_360);
-
-        let key = H256::repeat_byte(0xAA);
-        let plain = make_test_frame_tx();
-        assert_eq!(plain.dependency_witness_gas(), 0);
-
-        // The same triple declared three times, in two frames, is one dependency;
-        // a second key makes two.
-        let mut tx = make_test_frame_tx();
-        tx.frames
-            .insert(1, proof_frame(&[(H256::zero(), key), (H256::zero(), key)]));
-        tx.frames.push(proof_frame(&[
-            (H256::zero(), key),
-            (H256::zero(), H256::repeat_byte(0xBB)),
-        ]));
-        assert_eq!(tx.dependencies().len(), 2);
-        assert_eq!(tx.dependency_witness_gas(), 2 * LEANSPHINCS_WITNESS_GAS);
-
-        // Against the same transaction with the witnesses unpriced, both the
-        // standard total and the floor total grow by exactly the witness gas.
-        let frames = tx.frames.len() as u64;
-        let unpriced_mandatory = tx.mandatory_gas() - tx.dependency_witness_gas();
-        assert_eq!(
-            unpriced_mandatory,
-            FRAME_TX_INTRINSIC_COST
-                + frames * FRAME_TX_PER_FRAME_COST
-                + tx.signature_verification_cost()
-        );
-        assert_eq!(
-            tx.standard_gas_limit(),
-            unpriced_mandatory
-                + 2 * LEANSPHINCS_WITNESS_GAS
-                + tx.data_cost()
-                + tx.total_frame_gas()
-        );
-        assert_eq!(
-            tx.calldata_floor_total(),
-            unpriced_mandatory + 2 * LEANSPHINCS_WITNESS_GAS + tx.calldata_floor_gas()
-        );
-    }
-
-    // ── The wrapper of a dependency transaction (EIP-8504) ──
-
-    /// A dependency transaction with two dependencies and a witness for each.
-    /// The witnesses are not signatures: these tests only cover the encodings.
-    fn test_proof_wrapper(blobs_bundle: Option<BlobsBundle>) -> ProofWrapper {
-        let mut tx = frame_tx_with_proof_frame(proof_frame(&[
-            (H256::zero(), H256::repeat_byte(0xAA)),
-            (H256::repeat_byte(0x01), H256::repeat_byte(0xBB)),
-        ]));
-        if blobs_bundle.is_some() {
-            tx.blob_versioned_hashes = vec![H256::repeat_byte(0x01)];
-        }
-        let witnesses = vec![
-            Bytes::from(vec![0x11; LEANSPHINCS_SIGNATURE_SIZE]),
-            Bytes::from(vec![0x22; LEANSPHINCS_SIGNATURE_SIZE]),
+    fn gas_follows_the_formulas_for_every_kind_of_claim() {
+        let leansphincs = Claim {
+            verifier: LEANSPHINCS_VERIFIER,
+            key: Bytes::from(vec![6u8; 32]),
+            ..Default::default()
+        };
+        let secp256k1 = Claim {
+            verifier: SECP256K1_VERIFIER,
+            ..Default::default()
+        };
+        let p256 = Claim {
+            verifier: P256_VERIFIER,
+            key: Bytes::from(vec![5u8; 20]),
+            msg: Bytes::from(vec![9u8; 32]),
+            ..Default::default()
+        };
+        // An explicit msg that is mostly zero bytes, which the intrinsic cost
+        // prices below the non-zero ones and the floor does not.
+        let mut sparse_msg = vec![0u8; 32];
+        sparse_msg[31] = 7;
+        let cases: Vec<Vec<Claim>> = vec![
+            vec![],
+            vec![secp256k1.clone()],
+            vec![p256.clone()],
+            vec![leansphincs.clone()],
+            vec![custom_claim(0xC0DE, 1, 2, 30_000, 500)],
+            // A custom witness long enough for the calldata floor to bind.
+            vec![custom_claim(0xC0DE, 1, 2, 30_000, 20_000)],
+            vec![
+                secp256k1,
+                p256,
+                leansphincs,
+                Claim {
+                    msg: Bytes::from(sparse_msg),
+                    ..custom_claim(0xC0DE, 1, 2, 30_000, 500)
+                },
+            ],
         ];
-        ProofWrapper::new(tx, blobs_bundle, witnesses)
+        for claims in cases {
+            let mut tx = make_test_frame_tx();
+            tx.frames[1].state_gas_limit = 50_000;
+            tx.frames[1].value = U256::one();
+            tx.claims = claims;
+            tx.validate_static_constraints().expect("statically valid");
+
+            let (frame_tx_intrinsic_gas, calldata_floor_gas, max_gas) = gas_by_the_formulas(&tx);
+            assert_eq!(
+                tx.mandatory_gas() + tx.data_cost(),
+                frame_tx_intrinsic_gas,
+                "frame_tx_intrinsic_gas of {:?}",
+                tx.claims
+            );
+            assert_eq!(
+                tx.calldata_floor_total(),
+                calldata_floor_gas,
+                "calldata_floor_gas of {:?}",
+                tx.claims
+            );
+            assert_eq!(tx.max_gas(), max_gas, "max_gas of {:?}", tx.claims);
+        }
     }
+
+    #[test]
+    fn a_leansphincs_claim_costs_its_verification_and_four_gas_per_witness_byte() {
+        let plain = make_test_frame_tx();
+        let mut tx = make_test_frame_tx();
+        tx.claims.push(Claim {
+            verifier: LEANSPHINCS_VERIFIER,
+            key: Bytes::from(vec![6u8; 32]),
+            ..Default::default()
+        });
+        // 13,200 to verify, 4 * 7,740 for the witness, and the claim's metadata:
+        // a 20-byte verifier with one non-zero byte and a 32-byte key.
+        let metadata = (19 * 4 + 16) + 32 * 16;
+        assert_eq!(
+            tx.max_gas() - plain.max_gas(),
+            13_200 + 4 * 7_740 + metadata
+        );
+        // The witness is not counted toward the calldata floor: the floor grows
+        // by the fixed costs and the metadata alone.
+        assert_eq!(
+            tx.calldata_floor_total() - plain.calldata_floor_total(),
+            13_200 + 4 * 7_740 + 64 * (20 + 32)
+        );
+    }
+
+    #[test]
+    fn a_custom_witness_is_priced_as_non_zero_calldata_and_enters_the_floor() {
+        let mut tx = make_test_frame_tx();
+        tx.claims = vec![custom_claim(0xC0DE, 1, 2, 30_000, 0)];
+        let without_witness = (
+            tx.mandatory_gas() + tx.data_cost(),
+            tx.calldata_floor_total(),
+        );
+        tx.claims[0].witness_len = 1_000;
+        // 16 gas per byte in the intrinsic cost, 64 in the floor, whatever the
+        // bytes turn out to be.
+        assert_eq!(
+            tx.mandatory_gas() + tx.data_cost() - without_witness.0,
+            16 * 1_000
+        );
+        assert_eq!(tx.calldata_floor_total() - without_witness.1, 64 * 1_000);
+        // The verification gas is the claim's whole limit.
+        assert_eq!(tx.claim_verification_cost(), 30_000);
+        assert_eq!(tx.protocol_witness_cost(), 0);
+    }
+
+    // ── The pooled representation and a block's claim witnesses (EIP-8141) ──
 
     fn test_blobs_bundle() -> BlobsBundle {
         BlobsBundle {
             blobs: vec![[0x33; crate::types::BYTES_PER_BLOB]],
             commitments: vec![[0x44; 48]],
-            proofs: vec![[0x55; 48]; 128],
+            proofs: vec![[0x55; 48]; crate::types::CELLS_PER_EXT_BLOB],
             version: 1,
         }
     }
 
-    #[test]
-    fn wrapper_states_the_dependencies_of_its_transaction() {
-        let wrapper = test_proof_wrapper(None);
-        let dependencies = wrapper.tx.dependencies();
-        assert_eq!(dependencies.len(), 2);
-        // The zero `data_hash` is stated as the transaction's signature hash.
-        let sig_hash = wrapper.tx.compute_sig_hash();
-        assert!(
-            wrapper
-                .deps
-                .iter()
-                .any(|dep| dep[32..64] == *sig_hash.as_bytes())
-        );
-        assert_eq!(
-            wrapper.deps,
-            dependencies
-                .iter()
-                .map(|dependency| Bytes::copy_from_slice(&dependency.encode()))
-                .collect::<Vec<_>>()
-        );
-        assert!(wrapper.states_its_dependencies());
-
-        // Any other list of dependencies, or a different number of witnesses, is
-        // not this transaction's.
-        let mut reordered = wrapper.clone();
-        reordered.deps.swap(0, 1);
-        assert!(!reordered.states_its_dependencies());
-
-        let mut missing_witness = wrapper.clone();
-        missing_witness.witnesses.pop();
-        assert!(!missing_witness.states_its_dependencies());
-
-        let mut extra_dependency = wrapper;
-        extra_dependency.deps.push(Bytes::from(vec![0u8; 96]));
-        extra_dependency.witnesses.push(Bytes::new());
-        assert!(!extra_dependency.states_its_dependencies());
+    fn pooled_frame_tx(blobs_bundle: Option<BlobsBundle>) -> PooledFrameTransaction {
+        let mut tx = make_test_frame_tx();
+        tx.claims.push(Claim {
+            verifier: LEANSPHINCS_VERIFIER,
+            key: Bytes::from(vec![6u8; 32]),
+            ..Default::default()
+        });
+        if blobs_bundle.is_some() {
+            let mut versioned_hash = [0u8; 32];
+            versioned_hash[0] = VERSIONED_HASH_VERSION_KZG;
+            tx.blob_versioned_hashes = vec![H256(versioned_hash)];
+        }
+        // The witnesses are not signatures: these tests only cover the encodings.
+        PooledFrameTransaction {
+            tx,
+            witnesses: vec![
+                Bytes::from(vec![0x11; SECP256K1_WITNESS_SIZE]),
+                Bytes::from(vec![0x22; LEANSPHINCS_SIGNATURE_SIZE]),
+            ],
+            blobs_bundle,
+        }
     }
 
     #[test]
-    fn wrapper_round_trips_on_the_network() {
+    fn pooled_frame_transaction_round_trips_with_and_without_blobs() {
         for blobs_bundle in [None, Some(test_blobs_bundle())] {
-            let wrapper = test_proof_wrapper(blobs_bundle);
-            let encoded = wrapper.encode_to_vec();
-            let decoded = ProofWrapper::decode(&encoded).expect("decodes");
-            assert_eq!(decoded, wrapper);
-            assert_eq!(decoded.encode_to_vec(), encoded);
-            assert_eq!(
-                wrapper.hash(&NativeCrypto),
-                H256(NativeCrypto.keccak256(&encoded))
-            );
-            assert_eq!(
-                wrapper.tx_hash(&NativeCrypto),
-                Transaction::FrameTransaction(wrapper.tx.clone()).hash(&NativeCrypto)
-            );
+            let pooled = pooled_frame_tx(blobs_bundle);
+            let encoded = pooled.encode_to_vec();
+            assert!(PooledFrameTransaction::is_pooled(&encoded).expect("is a list"));
+            let decoded = PooledFrameTransaction::decode(&encoded).expect("decodes");
+            assert_eq!(decoded, pooled);
+            assert_eq!(decoded.witness_bytes(), 65 + 7740);
+
+            // The bare transaction is told apart by its first item.
+            let bare = pooled.tx.encode_to_vec();
+            assert!(!PooledFrameTransaction::is_pooled(&bare).expect("is a list"));
+            assert!(PooledFrameTransaction::decode(&bare).is_err());
         }
     }
 
     #[test]
-    fn wrapper_is_a_list_of_one_transaction_a_zero_mode_and_the_content() {
-        let wrapper = test_proof_wrapper(None);
-        let encoded = wrapper.encode_to_vec();
+    fn pooled_frame_transaction_is_four_items_with_a_zero_wrapper_version() {
+        let pooled = pooled_frame_tx(None);
+        let encode = |version: u8, sidecar: &[u8], extra: bool| {
+            let mut buf = Vec::new();
+            let encoder = Encoder::new(&mut buf)
+                .encode_field(&pooled.tx)
+                .encode_field(&version)
+                .encode_field(&pooled.witnesses)
+                .encode_raw(sidecar);
+            if extra {
+                encoder.encode_field(&0u8).finish();
+            } else {
+                encoder.finish();
+            }
+            buf
+        };
+        // rlp([tx_body, 0, witnesses, []]) is the encoding itself.
+        assert_eq!(encode(0, &[0xc0], false), pooled.encode_to_vec());
 
-        // [[tx], 0, [deps, witnesses]], with tx as a byte string holding the type
-        // byte and the transaction.
-        let (transactions, mode, (deps, witnesses)) =
-            <(Vec<Bytes>, u8, (Vec<Bytes>, Vec<Bytes>))>::decode(&encoded).expect("decodes");
-        assert_eq!(mode, 0);
-        assert_eq!(transactions.len(), 1);
-        assert_eq!(
-            transactions[0],
-            Transaction::FrameTransaction(wrapper.tx.clone()).encode_canonical_to_vec()
-        );
-        assert_eq!(deps, wrapper.deps);
-        assert_eq!(witnesses, wrapper.witnesses);
-
-        // Another mode, no transaction or two transactions are not wrappers.
-        let pooled = transactions[0].clone();
-        let content = (deps, witnesses);
-        let other_mode = (vec![pooled.clone()], 1u8, content.clone()).encode_to_vec();
-        assert!(ProofWrapper::decode(&other_mode).is_err());
-        let no_transaction = (Vec::<Bytes>::new(), 0u8, content.clone()).encode_to_vec();
-        assert!(ProofWrapper::decode(&no_transaction).is_err());
-        let two_transactions = (vec![pooled.clone(), pooled], 0u8, content).encode_to_vec();
-        assert!(ProofWrapper::decode(&two_transactions).is_err());
+        // Any other wrapper version is unknown.
+        assert!(PooledFrameTransaction::decode(&encode(1, &[0xc0], false)).is_err());
+        // A fifth item, a sidecar that is not a list, and a sidecar of two items.
+        assert!(PooledFrameTransaction::decode(&encode(0, &[0xc0], true)).is_err());
+        assert!(PooledFrameTransaction::decode(&encode(0, &[0x80], false)).is_err());
+        assert!(PooledFrameTransaction::decode(&encode(0, &[0xc2, 0xc0, 0xc0], false)).is_err());
+        // Three items: the sidecar is missing.
+        let mut three = Vec::new();
+        Encoder::new(&mut three)
+            .encode_field(&pooled.tx)
+            .encode_field(&0u8)
+            .encode_field(&pooled.witnesses)
+            .finish();
+        assert!(PooledFrameTransaction::decode(&three).is_err());
     }
 
     #[test]
-    fn submitted_forms_are_told_apart_by_their_number_of_items() {
-        // Without blobs: the transaction and its witnesses.
-        let wrapper = test_proof_wrapper(None);
-        let mut submitted = Vec::new();
-        wrapper.encode_submission(&mut submitted);
-        assert_eq!(submitted[0], TxType::Frame as u8);
-        assert!(ProofWrapper::is_submission(&submitted[1..]).expect("is a list"));
+    fn claim_witnesses_are_empty_or_a_version_byte_and_a_list() {
+        assert_eq!(encode_claim_witnesses(&[]), Bytes::new());
+        assert_eq!(decode_claim_witnesses(&[]), Ok(Vec::new()));
+        assert_eq!(claim_witnesses_len([]), 0);
+
+        let witnesses = vec![
+            Bytes::from(vec![0xAB; LEANSPHINCS_SIGNATURE_SIZE]),
+            Bytes::from(vec![0xCD; SECP256K1_WITNESS_SIZE]),
+            // A one-byte witness below 0x80 is its own encoding, and an empty
+            // witness is a single byte too.
+            Bytes::from(vec![0x05]),
+            Bytes::new(),
+        ];
+        let encoded = encode_claim_witnesses(&witnesses);
+        assert_eq!(encoded[0], CLAIM_WITNESSES_VERSION_RAW);
+        assert_eq!(&encoded[1..], witnesses.encode_to_vec().as_slice());
+        assert_eq!(decode_claim_witnesses(&encoded), Ok(witnesses.clone()));
+        assert_eq!(claim_witnesses_len(&witnesses), encoded.len());
+    }
+
+    #[test]
+    fn malformed_claim_witnesses_do_not_decode() {
+        let witnesses = vec![Bytes::from(vec![0xAB; 65])];
+        let encoded = encode_claim_witnesses(&witnesses).to_vec();
+
+        // Another version byte.
+        let mut other_version = encoded.clone();
+        other_version[0] = 0x01;
         assert_eq!(
-            ProofWrapper::decode_submission(&submitted[1..]).expect("decodes"),
-            wrapper
+            decode_claim_witnesses(&other_version),
+            Err(ClaimWitnessesDecodeError::UnknownVersion(0x01))
+        );
+        // The version byte alone, and the version byte with an empty list: no
+        // witnesses is the empty byte string and nothing else.
+        assert!(matches!(
+            decode_claim_witnesses(&[0x00]),
+            Err(ClaimWitnessesDecodeError::Malformed(_))
+        ));
+        assert_eq!(
+            decode_claim_witnesses(&[0x00, 0xc0]),
+            Err(ClaimWitnessesDecodeError::EmptyList)
+        );
+        // Bytes after the list, a truncated list, and a list item that is itself
+        // a list.
+        let mut trailing = encoded.clone();
+        trailing.push(0x00);
+        assert!(matches!(
+            decode_claim_witnesses(&trailing),
+            Err(ClaimWitnessesDecodeError::Malformed(_))
+        ));
+        assert!(matches!(
+            decode_claim_witnesses(&encoded[..encoded.len() - 1]),
+            Err(ClaimWitnessesDecodeError::Malformed(_))
+        ));
+        assert!(matches!(
+            decode_claim_witnesses(&[0x00, 0xc1, 0xc0]),
+            Err(ClaimWitnessesDecodeError::Malformed(_))
+        ));
+        // A string instead of a list.
+        assert!(matches!(
+            decode_claim_witnesses(&[0x00, 0x82, 0x01, 0x02]),
+            Err(ClaimWitnessesDecodeError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn claim_witnesses_are_bounded_by_the_block_limit() {
+        // Two witnesses of the largest size a claim may declare: with the
+        // version byte and the RLP headers they are over the block limit, and
+        // one byte less in one of them is still over it.
+        let witness = Bytes::from(vec![0xEE; MAX_CLAIM_WITNESS_BYTES as usize]);
+        let over = encode_claim_witnesses(&[witness.clone(), witness]);
+        assert!(over.len() > MAX_BLOCK_WITNESS_BYTES);
+        assert_eq!(
+            decode_claim_witnesses(&over),
+            Err(ClaimWitnessesDecodeError::TooLong(over.len()))
         );
 
-        // With blobs: the witnesses follow the sidecar fields.
-        let wrapper = test_proof_wrapper(Some(test_blobs_bundle()));
-        let mut submitted = Vec::new();
-        wrapper.encode_submission(&mut submitted);
-        assert!(ProofWrapper::is_submission(&submitted[1..]).expect("is a list"));
-        assert_eq!(
-            ProofWrapper::decode_submission(&submitted[1..]).expect("decodes"),
-            wrapper
-        );
-
-        // A transaction alone and a blob network wrapper are not submitted forms.
-        let bare = wrapper.tx.encode_to_vec();
-        assert!(!ProofWrapper::is_submission(&bare).expect("is a list"));
-        let blob_wrapper = WrappedFrameTransaction {
-            tx: wrapper.tx.clone(),
-            wrapper_version: Some(1),
-            blobs_bundle: test_blobs_bundle(),
-        }
-        .encode_to_vec();
-        assert!(WrappedFrameTransaction::is_wrapped(&blob_wrapper).expect("is a list"));
-        assert!(!ProofWrapper::is_submission(&blob_wrapper).expect("is a list"));
-        assert!(ProofWrapper::decode_submission(&blob_wrapper).is_err());
+        // Exactly at the limit: one witness whose encoding fills it. The byte
+        // string is the version byte, a 4-byte list header, a 4-byte string
+        // header and the witness.
+        let witness = Bytes::from(vec![0xEE; MAX_BLOCK_WITNESS_BYTES - 9]);
+        let at_limit = encode_claim_witnesses(std::slice::from_ref(&witness));
+        assert_eq!(at_limit.len(), MAX_BLOCK_WITNESS_BYTES);
+        assert_eq!(decode_claim_witnesses(&at_limit), Ok(vec![witness]));
     }
 }

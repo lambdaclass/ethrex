@@ -147,9 +147,7 @@ pub enum MempoolError {
     FrameTxExpired,
     #[error("Invalid frame transaction: {0}")]
     InvalidFrameTransaction(String),
-    #[error("Invalid frame transaction signature")]
-    InvalidFrameSignature,
-    #[error("Frame transaction signature verification cost exceeds MAX_VERIFY_GAS")]
+    #[error("Frame transaction claim verification cost exceeds MAX_VERIFY_GAS")]
     FrameTxVerifyGasExceeded,
     #[error("Frame transaction validation prefix does not match any recognized shape")]
     FrameTxUnrecognizedPrefix,
@@ -161,16 +159,22 @@ pub enum MempoolError {
     FrameTxSenderAlreadyPending,
     #[error("Frame transaction validation-prefix simulation failed: {0}")]
     FrameTxValidationFailed(String),
-    #[error("Frame transaction has dependencies but was submitted without their witnesses")]
-    DependencyTransactionWithoutWitnesses,
-    #[error("Transaction submitted with witnesses declares no dependencies")]
-    WitnessesWithoutDependencies,
-    #[error("Transaction has {actual} dependencies, more than the {limit} this node verifies")]
-    TooManyDependencies { actual: usize, limit: usize },
-    #[error("Wrapper does not state its transaction's dependencies with one witness for each")]
-    WrapperDependenciesMismatch,
-    #[error("Witness {0} does not satisfy its dependency")]
-    DependencyNotSatisfied(usize),
+    #[error("Frame transaction has claims but was submitted without their witnesses")]
+    FrameTxWithoutWitnesses,
+    #[error("Frame transaction has {expected} claims and was submitted with {found} witnesses")]
+    ClaimWitnessCountMismatch { expected: usize, found: usize },
+    #[error("Witness {index} is {found} bytes long and its claim requires {expected}")]
+    ClaimWitnessLengthMismatch {
+        index: usize,
+        expected: u64,
+        found: usize,
+    },
+    #[error(
+        "Claim witnesses take {actual} bytes in a block, more than the {limit} a block may carry"
+    )]
+    ClaimWitnessesTooLarge { actual: usize, limit: usize },
+    #[error("Witness {0} does not satisfy its claim")]
+    ClaimNotSatisfied(usize),
     #[error("Frame transaction paymaster has insufficient balance to cover the reserved max cost")]
     FrameTxPaymasterUnderfunded,
     #[error(

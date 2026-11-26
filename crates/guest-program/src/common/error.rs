@@ -31,9 +31,9 @@ pub enum ExecutionError {
     #[error("Invalid hash of block {0} (it's not the parent hash of its successor)")]
     InvalidBlockHash(u64),
     #[error(
-        "Block {0} has transactions with proof frames, whose dependency witnesses stateless execution does not verify"
+        "Block {0} has leanSPHINCS claims, whose witnesses this build of stateless execution does not verify"
     )]
-    UnverifiedDependencyWitnesses(u64),
+    UnverifiedClaimWitnesses(u64),
     #[error("Internal error: {0}")]
     Internal(String),
 }

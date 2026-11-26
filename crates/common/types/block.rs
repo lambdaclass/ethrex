@@ -60,7 +60,7 @@ impl RLPEncode for Block {
             .encode_field(&self.body.transactions)
             .encode_field(&self.body.ommers)
             .encode_optional_field(&self.body.withdrawals)
-            .encode_optional_field(&self.body.dependency_witnesses)
+            .encode_optional_field(&self.body.claim_witnesses)
             .finish();
     }
 }
@@ -72,13 +72,13 @@ impl RLPDecode for Block {
         let (transactions, decoder) = decoder.decode_field("transactions")?;
         let (ommers, decoder) = decoder.decode_field("ommers")?;
         let (withdrawals, decoder) = decoder.decode_optional_field();
-        let (dependency_witnesses, decoder) = decoder.decode_optional_field();
+        let (claim_witnesses, decoder) = decoder.decode_optional_field();
         let remaining = decoder.finish()?;
         let body = BlockBody {
             transactions,
             ommers,
             withdrawals,
-            dependency_witnesses,
+            claim_witnesses,
         };
         let block = Block::new(header, body);
         Ok((block, remaining))
@@ -158,13 +158,13 @@ pub struct BlockHeader {
         default = "Option::default"
     )]
     pub slot_number: Option<u64>,
-    /// EIP-8504: commitment to the block's dependency witnesses, the
-    /// signatures it carries outside its transactions:
-    /// `keccak256(rlp(dependency_witnesses))`. Present once EIP-8504 is active,
-    /// even when the block has no dependencies.
+    /// EIP-8141: commitment to the block's claim witnesses, the bytes that
+    /// satisfy its transactions' claims and travel outside them:
+    /// `keccak256(claim_witnesses)`. Present from Hegota on, even when the block
+    /// has no dependencies.
     #[serde(skip_serializing_if = "Option::is_none", default = "Option::default")]
     #[rkyv(with=crate::rkyv_utils::OptionH256Wrapper)]
-    pub dependency_witnesses_hash: Option<H256>,
+    pub claim_witnesses_hash: Option<H256>,
     // LStar fork fields (EIP-8079)
     #[serde(
         skip_serializing_if = "Option::is_none",
@@ -202,7 +202,7 @@ impl PartialEq for BlockHeader {
             requests_hash,
             block_access_list_hash,
             slot_number,
-            dependency_witnesses_hash,
+            claim_witnesses_hash,
             burned_fees,
         } = self;
 
@@ -227,7 +227,7 @@ impl PartialEq for BlockHeader {
             && requests_hash == &other.requests_hash
             && block_access_list_hash == &other.block_access_list_hash
             && slot_number == &other.slot_number
-            && dependency_witnesses_hash == &other.dependency_witnesses_hash
+            && claim_witnesses_hash == &other.claim_witnesses_hash
             && burned_fees == &other.burned_fees
             && logs_bloom == &other.logs_bloom
             && extra_data == &other.extra_data
@@ -262,7 +262,7 @@ impl RLPEncode for BlockHeader {
             .encode_optional_field(&self.slot_number)
             // Before `burned_fees`: trailing optional fields decode greedily by
             // type, and this hash must not be taken for a later field.
-            .encode_optional_field(&self.dependency_witnesses_hash)
+            .encode_optional_field(&self.claim_witnesses_hash)
             .encode_optional_field(&self.burned_fees)
             .finish();
     }
@@ -295,7 +295,7 @@ impl RLPDecode for BlockHeader {
         let (requests_hash, decoder) = decoder.decode_optional_field();
         let (block_access_list_hash, decoder) = decoder.decode_optional_field();
         let (slot_number, decoder) = decoder.decode_optional_field();
-        let (dependency_witnesses_hash, decoder) = decoder.decode_optional_field();
+        let (claim_witnesses_hash, decoder) = decoder.decode_optional_field();
         let (burned_fees, decoder) = decoder.decode_optional_field();
 
         Ok((
@@ -324,7 +324,7 @@ impl RLPDecode for BlockHeader {
                 requests_hash,
                 block_access_list_hash,
                 slot_number,
-                dependency_witnesses_hash,
+                claim_witnesses_hash,
                 burned_fees,
             },
             decoder.finish()?,
@@ -342,17 +342,20 @@ pub struct BlockBody {
     #[serde(rename = "uncles")]
     pub ommers: Vec<BlockHeader>,
     pub withdrawals: Option<Vec<Withdrawal>>,
-    /// EIP-8504: the block's dependency witnesses, one signature for each entry
-    /// of `block_dependencies` over its transactions, in the same order. They
-    /// are not part of any transaction. `Some`, possibly empty, once EIP-8504 is
-    /// active; `None` before.
+    /// EIP-8141: the block's claim witnesses as one opaque byte string. It is
+    /// empty when the block's transactions have no dependencies; otherwise it is
+    /// a version byte followed by the RLP list of one witness for each entry of
+    /// `block_dependencies` over the transactions, in the same order (see
+    /// [`encode_claim_witnesses`](super::encode_claim_witnesses)). The witnesses
+    /// are not part of any transaction. `Some`, possibly empty, from Hegota on;
+    /// `None` before.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        with = "crate::serde_utils::bytes::vec_opt"
+        with = "crate::serde_utils::bytes::opt"
     )]
-    #[rkyv(with = rkyv::with::Map<rkyv::with::Map<crate::rkyv_utils::BytesWrapper>>)]
-    pub dependency_witnesses: Option<Vec<Bytes>>,
+    #[rkyv(with = rkyv::with::Map<crate::rkyv_utils::BytesWrapper>)]
+    pub claim_witnesses: Option<Bytes>,
 }
 
 impl BlockBody {
@@ -361,7 +364,7 @@ impl BlockBody {
             transactions: Vec::new(),
             ommers: Vec::new(),
             withdrawals: Some(Vec::new()),
-            dependency_witnesses: None,
+            claim_witnesses: None,
         }
     }
 
@@ -441,7 +444,7 @@ impl RLPEncode for BlockBody {
             .encode_field(&self.transactions)
             .encode_field(&self.ommers)
             .encode_optional_field(&self.withdrawals)
-            .encode_optional_field(&self.dependency_witnesses)
+            .encode_optional_field(&self.claim_witnesses)
             .finish();
     }
 }
@@ -452,13 +455,13 @@ impl RLPDecode for BlockBody {
         let (transactions, decoder) = decoder.decode_field("transactions")?;
         let (ommers, decoder) = decoder.decode_field("ommers")?;
         let (withdrawals, decoder) = decoder.decode_optional_field();
-        let (dependency_witnesses, decoder) = decoder.decode_optional_field();
+        let (claim_witnesses, decoder) = decoder.decode_optional_field();
         Ok((
             BlockBody {
                 transactions,
                 ommers,
                 withdrawals,
-                dependency_witnesses,
+                claim_witnesses,
             },
             decoder.finish()?,
         ))
@@ -726,10 +729,10 @@ pub enum InvalidBlockHeaderError {
     SlotNumberNotPresent,
     #[error("Slot number is present")]
     SlotNumberPresent,
-    #[error("Dependency witnesses hash is not present")]
-    DependencyWitnessesHashNotPresent,
-    #[error("Dependency witnesses hash is present")]
-    DependencyWitnessesHashPresent,
+    #[error("Claim witnesses hash is not present")]
+    ClaimWitnessesHashNotPresent,
+    #[error("Claim witnesses hash is present")]
+    ClaimWitnessesHashPresent,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -740,8 +743,8 @@ pub enum InvalidBlockBodyError {
     TransactionsRootNotMatch,
     #[error("Ommers is not empty")]
     OmmersIsNotEmpty,
-    #[error("Dependency witnesses do not match the header's dependency_witnesses_hash")]
-    DependencyWitnessesHashNotMatch,
+    #[error("Claim witnesses do not match the header's claim_witnesses_hash")]
+    ClaimWitnessesHashNotMatch,
 }
 
 /// Validates that the header fields are correct in reference to the parent_header
@@ -835,37 +838,29 @@ pub fn validate_block_body(
         _ => return Err(InvalidBlockBodyError::WithdrawalsRootNotMatch),
     }
 
-    // EIP-8504: the header commits to the witnesses the body carries. The list
-    // and the commitment are present together, once EIP-8504 is active, or not at
-    // all; whether each is required is a header rule.
+    // EIP-8141: the header commits to the claim witnesses the body carries. The
+    // byte string and the commitment are present together, from Hegota on, or not
+    // at all; whether each is required is a header rule.
     match (
-        block_header.dependency_witnesses_hash,
-        &block_body.dependency_witnesses,
+        block_header.claim_witnesses_hash,
+        &block_body.claim_witnesses,
     ) {
-        (Some(hash), Some(witnesses)) => {
-            if hash != compute_dependency_witnesses_hash(witnesses, crypto) {
-                return Err(InvalidBlockBodyError::DependencyWitnessesHashNotMatch);
+        (Some(hash), Some(claim_witnesses)) => {
+            if hash != compute_claim_witnesses_hash(claim_witnesses, crypto) {
+                return Err(InvalidBlockBodyError::ClaimWitnessesHashNotMatch);
             }
         }
         (None, None) => {}
-        _ => return Err(InvalidBlockBodyError::DependencyWitnessesHashNotMatch),
+        _ => return Err(InvalidBlockBodyError::ClaimWitnessesHashNotMatch),
     }
 
     Ok(())
 }
 
-/// EIP-8504 `dependency_witnesses_hash`: the Keccak-256 hash of the RLP list of
-/// a block's dependency witnesses.
-pub fn compute_dependency_witnesses_hash(witnesses: &[Bytes], crypto: &dyn Crypto) -> H256 {
-    // An RLP list of byte strings: the payload is the items one after another.
-    let mut payload = Vec::new();
-    for witness in witnesses {
-        witness.encode(&mut payload);
-    }
-    let mut buf = Vec::new();
-    ethrex_rlp::encode::encode_length(payload.len(), &mut buf);
-    buf.extend_from_slice(&payload);
-    H256(crypto.keccak256(&buf))
+/// EIP-8141 `claim_witnesses_hash`: the Keccak-256 hash of a block's
+/// `claim_witnesses` byte string, as carried.
+pub fn compute_claim_witnesses_hash(claim_witnesses: &[u8], crypto: &dyn Crypto) -> H256 {
+    H256(crypto.keccak256(claim_witnesses))
 }
 
 /// Normalizes a legacy post-Shanghai body shape produced by older ethrex versions,
@@ -928,14 +923,14 @@ pub fn validate_prague_header_fields(
             return Err(InvalidBlockHeaderError::SlotNumberPresent);
         }
     }
-    // EIP-8504: the commitment to the dependency witnesses is a header field
-    // exactly while the EIP is active.
+    // EIP-8141: the commitment to the claim witnesses is a header field exactly
+    // from Hegota on, the fork that brings frame transactions.
     if chain_config.fork(header.timestamp) >= Fork::Hegota {
-        if header.dependency_witnesses_hash.is_none() {
-            return Err(InvalidBlockHeaderError::DependencyWitnessesHashNotPresent);
+        if header.claim_witnesses_hash.is_none() {
+            return Err(InvalidBlockHeaderError::ClaimWitnessesHashNotPresent);
         }
-    } else if header.dependency_witnesses_hash.is_some() {
-        return Err(InvalidBlockHeaderError::DependencyWitnessesHashPresent);
+    } else if header.claim_witnesses_hash.is_some() {
+        return Err(InvalidBlockHeaderError::ClaimWitnessesHashPresent);
     }
     Ok(())
 }
@@ -1542,10 +1537,10 @@ mod test {
         assert_eq!(canonical.withdrawals, before);
     }
 
-    // EIP-8504: the header commits to the dependency witnesses the body carries.
+    // EIP-8141: the header commits to the claim witnesses the body carries.
 
     #[test]
-    fn dependency_witnesses_hash_header_roundtrip_beside_burned_fees() {
+    fn claim_witnesses_hash_header_roundtrip_beside_burned_fees() {
         // The hash sits between `slot_number` and `burned_fees`. Trailing optional
         // fields decode by position and type, so with every earlier field present,
         // as on any chain that has frame transactions, each combination of the two
@@ -1554,7 +1549,7 @@ mod test {
         // apart when only one is present.
         let hash = Some(H256::repeat_byte(0x5A));
         let mut seen = std::collections::HashSet::new();
-        for dependency_witnesses_hash in [None, hash] {
+        for claim_witnesses_hash in [None, hash] {
             for burned_fees in [None, Some(11u64)] {
                 let header = BlockHeader {
                     base_fee_per_gas: Some(1),
@@ -1565,14 +1560,14 @@ mod test {
                     requests_hash: Some(H256::zero()),
                     block_access_list_hash: Some(H256::zero()),
                     slot_number: Some(7),
-                    dependency_witnesses_hash,
+                    claim_witnesses_hash,
                     burned_fees,
                     ..Default::default()
                 };
                 let encoded = header.encode_to_vec();
                 let decoded = BlockHeader::decode(&encoded).expect("the header decodes");
                 assert_eq!(decoded, header);
-                assert_eq!(decoded.dependency_witnesses_hash, dependency_witnesses_hash);
+                assert_eq!(decoded.claim_witnesses_hash, claim_witnesses_hash);
                 assert_eq!(decoded.burned_fees, burned_fees);
                 assert_eq!(decoded.slot_number, Some(7));
                 assert!(seen.insert(header.compute_block_hash(&NativeCrypto)));
@@ -1582,80 +1577,89 @@ mod test {
     }
 
     #[test]
-    fn dependency_witnesses_body_and_block_roundtrip() {
-        let witnesses = vec![Bytes::from(vec![0xAB; 7740]), Bytes::from(vec![0xCD; 7740])];
-        for dependency_witnesses in [None, Some(Vec::new()), Some(witnesses)] {
+    fn claim_witnesses_body_and_block_roundtrip() {
+        let witnesses = crate::types::encode_claim_witnesses(&[
+            Bytes::from(vec![0xAB; 7740]),
+            Bytes::from(vec![0xCD; 65]),
+        ]);
+        // Absent, present and empty, and present with witnesses are three
+        // different bodies.
+        for claim_witnesses in [None, Some(Bytes::new()), Some(witnesses)] {
             let body = BlockBody {
                 transactions: Vec::new(),
                 ommers: Vec::new(),
                 withdrawals: Some(Vec::new()),
-                dependency_witnesses: dependency_witnesses.clone(),
+                claim_witnesses: claim_witnesses.clone(),
             };
             let decoded = BlockBody::decode(&body.encode_to_vec()).expect("the body decodes");
             assert_eq!(decoded, body);
-            assert_eq!(decoded.dependency_witnesses, dependency_witnesses);
+            assert_eq!(decoded.claim_witnesses, claim_witnesses);
 
             let block = Block::new(BlockHeader::default(), body);
             let decoded = Block::decode(&block.encode_to_vec()).expect("the block decodes");
-            assert_eq!(decoded.body.dependency_witnesses, dependency_witnesses);
+            assert_eq!(decoded.body.claim_witnesses, claim_witnesses);
         }
     }
 
     #[test]
-    fn dependency_witnesses_hash_is_the_hash_of_the_rlp_list() {
-        // rlp([]) is 0xc0.
+    fn claim_witnesses_hash_is_the_hash_of_the_byte_string() {
+        // A block without dependencies commits to the empty byte string.
         assert_eq!(
-            compute_dependency_witnesses_hash(&[], &NativeCrypto),
-            H256(NativeCrypto.keccak256(&[0xc0]))
+            compute_claim_witnesses_hash(&[], &NativeCrypto),
+            H256(hex_literal::hex!(
+                "c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
+            ))
         );
-        // The function and the list's own RLP encoding agree.
-        let witnesses = vec![Bytes::from(vec![0x01; 7740]), Bytes::from(vec![0x02; 3])];
+        let claim_witnesses = crate::types::encode_claim_witnesses(&[Bytes::from(vec![0x01; 65])]);
         assert_eq!(
-            compute_dependency_witnesses_hash(&witnesses, &NativeCrypto),
-            H256(NativeCrypto.keccak256(&witnesses.encode_to_vec()))
+            compute_claim_witnesses_hash(&claim_witnesses, &NativeCrypto),
+            H256(NativeCrypto.keccak256(&claim_witnesses))
         );
     }
 
     #[test]
-    fn validate_block_body_checks_the_dependency_witnesses_commitment() {
-        let witnesses = vec![Bytes::from(vec![0xAB; 7740])];
+    fn validate_block_body_checks_the_claim_witnesses_commitment() {
+        let claim_witnesses =
+            crate::types::encode_claim_witnesses(&[Bytes::from(vec![0xAB; 7740])]);
         let body = BlockBody {
             transactions: Vec::new(),
             ommers: Vec::new(),
             withdrawals: Some(Vec::new()),
-            dependency_witnesses: Some(witnesses.clone()),
+            claim_witnesses: Some(claim_witnesses.clone()),
         };
         let header = BlockHeader {
             transactions_root: compute_transactions_root(&[], &NativeCrypto),
             withdrawals_root: Some(compute_withdrawals_root(&[], &NativeCrypto)),
-            dependency_witnesses_hash: Some(compute_dependency_witnesses_hash(
-                &witnesses,
+            claim_witnesses_hash: Some(compute_claim_witnesses_hash(
+                &claim_witnesses,
                 &NativeCrypto,
             )),
             ..Default::default()
         };
         validate_block_body(&header, &body, &NativeCrypto).expect("the commitment matches");
 
-        // Another list under the same commitment.
+        // Other witnesses under the same commitment.
         let mut other = body.clone();
-        other.dependency_witnesses = Some(vec![Bytes::from(vec![0xAC; 7740])]);
+        other.claim_witnesses = Some(crate::types::encode_claim_witnesses(&[Bytes::from(
+            vec![0xAC; 7740],
+        )]));
         assert!(matches!(
             validate_block_body(&header, &other, &NativeCrypto),
-            Err(InvalidBlockBodyError::DependencyWitnessesHashNotMatch)
+            Err(InvalidBlockBodyError::ClaimWitnessesHashNotMatch)
         ));
 
-        // The list without the commitment, and the commitment without the list.
+        // The witnesses without the commitment, and the commitment without them.
         let mut uncommitted = header.clone();
-        uncommitted.dependency_witnesses_hash = None;
+        uncommitted.claim_witnesses_hash = None;
         assert!(matches!(
             validate_block_body(&uncommitted, &body, &NativeCrypto),
-            Err(InvalidBlockBodyError::DependencyWitnessesHashNotMatch)
+            Err(InvalidBlockBodyError::ClaimWitnessesHashNotMatch)
         ));
-        let mut listless = body;
-        listless.dependency_witnesses = None;
+        let mut without_witnesses = body;
+        without_witnesses.claim_witnesses = None;
         assert!(matches!(
-            validate_block_body(&header, &listless, &NativeCrypto),
-            Err(InvalidBlockBodyError::DependencyWitnessesHashNotMatch)
+            validate_block_body(&header, &without_witnesses, &NativeCrypto),
+            Err(InvalidBlockBodyError::ClaimWitnessesHashNotMatch)
         ));
     }
 }

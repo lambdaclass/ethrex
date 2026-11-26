@@ -1,9 +1,11 @@
-//! Sends EIP-8504 dependency transactions signed with leanSPHINCS keys.
+//! Sends EIP-8141 frame transactions authorized by leanSPHINCS keys.
 //!
 //! `alloc` prints the genesis accounts the tool sends from: each one is
 //! controlled by a leanSPHINCS key through its validation code. `send` signs
-//! `[VERIFY, PROOF, SENDER]` transactions from those accounts and submits each
-//! one together with its signature through `eth_sendRawTransaction`.
+//! `[VERIFY, SENDER]` transactions from those accounts, each claiming the
+//! account key's signature of the transaction, and submits each one in its
+//! pooled representation, with that signature as the claim's witness, through
+//! `eth_sendRawTransaction`.
 
 use std::time::{Duration, Instant};
 
@@ -12,23 +14,24 @@ use clap::{Parser, Subcommand};
 use ethrex_common::{
     Address, H256, U256,
     types::{
-        Frame, FrameMode, FrameTransaction, LEANSPHINCS_SCHEME, LEANSPHINCS_VERIFICATION_GAS,
-        PROOF_FRAME_MODE, ProofWrapper,
+        Claim, Frame, FrameMode, FrameTransaction, LEANSPHINCS_VERIFIER, PooledFrameTransaction,
+        Transaction,
     },
     utils::keccak,
 };
 use ethrex_crypto::NativeCrypto;
+use ethrex_rlp::encode::RLPEncode;
 use eyre::{Context, OptionExt, eyre};
 use serde_json::{Value, json};
 
-/// Gas for the account's validation frame. Its code reads one triple and
+/// Gas for the account's validation frame. Its code tests for one claim and
 /// approves, a few hundred gas.
 const VERIFY_FRAME_GAS: u64 = 50_000;
 /// Gas for the call the transaction makes once it is approved.
 const SENDER_FRAME_GAS: u64 = 50_000;
 
 #[derive(Parser)]
-#[command(about = "Sends EIP-8504 dependency transactions signed with leanSPHINCS keys")]
+#[command(about = "Sends EIP-8141 frame transactions authorized by leanSPHINCS keys")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -116,56 +119,27 @@ impl AccountsArgs {
 
 /// Validation code of an account controlled by the leanSPHINCS key `public_key`.
 ///
-/// The frame's data is two words: the index of a proof frame and the byte offset
-/// of a triple in it. The code approves execution and payment when that frame is
-/// a proof frame and the triple is `(LEANSPHINCS_SCHEME, 0, public_key)`, that
-/// is, when the transaction depends on a signature of its own signature hash
-/// under the account's key. It reverts otherwise.
+/// It approves execution and payment when the transaction carries a claim that
+/// the key signed the transaction's signature hash, and reverts otherwise:
 ///
-/// The same code is exercised by ethrex's EIP-8504 tests
-/// (`test/tests/levm/eip8504_tests.rs`).
+/// ```text
+/// require(HASCLAIM(LEANSPHINCS_VERIFIER, public_key, 0))
+/// APPROVE(APPROVE_EXECUTION_AND_PAYMENT)
+/// ```
+///
+/// The same code is exercised by ethrex's EIP-8141 claim tests
+/// (`test/tests/levm/eip8141_claims_tests.rs`).
 fn account_code(public_key: H256) -> Vec<u8> {
-    let mut code = vec![
-        // FRAMEPARAM(mode, index) == PROOF_FRAME_MODE
-        0x60,
-        0x02, // PUSH1 0x02 (param: mode)
-        0x5f,
-        0x35, // PUSH0, CALLDATALOAD (frame index)
-        0xb3, // FRAMEPARAM
-        0x60,
-        PROOF_FRAME_MODE, // PUSH1 4
-        0x14,             // EQ
-        // FRAMEDATACOPY(memOffset 0, dataOffset, length 96, frame index)
-        0x5f,
-        0x35, // PUSH0, CALLDATALOAD (frame index)
-        0x60,
-        0x60, // PUSH1 96 (length)
-        0x60,
-        0x20,
-        0x35, // PUSH1 32, CALLDATALOAD (offset of the triple)
-        0x5f, // PUSH0 (memOffset)
-        0xb2, // FRAMEDATACOPY
-        // scheme word == LEANSPHINCS_SCHEME
-        0x5f,
-        0x51, // PUSH0, MLOAD
-        0x60,
-        LEANSPHINCS_SCHEME, // PUSH1 0x10
-        0x14,
-        0x16, // EQ, AND
-        // data_hash == 0: the message is this transaction's signature hash
-        0x60,
-        0x20,
-        0x51, // PUSH1 32, MLOAD
-        0x15,
-        0x16, // ISZERO, AND
-        // verification_key_hash == public_key
-        0x60,
-        0x40,
-        0x51, // PUSH1 64, MLOAD
-        0x7f, // PUSH32 public_key
-    ];
+    // PUSH0 (msg: zero stands for the signature hash)
+    let mut code = vec![0x5f];
+    // PUSH32 key
+    code.push(0x7f);
     code.extend_from_slice(public_key.as_bytes());
-    code.extend_from_slice(&[0x14, 0x16]); // EQ, AND
+    // PUSH20 verifier
+    code.push(0x73);
+    code.extend_from_slice(LEANSPHINCS_VERIFIER.as_bytes());
+    // HASCLAIM
+    code.push(0xb4);
     // JUMPI to the approval, 6 bytes ahead: PUSH1 dest, JUMPI, PUSH0, PUSH0, REVERT.
     let approve_at = (code.len() + 6) as u8;
     code.extend_from_slice(&[0x60, approve_at, 0x57, 0x5f, 0x5f, 0xfd]);
@@ -174,9 +148,8 @@ fn account_code(public_key: H256) -> Vec<u8> {
     code
 }
 
-/// `[VERIFY, PROOF, SENDER]`: the account's validation frame pointed at the only
-/// triple of the proof frame, the proof frame declaring a signature of the
-/// transaction's signature hash under the account's key, and a call to
+/// `[VERIFY, SENDER]` with one claim: the account key's signature of the
+/// transaction's signature hash, the account's validation frame, and a call to
 /// `recipient`.
 fn transaction(
     chain_id: u64,
@@ -186,20 +159,18 @@ fn transaction(
     max_fee_per_gas: U256,
     max_priority_fee_per_gas: U256,
 ) -> FrameTransaction {
-    // The validation frame's data: the proof frame is frame 1, the triple is at
-    // offset 0.
-    let mut verify_data = [0u8; 64];
-    verify_data[31] = 1;
-    // The triple: the scheme in a 32-byte word, a zero message, the key.
-    let mut triple = [0u8; 96];
-    triple[31] = LEANSPHINCS_SCHEME;
-    triple[64..].copy_from_slice(account.public.as_bytes());
-
     let mut tx = FrameTransaction {
         chain_id,
         nonce_keys: vec![],
         nonce_seq: nonce,
         sender: account.address,
+        // A protocol verifier fixes its own gas and witness length, so the claim
+        // declares neither, and its empty `msg` stands for the signature hash.
+        claims: vec![Claim {
+            verifier: LEANSPHINCS_VERIFIER,
+            key: Bytes::copy_from_slice(account.public.as_bytes()),
+            ..Default::default()
+        }],
         frames: vec![
             Frame {
                 mode: u8::from(FrameMode::Verify),
@@ -208,16 +179,7 @@ fn transaction(
                 gas_limit: VERIFY_FRAME_GAS,
                 state_gas_limit: 0,
                 value: U256::zero(),
-                data: Bytes::copy_from_slice(&verify_data),
-            },
-            Frame {
-                mode: PROOF_FRAME_MODE,
-                flags: 0,
-                target: None,
-                gas_limit: LEANSPHINCS_VERIFICATION_GAS,
-                state_gas_limit: 0,
-                value: U256::zero(),
-                data: Bytes::copy_from_slice(&triple),
+                data: Bytes::new(),
             },
             Frame {
                 mode: u8::from(FrameMode::Sender),
@@ -229,7 +191,6 @@ fn transaction(
                 data: Bytes::new(),
             },
         ],
-        signatures: Vec::new(),
         max_priority_fee_per_gas,
         blob_versioned_hashes: Vec::new(),
         ..Default::default()
@@ -238,18 +199,19 @@ fn transaction(
     tx
 }
 
-/// The form a dependency transaction is submitted in: the type byte followed by
-/// `rlp([tx_payload_body, witnesses])`, with the leanSPHINCS signature of the
-/// transaction's signature hash as its only witness.
+/// The form a frame transaction is submitted in: the type byte followed by its
+/// pooled representation, `rlp([tx_body, wrapper_version, witnesses,
+/// blob_sidecar])`, with the leanSPHINCS signature of the transaction's
+/// signature hash as the witness of its only claim.
 fn signed_submission(tx: FrameTransaction, secret: &[u8; 32]) -> Vec<u8> {
     let signature = lean_sphincs::sign(secret, tx.compute_sig_hash().as_fixed_bytes());
-    let wrapper = ProofWrapper::new(
+    let pooled = PooledFrameTransaction {
         tx,
-        None,
-        vec![Bytes::copy_from_slice(&signature.to_bytes())],
-    );
-    let mut submission = Vec::new();
-    wrapper.encode_submission(&mut submission);
+        witnesses: vec![Bytes::copy_from_slice(&signature.to_bytes())],
+        blobs_bundle: None,
+    };
+    let mut submission = vec![0x06];
+    pooled.encode(&mut submission);
     submission
 }
 
@@ -385,7 +347,7 @@ async fn send(
             max_fee_per_gas,
             max_priority_fee_per_gas,
         );
-        let tx_hash = ProofWrapper::new(tx.clone(), None, Vec::new()).tx_hash(&NativeCrypto);
+        let tx_hash = Transaction::FrameTransaction(tx.clone()).hash(&NativeCrypto);
         // Signing takes tens of milliseconds of CPU: keep it off the runtime.
         let secret = account.secret;
         let submission =
@@ -461,8 +423,7 @@ async fn main() -> eyre::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethrex_common::types::Transaction;
-    use ethrex_rlp::encode::RLPEncode;
+    use ethrex_rlp::decode::RLPDecode;
 
     fn test_account() -> Account {
         AccountsArgs {
@@ -511,24 +472,26 @@ mod tests {
 
         let submission = signed_submission(tx.clone(), &account.secret);
         assert_eq!(submission[0], 0x06);
-        assert!(ProofWrapper::is_submission(&submission[1..]).unwrap());
-        let wrapper = ProofWrapper::decode_submission(&submission[1..]).unwrap();
-        assert_eq!(wrapper.tx.encode_to_vec(), tx.encode_to_vec());
-        assert!(wrapper.states_its_dependencies());
+        assert!(PooledFrameTransaction::is_pooled(&submission[1..]).unwrap());
+        let pooled = PooledFrameTransaction::decode(&submission[1..]).unwrap();
+        assert_eq!(pooled.tx.encode_to_vec(), tx.encode_to_vec());
+        assert_eq!(pooled.witnesses.len(), pooled.tx.claims.len());
+        assert!(pooled.blobs_bundle.is_none());
 
         // One dependency: the transaction's signature hash under the account's
         // key, satisfied by the witness.
-        let dependencies = wrapper.tx.dependencies();
+        let dependencies = pooled.tx.dependencies().expect("a well-formed claim");
         assert_eq!(dependencies.len(), 1);
-        assert_eq!(dependencies[0].data_hash, tx.compute_sig_hash());
-        assert_eq!(dependencies[0].verification_key_hash, account.public);
+        assert_eq!(dependencies[0].verifier, LEANSPHINCS_VERIFIER);
+        assert_eq!(dependencies[0].msg, tx.compute_sig_hash());
+        assert_eq!(dependencies[0].key, account.public);
         assert!(ethrex_crypto::leansphincs::leansphincs_verify(
-            account.public.as_fixed_bytes(),
-            dependencies[0].data_hash.as_fixed_bytes(),
-            &wrapper.witnesses[0],
+            dependencies[0].key.as_fixed_bytes(),
+            dependencies[0].msg.as_fixed_bytes(),
+            &pooled.witnesses[0],
         ));
         assert_eq!(
-            wrapper.tx_hash(&NativeCrypto),
+            Transaction::FrameTransaction(pooled.tx).hash(&NativeCrypto),
             Transaction::FrameTransaction(tx).hash(&NativeCrypto)
         );
     }

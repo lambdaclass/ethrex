@@ -71,7 +71,8 @@ pub const FRAMEDATALOAD: u64 = 3;
 pub const FRAMEDATACOPY_STATIC: u64 = 3;
 pub const FRAMEDATACOPY_DYNAMIC_BASE: u64 = 3;
 pub const FRAMEPARAM: u64 = 2;
-pub const SIGPARAM: u64 = 2;
+/// EIP-8141 `HASCLAIM`.
+pub const HASCLAIM: u64 = 3;
 
 /// EIP-7906 `TXTRACE`: `WARM_STORAGE_READ_COST`.
 pub const TXTRACE: u64 = 100;

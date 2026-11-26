@@ -79,7 +79,7 @@ eyre = "0.6.12"
 rustc-hex = "2.1.0"
 url = { version = "2.5.4", features = ["serde"] }
 kzg-rs = "0.2.6"
-# leanSPHINCS signing for EIP-8504 tooling, at the commit the root workspace pins.
+# leanSPHINCS signing for EIP-8141 tooling, at the commit the root workspace pins.
 lean_sphincs = { git = "https://github.com/leanEthereum/leanVM", rev = "92a97c919b2f2d6fe09853090b6b23f781ecec07" }
 libsql = "0.9.10"
 futures = "0.3.31"

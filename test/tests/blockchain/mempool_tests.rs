@@ -19,11 +19,11 @@ use rustc_hash::FxHashMap;
 
 use ethrex_common::types::{
     APPROVE_EXECUTION_AND_PAYMENT, AuthorizationTuple, BYTES_PER_BLOB, BlobsBundle, Block,
-    BlockBody, BlockHeader, ChainConfig, EIP1559Transaction, EIP4844Transaction,
-    EIP7702Transaction, FRAME_SIG_SCHEME_P256, FRAME_SIG_SCHEME_SECP256K1,
-    FRAME_TX_EXPIRY_DATA_LENGTH, FRAME_TX_MAX_VERIFY_GAS, FRAME_TX_MAX_VERIFY_STATE_GAS,
-    FeeTokenTransaction, Frame, FrameMode, FrameSignature, FrameTransaction, Genesis,
-    GenesisAccount, MAX_TX_SIZE, MempoolTransaction, PrivilegedL2Transaction, Transaction, TxKind,
+    BlockBody, BlockHeader, ChainConfig, Claim, EIP1559Transaction, EIP4844Transaction,
+    EIP7702Transaction, FRAME_TX_EXPIRY_DATA_LENGTH, FRAME_TX_MAX_VERIFY_GAS,
+    FRAME_TX_MAX_VERIFY_STATE_GAS, FeeTokenTransaction, Frame, FrameMode, FrameTransaction,
+    Genesis, GenesisAccount, MAX_TX_SIZE, MempoolTransaction, P256_VERIFIER,
+    PooledFrameTransaction, PrivilegedL2Transaction, SECP256K1_VERIFIER, Transaction, TxKind,
     frame_tx_expiry_verifier, kzg_commitment_to_versioned_hash,
 };
 use ethrex_common::{Address, Bytes, H160, H256, U256};
@@ -658,7 +658,7 @@ async fn setup_hegota_store() -> Store {
     store
 }
 
-/// A minimal, statically-valid 1-frame transaction with an empty signature list.
+/// A minimal, statically-valid 1-frame transaction without claims.
 fn minimal_valid_frame_tx() -> FrameTransaction {
     let sender = Address::from_low_u64_be(0xABCD);
     FrameTransaction {
@@ -682,7 +682,7 @@ fn minimal_valid_frame_tx() -> FrameTransaction {
             value: U256::zero(),
             data: Bytes::new(),
         }],
-        signatures: vec![],
+        claims: vec![],
         max_fee: U256::zero(),
         max_priority_fee_per_gas: U256::zero(),
         blob_versioned_hashes: vec![],
@@ -692,7 +692,7 @@ fn minimal_valid_frame_tx() -> FrameTransaction {
 
 /// Raise the first frame's gas limit so the transaction reserves its EIP-7623
 /// calldata floor. The minimal fixture carries no data, so tests that add frame
-/// data or signatures need the extra headroom to stay otherwise-valid.
+/// data or claims need the extra headroom to stay otherwise-valid.
 fn reserve_calldata_floor(tx: &mut FrameTransaction) {
     let floor = tx.calldata_floor_gas();
     if let Some(frame) = tx.frames.first_mut() {
@@ -701,27 +701,39 @@ fn reserve_calldata_floor(tx: &mut FrameTransaction) {
 }
 
 #[tokio::test]
-async fn mempool_rejects_frame_tx_with_invalid_signature() {
+async fn mempool_rejects_frame_tx_with_invalid_witness() {
     let store = setup_hegota_store().await;
     let blockchain = Blockchain::default_with_store(store);
 
     let mut frame_tx = minimal_valid_frame_tx();
-    // One secp256k1 signature with the right length (65 bytes) but garbage bytes:
-    // ecrecover will not recover the claimed signer, so admission must reject it.
-    frame_tx.signatures = vec![FrameSignature {
-        scheme: FRAME_SIG_SCHEME_SECP256K1,
-        signer: Some(Address::from_low_u64_be(0xABCD)),
-        msg: Bytes::new(),
-        signature: Bytes::from(vec![0xAB; 65]),
+    // One secp256k1 claim for the sender, whose witness has the right length
+    // (65 bytes) but garbage bytes: nothing recovers the claimed signer from it,
+    // so admission must reject it.
+    frame_tx.claims = vec![Claim {
+        verifier: SECP256K1_VERIFIER,
+        ..Default::default()
     }];
-
     reserve_calldata_floor(&mut frame_tx);
 
+    let result = blockchain
+        .add_frame_transaction_to_pool(PooledFrameTransaction {
+            tx: frame_tx.clone(),
+            witnesses: vec![Bytes::from(vec![0xAB; 65])],
+            blobs_bundle: None,
+        })
+        .await;
+    assert!(
+        matches!(result, Err(MempoolError::ClaimNotSatisfied(0))),
+        "got {result:?}"
+    );
+
+    // Without any witness the transaction can never be included: it is rejected
+    // as it arrives.
     let tx = Transaction::FrameTransaction(frame_tx);
     let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
     assert!(matches!(
         validation.await,
-        Err(MempoolError::InvalidFrameSignature)
+        Err(MempoolError::FrameTxWithoutWitnesses)
     ));
 }
 
@@ -747,8 +759,8 @@ async fn mempool_accepts_small_frame_tx() {
     let store = setup_hegota_store().await;
     let blockchain = Blockchain::default_with_store(store);
 
-    // Empty signature list passes signature validation (nothing to reject), and
-    // the tx otherwise satisfies static constraints + nonce/fee checks.
+    // A transaction without claims has no witnesses to verify, and the tx
+    // otherwise satisfies static constraints + nonce/fee checks.
     let frame_tx = minimal_valid_frame_tx();
     let tx = Transaction::FrameTransaction(frame_tx);
     let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
@@ -896,32 +908,34 @@ async fn mempool_rejects_frame_tx_exceeding_max_verify_gas() {
     let store = setup_hegota_store().await;
     let blockchain = Blockchain::default_with_store(store);
 
-    // EIP-8141 §Mempool rule #6: signature validation counts against
-    // MAX_VERIFY_GAS (100_000). P256 sigs cost 6700 each, so 15 sigs cost
+    // EIP-8141 §Mempool rule #6: claim verification counts against
+    // MAX_VERIFY_GAS (100_000). A P-256 claim costs 6700, so 15 of them cost
     // 100_500 > MAX_VERIFY_GAS and the tx must be rejected at admission BEFORE
-    // any per-signature crypto runs. The signature bytes need not be valid:
-    // the cap rejects first. Static constraints only require a known scheme and
-    // an empty-or-32-byte msg, which these satisfy.
-    let n_sigs = (FRAME_TX_MAX_VERIFY_GAS / 6700) as usize + 1; // 15
+    // any witness is verified. The witness bytes need not be valid: the cap
+    // rejects first. They only need the count and the lengths the claims fix.
+    let n_claims = (FRAME_TX_MAX_VERIFY_GAS / 6700) as usize + 1; // 15
     let mut frame_tx = minimal_valid_frame_tx();
-    frame_tx.signatures = (0..n_sigs)
-        .map(|_| FrameSignature {
-            scheme: FRAME_SIG_SCHEME_P256,
-            signer: Some(Address::from_low_u64_be(0xABCD)),
-            msg: Bytes::new(),
-            signature: Bytes::from(vec![0u8; 128]),
+    frame_tx.claims = (0..n_claims)
+        .map(|_| Claim {
+            verifier: P256_VERIFIER,
+            ..Default::default()
         })
         .collect();
-    assert!(frame_tx.signature_verification_cost() > FRAME_TX_MAX_VERIFY_GAS);
+    assert!(frame_tx.claim_verification_cost() > FRAME_TX_MAX_VERIFY_GAS);
 
     reserve_calldata_floor(&mut frame_tx);
 
-    let tx = Transaction::FrameTransaction(frame_tx);
-    let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
-    assert!(matches!(
-        validation.await,
-        Err(MempoolError::FrameTxVerifyGasExceeded)
-    ));
+    let result = blockchain
+        .add_frame_transaction_to_pool(PooledFrameTransaction {
+            tx: frame_tx,
+            witnesses: vec![Bytes::from(vec![0u8; 128]); n_claims],
+            blobs_bundle: None,
+        })
+        .await;
+    assert!(
+        matches!(result, Err(MempoolError::FrameTxVerifyGasExceeded)),
+        "got {result:?}"
+    );
 }
 
 #[tokio::test]
@@ -1125,7 +1139,7 @@ fn frame_tx_with_expiry(deadline: u64) -> FrameTransaction {
                 data: Bytes::new(),
             },
         ],
-        signatures: vec![],
+        claims: vec![],
         max_fee: U256::zero(),
         max_priority_fee_per_gas: U256::zero(),
         blob_versioned_hashes: vec![],
@@ -1859,7 +1873,7 @@ fn funded_frame_tx(max_fee_per_gas: u64, max_priority_fee_per_gas: u64) -> Frame
             value: U256::zero(),
             data: Bytes::new(),
         }],
-        signatures: vec![],
+        claims: vec![],
         max_priority_fee_per_gas: U256::from(max_priority_fee_per_gas),
         blob_versioned_hashes: vec![],
         ..Default::default()
@@ -1960,7 +1974,7 @@ async fn mempool_rejects_underfunded_paymaster() {
             value: U256::zero(),
             data: Bytes::new(),
         }],
-        signatures: vec![],
+        claims: vec![],
         max_fee: U256::zero(),
         max_priority_fee_per_gas: U256::zero(),
         blob_versioned_hashes: vec![],
@@ -2039,7 +2053,7 @@ async fn mempool_enforces_noncanonical_paymaster_limit() {
             value: U256::zero(),
             data: Bytes::new(),
         }],
-        signatures: vec![],
+        claims: vec![],
         max_fee: U256::zero(),
         max_priority_fee_per_gas: U256::zero(),
         blob_versioned_hashes: vec![],
@@ -2116,7 +2130,7 @@ async fn mempool_rejects_second_frame_tx_same_sender_new_nonce() {
             value: U256::zero(),
             data: Bytes::new(),
         }],
-        signatures: vec![],
+        claims: vec![],
         max_fee: U256::zero(),
         max_priority_fee_per_gas: U256::zero(),
         blob_versioned_hashes: vec![],
@@ -2361,7 +2375,7 @@ async fn mempool_fee_bump_rejected_leaves_original_intact() {
             value: U256::zero(),
             data: Bytes::new(),
         }],
-        signatures: vec![],
+        claims: vec![],
         max_fee: U256::zero(),
         max_priority_fee_per_gas: U256::zero(),
         blob_versioned_hashes: vec![],
@@ -3349,12 +3363,13 @@ async fn l1_validate_transaction_rejects_privileged_l2() {
 
 // ==================== Relocated from crates/blockchain/blockchain.rs ====================
 // A pooled frame transaction (EIP-8141) must be served over P2P as a
-// `P2PTransaction::FrameTransaction` instead of being rejected.
+// `P2PTransaction::FrameTransaction`, in its pooled representation with the
+// witnesses of its claims, instead of being rejected.
 mod p2p_serve_tests {
     use ethrex_blockchain::Blockchain;
     use ethrex_common::types::{
-        FRAME_SIG_SCHEME_SECP256K1, Frame, FrameMode, FrameSignature, FrameTransaction,
-        MempoolTransaction, P2PTransaction, Transaction,
+        Claim, Frame, FrameMode, FrameTransaction, MempoolTransaction, P2PTransaction,
+        PooledFrameTransaction, SECP256K1_VERIFIER, Transaction,
     };
     use ethrex_common::{Address, U256};
     use ethrex_crypto::NativeCrypto;
@@ -3366,6 +3381,10 @@ mod p2p_serve_tests {
             nonce_keys: vec![],
             nonce_seq: 7,
             sender: Address::from_low_u64_be(0xABCD),
+            claims: vec![Claim {
+                verifier: SECP256K1_VERIFIER,
+                ..Default::default()
+            }],
             frames: vec![Frame {
                 mode: FrameMode::Sender as u8,
                 flags: 0x00,
@@ -3374,12 +3393,6 @@ mod p2p_serve_tests {
                 state_gas_limit: 1_000_000,
                 value: U256::zero(),
                 data: bytes::Bytes::from_static(b"call_data"),
-            }],
-            signatures: vec![FrameSignature {
-                scheme: FRAME_SIG_SCHEME_SECP256K1,
-                signer: Some(Address::from_low_u64_be(0xABCD)),
-                msg: bytes::Bytes::new(),
-                signature: bytes::Bytes::from(vec![0u8; 65]),
             }],
             max_fee: U256::from(10_000_000_000_000_000u64),
             max_priority_fee_per_gas: U256::from(1_000_000_000u64),
@@ -3394,7 +3407,8 @@ mod p2p_serve_tests {
         let blockchain = Blockchain::default_with_store(store);
 
         let ftx = make_frame_tx();
-        let tx = Transaction::FrameTransaction(ftx);
+        let witnesses = vec![bytes::Bytes::from(vec![0x07u8; 65])];
+        let tx = Transaction::FrameTransaction(ftx.clone());
         let sender = Address::from_low_u64_be(0xABCD);
         let hash = tx.hash(&NativeCrypto);
 
@@ -3402,19 +3416,29 @@ mod p2p_serve_tests {
         // exercise only the P2P serve path.
         blockchain
             .mempool
-            .add_transaction(
+            .add_transaction_with_claim_witnesses(
                 hash,
                 sender,
                 MempoolTransaction::new(tx, sender),
                 None,
                 None,
+                witnesses.clone(),
+                true,
             )
             .expect("failed to add frame tx to mempool");
 
         let served = blockchain
             .get_p2p_transaction_by_hash(&hash)
             .expect("frame tx should be served over P2P");
-        assert!(matches!(served, P2PTransaction::FrameTransaction(_)));
+        assert_eq!(
+            served.encode_canonical_to_vec(),
+            P2PTransaction::FrameTransaction(PooledFrameTransaction {
+                tx: ftx,
+                witnesses,
+                blobs_bundle: None,
+            })
+            .encode_canonical_to_vec()
+        );
         assert_eq!(served.compute_hash(), hash);
     }
 }

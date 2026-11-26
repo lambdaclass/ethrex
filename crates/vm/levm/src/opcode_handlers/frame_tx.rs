@@ -6,20 +6,24 @@
 //!   - `FRAMEDATALOAD` (0xB1)
 //!   - `FRAMEDATACOPY` (0xB2)
 //!   - `FRAMEPARAM` (0xB3)
-//!   - `SIGPARAM` (0xB4)
-//!   - Default code for EOAs: `VERIFY` has the signature-check behavior;
-//!     `SENDER` and `DEFAULT` return successfully as if calling empty code
-//!     (EIP-8141 §"Default code").
+//!   - `HASCLAIM` (0xB4)
+//!   - `STATICCALL` as the pure context of a custom claim verifier restricts it
+//!   - Default code for EOAs: `VERIFY` approves on a secp256k1 claim for the
+//!     account; `SENDER` and `DEFAULT` return successfully as if calling empty
+//!     code (EIP-8141 §"Default code").
 
 use crate::{
     errors::{ExceptionalHalt, OpcodeResult, VMError},
     gas_cost,
     memory::calculate_memory_size,
-    opcode_handlers::OpcodeHandler,
-    utils::size_offset_to_usize,
+    opcode_handlers::{OpcodeHandler, system::OpStaticCallHandler},
+    utils::{size_offset_to_usize, word_to_address},
     vm::VM,
 };
-use ethrex_common::{Address, U256, types::FrameMode, types::Log};
+use ethrex_common::{
+    Address, H256, U256,
+    types::{FrameMode, FrameTransaction, Log, SECP256K1_VERIFIER},
+};
 
 /// Convert a u64 index to usize, returning InvalidOpcode on overflow.
 fn index_to_usize(val: u64) -> Result<usize, VMError> {
@@ -403,7 +407,7 @@ impl OpcodeHandler for OpFrameDataCopyHandler {
 }
 
 /// FRAMEPARAM (0xB3) -- Load a frame parameter as a 32-byte word.
-/// Stack: [param, frameIndex] with frameIndex on top (matches SIGPARAM). Gas cost: 2.
+/// Stack: [param, frameIndex] with frameIndex on top. Gas cost: 2.
 pub struct OpFrameParamHandler;
 impl OpcodeHandler for OpFrameParamHandler {
     #[inline(always)]
@@ -503,136 +507,83 @@ impl OpcodeHandler for OpFrameParamHandler {
     }
 }
 
-/// SIGPARAM (0xB4) -- signature-scoped metadata and data copy (EIP-8141).
-/// Metadata (params 0x00-0x03): stack `[param, signatureIndex]` with
-/// `signatureIndex` on top; gas 2; returns one word (0x00 effective signer,
-/// 0x01 scheme, 0x02 msg, 0x03 len(signature)). Copy (param 0x04): takes
-/// `[signatureIndex, param, memOffset, dataOffset, length]` with `signatureIndex`
-/// on top (popped first), matching `CALLDATACOPY`'s operand order; CALLDATACOPY
-/// gas; copies an ARBITRARY signature's raw bytes into memory (zero-filled past
-/// the end) and pushes nothing — any other scheme halts.
-pub struct OpSigParamHandler;
-impl OpcodeHandler for OpSigParamHandler {
+/// Whether `tx` declares a claim matching `(verifier, key, msg)` as `HASCLAIM`
+/// matches them (EIP-8141): the claim names `verifier`, its resolved key is
+/// `key`, and its `msg` is empty when `msg` is zero, or is exactly `msg`
+/// otherwise. A zero `msg` therefore stands for the canonical signature hash,
+/// and a claim over that hash is not matched by passing the hash itself.
+pub fn has_claim(tx: &FrameTransaction, verifier: Address, key: H256, msg: H256) -> bool {
+    tx.claims.iter().any(|claim| {
+        claim.verifier == verifier
+            && claim.resolved_key(tx.sender) == Some(key)
+            && if msg.is_zero() {
+                claim.msg.is_empty()
+            } else {
+                claim.msg.as_ref() == msg.as_bytes()
+            }
+    })
+}
+
+/// HASCLAIM (0xB4) -- test whether the transaction carries a verified claim
+/// matching `(verifier, key, msg)` (EIP-8141).
+/// Stack: `[msg, key, verifier]` with `verifier` on top. Gas cost: 3.
+///
+/// Pushes 1 when `tx.claims` holds a matching claim and 0 otherwise. `verifier`
+/// is an address in a word: one with any of its upper 12 bytes set matches
+/// nothing. Every claim is verified before any frame executes, so 1 means the
+/// claim holds under `verifier`. The witness bytes are never exposed.
+pub struct OpHasClaimHandler;
+impl OpcodeHandler for OpHasClaimHandler {
     #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
-        let [signature_index, param] = *vm.current_call_frame.stack.pop()?;
-        let param = u64::try_from(param).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
-        let signature_index =
-            u64::try_from(signature_index).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
-        let idx = index_to_usize(signature_index)?;
+        let [verifier, key, msg] = *vm.current_call_frame.stack.pop()?;
 
-        // Metadata (0x00-0x03): fixed gas, returns one word.
         vm.current_call_frame
-            .increase_consumed_gas(gas_cost::SIGPARAM)?;
+            .increase_consumed_gas(gas_cost::HASCLAIM)?;
+
         let ctx = vm
             .frame_tx_context
             .as_ref()
             .ok_or(ExceptionalHalt::InvalidOpcode)?;
-        let sig = ctx
-            .tx
-            .signatures
-            .get(idx)
-            .ok_or(ExceptionalHalt::InvalidOpcode)?;
-        let result = match param {
-            // Resolved signer: an absent signer resolves to tx.sender. EIP-8141
-            // assigns no resolved signer to ARBITRARY entries, so asking for one
-            // is an exceptional halt.
-            0x00 => {
-                if sig.scheme == ethrex_common::types::FRAME_SIG_SCHEME_ARBITRARY {
-                    return Err(ExceptionalHalt::InvalidOpcode.into());
-                }
-                address_to_u256(sig.signer.unwrap_or(ctx.tx.sender))
-            }
-            0x01 => U256::from(sig.scheme),
-            0x02 => {
-                // msg: 0 when empty (canonical sig_hash case), else the 32-byte digest.
-                if sig.msg.is_empty() {
-                    U256::zero()
-                } else {
-                    U256::from_big_endian(&sig.msg)
-                }
-            }
-            0x03 => {
-                // `len(signature)` is ARBITRARY-only: the raw bytes of a
-                // protocol-validated scheme, their length included, are
-                // deliberately not introspectable.
-                if sig.scheme != ethrex_common::types::FRAME_SIG_SCHEME_ARBITRARY {
-                    return Err(ExceptionalHalt::InvalidOpcode.into());
-                }
-                U256::from(sig.signature.len())
-            }
-            _ => return Err(ExceptionalHalt::InvalidOpcode.into()),
-        };
-        vm.current_call_frame.stack.push(result)?;
+
+        let verifier = verifier.to_big_endian();
+        let (upper, address) = verifier.split_at(12);
+        let found = upper.iter().all(|byte| *byte == 0)
+            && has_claim(
+                &ctx.tx,
+                Address::from_slice(address),
+                H256(key.to_big_endian()),
+                H256(msg.to_big_endian()),
+            );
+        vm.current_call_frame
+            .stack
+            .push(U256::from(u8::from(found)))?;
+
         Ok(OpcodeResult::Continue)
     }
 }
 
-/// SIGDATACOPY (0xB5) -- copy an `ARBITRARY` signature's raw bytes into memory.
-///
-/// EIP-8141 split this out of `SIGPARAM` so that `SIGPARAM`'s stack requirement is
-/// static: it took two operands for metadata and five for the copy form, which no
-/// static analysis could resolve. The copy now has its own opcode with a fixed
-/// four-operand shape.
-///
-/// Stack (top first): `memOffset`, `dataOffset`, `length`, `signatureIndex`. No
-/// output. Gas is `CALLDATACOPY`'s: the fixed 3, the per-word copy cost, and
-/// memory expansion. The raw bytes of protocol-validated schemes stay
-/// unreadable -- referencing one is an exceptional halt -- because they may be
-/// aggregated in future, while `ARBITRARY` bytes are validated in EVM execution
-/// and so may be read.
-pub struct OpSigDataCopyHandler;
-impl OpcodeHandler for OpSigDataCopyHandler {
+/// STATICCALL in the pure context of a custom claim verifier (EIP-8141 §Pure
+/// Context): the callee must be an active precompile, so the verifier keeps
+/// computing a function of its input alone. Any other callee is an exceptional
+/// halt. A call to a precompile keeps its ordinary semantics: a failed one
+/// returns failure and consumes the gas passed to it.
+pub struct OpPureStaticCallHandler;
+impl OpcodeHandler for OpPureStaticCallHandler {
     #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
-        let [mem_offset, data_offset, length, signature_index] =
-            *vm.current_call_frame.stack.pop()?;
-        let signature_index =
-            u64::try_from(signature_index).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
-        let idx = index_to_usize(signature_index)?;
-        let (length, mem_offset) = size_offset_to_usize(length, mem_offset)?;
-        let data_offset_opt = u256_to_offset(data_offset);
-
-        let new_memory_size = calculate_memory_size(mem_offset, length)?;
-        let current_memory_size = vm.current_call_frame.memory.len();
-        // Charge memory expansion before the context/scheme guards: the caller pays
-        // for the growth it requested even if the opcode then halts.
-        vm.current_call_frame
-            .increase_consumed_gas(gas_cost::framedatacopy(
-                new_memory_size,
-                current_memory_size,
-                length,
-            )?)?;
-
-        let ctx = vm
-            .frame_tx_context
-            .as_ref()
-            .ok_or(ExceptionalHalt::InvalidOpcode)?;
-        let sig = ctx
-            .tx
-            .signatures
-            .get(idx)
-            .ok_or(ExceptionalHalt::InvalidOpcode)?;
-        if sig.scheme != ethrex_common::types::FRAME_SIG_SCHEME_ARBITRARY {
+        // The callee is the second operand, below `gas`. It is only read here:
+        // the ordinary handler pops the operands.
+        let stack = &vm.current_call_frame.stack;
+        let callee = stack
+            .values
+            .get(stack.offset.wrapping_add(1))
+            .copied()
+            .ok_or(ExceptionalHalt::StackUnderflow)?;
+        if !vm.address_is_precompile(&word_to_address(callee)) {
             return Err(ExceptionalHalt::InvalidOpcode.into());
         }
-        if length == 0 {
-            return Ok(OpcodeResult::Continue);
-        }
-        let data = &sig.signature;
-        let mut buf = vec![0u8; length];
-        if let Some(data_offset) = data_offset_opt {
-            let available = data.len().saturating_sub(data_offset);
-            let copy_len = length.min(available);
-            if let (Some(dst), Some(src)) = (
-                buf.get_mut(..copy_len),
-                data.get(data_offset..data_offset.saturating_add(copy_len)),
-            ) {
-                dst.copy_from_slice(src);
-            }
-        }
-        vm.current_call_frame.memory.store_data(mem_offset, &buf)?;
-        Ok(OpcodeResult::Continue)
+        OpStaticCallHandler::eval(vm)
     }
 }
 
@@ -654,7 +605,6 @@ pub fn load_tx_param(ctx: &crate::vm::FrameTxContext, param_id: u64) -> Result<U
         }
         0x09 => Ok(U256::from(ctx.tx.frames.len())),
         0x0A => Ok(U256::from(ctx.current_frame_index)),
-        0x0B => Ok(U256::from(ctx.tx.signatures.len())),
         // EIP-8250 `TXPARAM_LEGACY_NONCE`: the sender's pre-state account nonce.
         0x0D => Ok(U256::from(ctx.legacy_sender_nonce)),
         // EIP-8250 `TXPARAM_NONCE_KEY_COUNT`.
@@ -682,8 +632,9 @@ pub fn address_to_u256(addr: ethrex_common::Address) -> U256 {
 ///
 /// When a frame targets an address with no deployed code (an EOA), the protocol
 /// runs built-in "default code" instead of executing a normal CALL. `VERIFY`
-/// runs the signature-check logic; `SENDER` and `DEFAULT` return successfully
-/// as if calling empty code (EIP-8141 §"Default code").
+/// approves on a secp256k1 claim for the account over the canonical signature
+/// hash; `SENDER` and `DEFAULT` return successfully as if calling empty code
+/// (EIP-8141 §"Default code").
 ///
 /// Returns `(success, gas_used, logs)`.
 pub fn execute_default_code(
@@ -700,11 +651,6 @@ pub fn execute_default_code(
         // the caller's deferred transfer).
         // EIP-7906: an ASSERT frame is handled like SENDER or DEFAULT.
         FrameMode::Sender | FrameMode::Default | FrameMode::Assert => Ok((true, 0, Vec::new())),
-        // EIP-8504: a proof frame is settled before any target is resolved, so
-        // default code is never asked to stand in for one.
-        FrameMode::Proof => Err(VMError::Internal(crate::errors::InternalError::Custom(
-            "proof frame reached the default code".to_string(),
-        ))),
     }
 }
 
@@ -729,20 +675,23 @@ fn execute_default_verify(
         return Ok((false, 0, Vec::new()));
     }
 
-    // EIP-8141: the default account approves only if the signature at a specific
-    // index — 0 when the allowed scope includes APPROVE_EXECUTION, else 1 (the
-    // payment-only case, where index 0 belongs to the sender's own verify frame)
-    // — is a SECP256K1 signature over the canonical sig_hash (empty msg) whose
-    // resolved signer is the resolved target. An absent signer resolves to
-    // tx.sender. Signatures were already validated in execute_frame_tx, so a
-    // match here is sufficient — no in-frame crypto.
-    let sig_index = if (allowed_scope & 0x02) != 0 { 0 } else { 1 };
-    let sender_sig_ok = ctx.tx.signatures.get(sig_index).is_some_and(|s| {
-        s.scheme == ethrex_common::types::FRAME_SIG_SCHEME_SECP256K1
-            && s.msg.is_empty()
-            && s.signer.unwrap_or(ctx.tx.sender) == target
-    });
-    if !sender_sig_ok {
+    // EIP-8141: the default account takes no input.
+    if !frame.data.is_empty() {
+        return Ok((false, 0, Vec::new()));
+    }
+
+    // EIP-8141: the default account approves only if the transaction carries a
+    // claim with verifier `SECP256K1_VERIFIER`, the resolved target as its key and
+    // an empty `msg`, i.e. `HASCLAIM(SECP256K1_VERIFIER, resolved_target, 0)`: a
+    // secp256k1 signature by the account over the canonical signature hash. Every
+    // claim was verified before any frame ran, so the match is sufficient -- no
+    // in-frame crypto.
+    if !has_claim(
+        &ctx.tx,
+        SECP256K1_VERIFIER,
+        H256::from(target),
+        H256::zero(),
+    ) {
         return Ok((false, 0, Vec::new()));
     }
 

@@ -68,7 +68,7 @@ impl From<crate::common::ExecutionError> for L2ExecutionError {
             ExecutionError::InvalidFinalStateTrie => L2ExecutionError::InvalidFinalStateTrie,
             ExecutionError::InvalidBlockHash(n) => L2ExecutionError::InvalidBlockHash(n),
             ExecutionError::Internal(s) => L2ExecutionError::Internal(s),
-            err @ ExecutionError::UnverifiedDependencyWitnesses(_) => {
+            err @ ExecutionError::UnverifiedClaimWitnesses(_) => {
                 L2ExecutionError::Internal(err.to_string())
             }
         }

@@ -34,17 +34,18 @@ pub struct FullBlockBody {
     pub transactions: Vec<RpcTransaction>,
     pub uncles: Vec<H256>,
     pub withdrawals: Vec<Withdrawal>,
-    /// EIP-8504: the block's dependency witnesses, one for each entry of
-    /// `block_dependencies`, in order. Present from the activation of the EIP.
-    /// The form with transaction hashes only leaves them out; the header's
-    /// `dependencyWitnessesHash` commits to them either way.
+    /// EIP-8141: the block's claim witnesses as one byte string, the version
+    /// byte followed by one witness for each entry of `block_dependencies`, in
+    /// order, or empty when the block has none. Present from Hegota on. The form
+    /// with transaction hashes only leaves it out; the header's
+    /// `claimWitnessesHash` commits to it either way.
     #[serde(
-        rename = "dependencyWitnesses",
+        rename = "claimWitnesses",
         default,
         skip_serializing_if = "Option::is_none",
-        with = "serde_utils::bytes::vec_opt"
+        with = "serde_utils::bytes::opt"
     )]
-    pub dependency_witnesses: Option<Vec<Bytes>>,
+    pub claim_witnesses: Option<Bytes>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -73,7 +74,7 @@ impl TryInto<Block> for RpcBlock {
                 transactions,
                 ommers: Vec::new(),
                 withdrawals: Some(block_body.withdrawals),
-                dependency_witnesses: block_body.dependency_witnesses,
+                claim_witnesses: block_body.claim_witnesses,
             },
         })
     }
@@ -129,7 +130,7 @@ impl FullBlockBody {
             transactions,
             uncles: body.ommers.iter().map(|ommer| ommer.hash()).collect(),
             withdrawals: body.withdrawals.unwrap_or_default(),
-            dependency_witnesses: body.dependency_witnesses,
+            claim_witnesses: body.claim_witnesses,
         })
     }
 }
@@ -228,7 +229,7 @@ mod test {
             transactions: vec![Transaction::EIP1559Transaction(tx)],
             ommers: vec![],
             withdrawals: Some(vec![]),
-            dependency_witnesses: None,
+            claim_witnesses: None,
         };
         let hash = block_header.hash();
 
@@ -238,40 +239,37 @@ mod test {
     }
 
     #[test]
-    fn full_block_carries_its_dependency_witnesses() {
-        let witnesses = vec![Bytes::from_static(&[0xAA, 0xBB]), Bytes::new()];
+    fn full_block_carries_its_claim_witnesses() {
+        let claim_witnesses = Bytes::from_static(&[0x00, 0xc2, 0xAA, 0xBB]);
         let header = BlockHeader::default();
         let hash = header.hash();
         let body = BlockBody {
             transactions: vec![],
             ommers: vec![],
             withdrawals: Some(vec![]),
-            dependency_witnesses: Some(witnesses.clone()),
+            claim_witnesses: Some(claim_witnesses.clone()),
         };
 
-        // With full transactions the witnesses are listed as hex strings and
+        // With full transactions the claim witnesses are one hex string and
         // survive the way back into a block.
         let full = RpcBlock::build(header.clone(), body.clone(), hash, true).unwrap();
         let json = serde_json::to_value(&full).unwrap();
-        assert_eq!(
-            json["dependencyWitnesses"],
-            serde_json::json!(["0xaabb", "0x"])
-        );
+        assert_eq!(json["claimWitnesses"], serde_json::json!("0x00c2aabb"));
         let decoded: RpcBlock = serde_json::from_value(json).unwrap();
         let block: Block = decoded.try_into().unwrap();
-        assert_eq!(block.body.dependency_witnesses, Some(witnesses));
+        assert_eq!(block.body.claim_witnesses, Some(claim_witnesses));
 
         // With transaction hashes only they are left out, and a block from before
-        // the activation of EIP-8504 has no such field at all.
+        // Hegota has no such field at all.
         let hashes_only = RpcBlock::build(header.clone(), body.clone(), hash, false).unwrap();
         let json = serde_json::to_value(&hashes_only).unwrap();
-        assert!(json.get("dependencyWitnesses").is_none());
+        assert!(json.get("claimWitnesses").is_none());
         let before = BlockBody {
-            dependency_witnesses: None,
+            claim_witnesses: None,
             ..body
         };
         let json =
             serde_json::to_value(RpcBlock::build(header, before, hash, true).unwrap()).unwrap();
-        assert!(json.get("dependencyWitnesses").is_none());
+        assert!(json.get("claimWitnesses").is_none());
     }
 }

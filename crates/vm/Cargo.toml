@@ -36,6 +36,9 @@ default = ["secp256k1", "rayon"]
 
 rayon = ["dep:rayon", "ethrex-levm/rayon"]
 secp256k1 = ["ethrex-levm/secp256k1", "ethrex-common/secp256k1"]
+# Native leanSPHINCS verification for EIP-8141's `LEANSPHINCS_VERIFIER` claims.
+# Native-only: zkVM guest builds omit it.
+leansphincs = ["ethrex-levm/leansphincs"]
 c-kzg = ["ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
 
 sp1 = ["ethrex-levm/sp1", "ethrex-common/sp1"]

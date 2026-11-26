@@ -126,15 +126,15 @@ fn frame_tx_env(tx: &FrameTransaction) -> Environment {
 
 /// Build a frame transaction wrapping `frames`, with sane harness defaults:
 /// harness chain id, nonce 0, sender = `FUNDED_SENDER`, a fee budget far above
-/// what the harness base fee requires, and an empty signature list.
+/// what the harness base fee requires, and no claims.
 fn frame_tx_with_frames(frames: Vec<Frame>) -> FrameTransaction {
     FrameTransaction {
         chain_id: HARNESS_CHAIN_ID,
         nonce_keys: vec![],
         nonce_seq: 0,
         sender: FUNDED_SENDER,
+        claims: Vec::new(),
         frames,
-        signatures: Vec::new(),
         max_fee: U256::from(1_000_000_000_000_000_000u64),
         max_priority_fee_per_gas: U256::from(1u64),
         blob_versioned_hashes: Vec::new(),
@@ -1546,7 +1546,7 @@ fn state_gas_reservoir_does_not_leak_across_frames() {
 
 mod frame_tx_opcode_handler_tests {
     use bytes::Bytes;
-    use ethrex_common::types::{FrameSignature, FrameTransaction};
+    use ethrex_common::types::{Claim, FrameTransaction};
     use ethrex_common::{Address, U256};
     use ethrex_levm::errors::{InternalError, VMError};
     use ethrex_levm::opcode_handlers::frame_tx::{address_to_u256, load_tx_param, u256_to_offset};
@@ -1629,19 +1629,8 @@ mod frame_tx_opcode_handler_tests {
         assert_eq!(zero_result, U256::zero());
     }
 
-    /// Build a minimal FrameTxContext with one signature for SIGPARAM tests.
-    fn ctx_with_one_signature() -> FrameTxContext {
-        let signer = Address::from_low_u64_be(0xABCDEF);
-        let msg_bytes = Bytes::from(vec![0xdeu8; 32]);
-        let sig_bytes = Bytes::from(vec![0xFFu8; 65]);
-        let sig = FrameSignature {
-            scheme: 0x01,
-            signer: Some(signer),
-            msg: msg_bytes,
-            signature: sig_bytes,
-        };
-        let mut tx = FrameTransaction::default();
-        tx.signatures.push(sig);
+    /// A minimal FrameTxContext over `tx`, for the parameter readers.
+    fn ctx_of(tx: FrameTransaction) -> FrameTxContext {
         FrameTxContext {
             sender_approved: false,
             payer_address: None,
@@ -1649,7 +1638,7 @@ mod frame_tx_opcode_handler_tests {
             current_frame_index: 0,
             outstanding_charge_owners: Default::default(),
             journal: Vec::new(),
-            sig_hash: ethrex_common::H256::zero(),
+            sig_hash: ethrex_common::H256::repeat_byte(0x5a),
             tx,
             approve_called_in_current_frame: false,
             max_gas: 0,
@@ -1661,99 +1650,142 @@ mod frame_tx_opcode_handler_tests {
         }
     }
 
+    // EIP-8141's TXPARAM table: the parameters it defines are readable and the
+    // ones it does not define halt. The claims are not countable: a contract
+    // tests for one with HASCLAIM and learns nothing else about the list.
     #[test]
-    fn sigparam_0x00_returns_signer() {
-        let ctx = ctx_with_one_signature();
-        let sig = ctx.tx.signatures.first().unwrap();
-        let result = address_to_u256(sig.signer.unwrap());
-        let mut expected = [0u8; 32];
-        expected[12..].copy_from_slice(Address::from_low_u64_be(0xABCDEF).as_bytes());
-        assert_eq!(result, U256::from_big_endian(&expected));
-    }
-
-    #[test]
-    fn sigparam_0x01_returns_scheme() {
-        let ctx = ctx_with_one_signature();
-        let sig = ctx.tx.signatures.first().unwrap();
-        assert_eq!(U256::from(sig.scheme), U256::from(0x01u64));
-    }
-
-    #[test]
-    fn sigparam_0x02_returns_msg_word() {
-        let ctx = ctx_with_one_signature();
-        let sig = ctx.tx.signatures.first().unwrap();
-        let result = if sig.msg.is_empty() {
-            U256::zero()
-        } else {
-            U256::from_big_endian(&sig.msg)
+    fn txparam_reads_the_defined_parameters_and_halts_on_the_rest() {
+        let sender = Address::from_low_u64_be(0xABCDEF);
+        let tx = FrameTransaction {
+            nonce_seq: 9,
+            sender,
+            claims: vec![Claim::default(), Claim::default()],
+            frames: vec![Default::default(); 3],
+            max_fee: U256::from(700u64),
+            max_priority_fee_per_gas: U256::from(5u64),
+            blob_versioned_hashes: vec![ethrex_common::H256::zero(); 2],
+            ..Default::default()
         };
-        assert_eq!(result, U256::from_big_endian(&[0xdeu8; 32]));
-    }
+        let mut ctx = ctx_of(tx);
+        ctx.current_frame_index = 1;
 
-    #[test]
-    fn sigparam_0x02_empty_msg_returns_zero() {
-        let signer = Address::from_low_u64_be(0x1234);
-        let sig = FrameSignature {
-            // SECP256K1 (scheme 1); scheme 0 is now ARBITRARY (requires empty signer).
-            scheme: 0x01,
-            signer: Some(signer),
-            msg: Bytes::new(),
-            signature: Bytes::from(vec![0xAAu8; 65]),
-        };
-        let result = if sig.msg.is_empty() {
-            U256::zero()
-        } else {
-            U256::from_big_endian(&sig.msg)
-        };
-        assert_eq!(result, U256::zero());
-    }
-
-    #[test]
-    fn sigparam_0x03_returns_signature_len() {
-        let ctx = ctx_with_one_signature();
-        let sig = ctx.tx.signatures.first().unwrap();
-        assert_eq!(U256::from(sig.signature.len()), U256::from(65u64));
-    }
-
-    #[test]
-    fn sigparam_oob_index_returns_invalid_opcode() {
-        let ctx = ctx_with_one_signature();
-        // index 1 is out of bounds (only index 0 exists)
-        let result = ctx.tx.signatures.get(1);
-        assert!(
-            result.is_none(),
-            "OOB index should return None -> InvalidOpcode"
+        assert_eq!(load_tx_param(&ctx, 0x00).unwrap(), U256::from(6u64));
+        assert_eq!(load_tx_param(&ctx, 0x01).unwrap(), U256::from(9u64));
+        assert_eq!(load_tx_param(&ctx, 0x02).unwrap(), address_to_u256(sender));
+        assert_eq!(load_tx_param(&ctx, 0x03).unwrap(), U256::from(5u64));
+        assert_eq!(load_tx_param(&ctx, 0x04).unwrap(), U256::from(700u64));
+        assert_eq!(load_tx_param(&ctx, 0x07).unwrap(), U256::from(2u64));
+        assert_eq!(
+            load_tx_param(&ctx, 0x08).unwrap(),
+            U256::from_big_endian(&[0x5a; 32])
         );
+        assert_eq!(load_tx_param(&ctx, 0x09).unwrap(), U256::from(3u64));
+        assert_eq!(load_tx_param(&ctx, 0x0A).unwrap(), U256::from(1u64));
+
+        // 0x05, 0x06 and 0x0B are not parameters; neither is anything past the
+        // ones EIP-8250 adds (0x0D to 0x10). 0x0C is answered by the handler, which
+        // owns the frame's state gas pool.
+        for param in [0x05, 0x06, 0x0B, 0x11, 0xFF] {
+            assert!(load_tx_param(&ctx, param).is_err(), "param {param:#x}");
+        }
     }
 
     #[test]
-    fn txparam_0x0b_returns_signature_count() {
-        let ctx = ctx_with_one_signature();
-        let result = load_tx_param(&ctx, 0x0B).unwrap();
-        assert_eq!(result, U256::from(1u64));
-    }
+    fn has_claim_matches_the_verifier_the_resolved_key_and_the_encoded_msg() {
+        use ethrex_common::H256;
+        use ethrex_common::types::{LEANSPHINCS_VERIFIER, SECP256K1_VERIFIER};
+        use ethrex_levm::opcode_handlers::frame_tx::has_claim;
 
-    #[test]
-    fn txparam_0x0b_zero_signatures() {
-        let ctx = FrameTxContext {
-            sender_approved: false,
-            payer_address: None,
-            frame_results: Vec::new(),
-            current_frame_index: 0,
-            outstanding_charge_owners: Default::default(),
-            journal: Vec::new(),
-            sig_hash: ethrex_common::H256::zero(),
-            tx: FrameTransaction::default(),
-            approve_called_in_current_frame: false,
-            max_gas: 0,
-            legacy_sender_nonce: 0,
-            fee_budget: ethrex_common::types::FrameFeeBudget {
-                max_cost: U256::zero(),
-                gas_price: U256::zero(),
-            },
+        let sender = Address::from_low_u64_be(0xABCDEF);
+        let other = Address::from_low_u64_be(0x77);
+        let public_key = H256::repeat_byte(0x66);
+        let digest = H256::repeat_byte(0x99);
+        let tx = FrameTransaction {
+            sender,
+            claims: vec![
+                // The sender's own signature of the transaction.
+                Claim {
+                    verifier: SECP256K1_VERIFIER,
+                    ..Default::default()
+                },
+                // Another account's signature of an explicit digest.
+                Claim {
+                    verifier: SECP256K1_VERIFIER,
+                    key: Bytes::from(other.as_bytes().to_vec()),
+                    msg: Bytes::from(digest.as_bytes().to_vec()),
+                    ..Default::default()
+                },
+                // A leanSPHINCS key's signature of the transaction.
+                Claim {
+                    verifier: LEANSPHINCS_VERIFIER,
+                    key: Bytes::from(public_key.as_bytes().to_vec()),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
         };
-        let result = load_tx_param(&ctx, 0x0B).unwrap();
-        assert_eq!(result, U256::zero());
+        let sig_hash = tx.compute_sig_hash();
+
+        // An empty key is the sender, and a zero msg is the signature hash.
+        assert!(has_claim(
+            &tx,
+            SECP256K1_VERIFIER,
+            H256::from(sender),
+            H256::zero()
+        ));
+        assert!(has_claim(
+            &tx,
+            SECP256K1_VERIFIER,
+            H256::from(other),
+            digest
+        ));
+        assert!(has_claim(
+            &tx,
+            LEANSPHINCS_VERIFIER,
+            public_key,
+            H256::zero()
+        ));
+
+        // Each of the three operands has to match.
+        assert!(!has_claim(
+            &tx,
+            LEANSPHINCS_VERIFIER,
+            H256::from(sender),
+            H256::zero()
+        ));
+        assert!(!has_claim(
+            &tx,
+            SECP256K1_VERIFIER,
+            H256::from(other),
+            H256::zero()
+        ));
+        assert!(!has_claim(
+            &tx,
+            SECP256K1_VERIFIER,
+            H256::from(sender),
+            digest
+        ));
+        assert!(!has_claim(
+            &tx,
+            SECP256K1_VERIFIER,
+            public_key,
+            H256::zero()
+        ));
+        // A claim over the signature hash is matched by a zero msg only, not by
+        // the hash itself: `msg` is compared as the claim encodes it.
+        assert!(!has_claim(
+            &tx,
+            SECP256K1_VERIFIER,
+            H256::from(sender),
+            sig_hash
+        ));
+        // No claims, no match.
+        assert!(!has_claim(
+            &FrameTransaction::default(),
+            SECP256K1_VERIFIER,
+            H256::zero(),
+            H256::zero()
+        ));
     }
 
     #[test]
@@ -2236,10 +2268,9 @@ mod validation_observer_tests {
     //! EIP-8141 mempool validation-prefix simulation harness tests.
     //!
     //! These drive the real frame-execution machinery via
-    //! [`VM::run_frame_validation_prefix`] over signature-less frame
-    //! transactions (an empty signature list trivially passes
-    //! `validate_frame_signatures`, so these stay crypto-free while exercising
-    //! the actual dispatch loop, handlers and observer hooks).
+    //! [`VM::run_frame_validation_prefix`] over frame transactions without
+    //! claims, so these stay crypto-free while exercising the actual dispatch
+    //! loop, handlers and observer hooks.
     use bytes::Bytes;
     use ethrex_common::constants::EMPTY_TRIE_HASH;
     use ethrex_common::types::Fork;
@@ -2371,7 +2402,7 @@ mod validation_observer_tests {
             nonce_seq: 0,
             sender,
             frames,
-            signatures: Vec::new(),
+            claims: Vec::new(),
             max_fee: U256::zero(),
             max_priority_fee_per_gas: U256::zero(),
             blob_versioned_hashes: Vec::new(),
@@ -2789,10 +2820,9 @@ mod validation_observer_tests {
 
 mod frame_validation_prefix_tests {
     //! EIP-8141 mempool validation-prefix backend assertions. These
-    //! exercise [`LEVM::simulate_frame_validation_prefix`] over signature-less
-    //! frame transactions (an empty signature list trivially validates), where
-    //! the prefix establishes a payer through real APPROVE code (not the
-    //! signature-gated default-code path).
+    //! exercise [`LEVM::simulate_frame_validation_prefix`] over frame
+    //! transactions without claims, where the prefix establishes a payer through
+    //! real APPROVE code (not the claim-gated default-code path).
     use bytes::Bytes;
     use ethrex_common::types::Transaction;
     use ethrex_common::types::{
@@ -2921,7 +2951,7 @@ mod frame_validation_prefix_tests {
             nonce_seq: 0,
             sender,
             frames,
-            signatures: Vec::new(),
+            claims: Vec::new(),
             max_fee: U256::zero(),
             max_priority_fee_per_gas: U256::zero(),
             blob_versioned_hashes: Vec::new(),
@@ -3128,7 +3158,7 @@ mod frame_validation_prefix_tests {
 }
 
 // ==================== Relocated from crates/vm/levm/src/vm.rs ====================
-// Frame-batch, approval-rollback, and frame-signature unit tests (EIP-8141).
+// Frame-batch and approval-rollback unit tests (EIP-8141).
 // Exercise crate-public levm internals; kept here per the repo test-location rule.
 
 mod atomic_batch_end_tests {
@@ -3236,514 +3266,6 @@ mod atomic_batch_approval_rollback_tests {
     }
 }
 
-mod frame_sig_validation_tests {
-    use bytes::Bytes;
-    use ethrex_common::types::Fork;
-    use ethrex_common::{
-        Address, H256,
-        types::{
-            FRAME_SIG_SCHEME_ARBITRARY, FRAME_SIG_SCHEME_P256, FRAME_SIG_SCHEME_SECP256K1,
-            FrameSignature,
-        },
-    };
-    use ethrex_levm::vm::validate_frame_signatures;
-
-    /// A non-zero scalar well below both group orders, for the field under test
-    /// to not be the one that fails validation.
-    const VALID_R: [u8; 32] = [0x11; 32];
-
-    fn validates(sigs: &[FrameSignature]) -> bool {
-        validate_frame_signatures(
-            sigs,
-            H256::zero(),
-            Address::zero(),
-            hegota(),
-            &ethrex_crypto::NativeCrypto,
-        )
-    }
-
-    fn hegota() -> Fork {
-        Fork::Hegota
-    }
-
-    fn dummy_sig(scheme: u8, sig_len: usize) -> FrameSignature {
-        FrameSignature {
-            scheme,
-            signer: Some(Address::from_low_u64_be(0xBEEF)),
-            msg: Bytes::new(),
-            signature: Bytes::from(vec![0u8; sig_len]),
-        }
-    }
-
-    // secp256k1 n/2 and P-256 n/2 (big-endian 32-byte), and each value + 1.
-    const SECP_N_HALF: [u8; 32] = [
-        0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-        0xff, 0x5d, 0x57, 0x6e, 0x73, 0x57, 0xa4, 0x50, 0x1d, 0xdf, 0xe9, 0x2f, 0x46, 0x68, 0x1b,
-        0x20, 0xa0,
-    ];
-    const SECP_N_HALF_PLUS_1: [u8; 32] = [
-        0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-        0xff, 0x5d, 0x57, 0x6e, 0x73, 0x57, 0xa4, 0x50, 0x1d, 0xdf, 0xe9, 0x2f, 0x46, 0x68, 0x1b,
-        0x20, 0xa1,
-    ];
-    const P256_N_HALF: [u8; 32] = [
-        0x7f, 0xff, 0xff, 0xff, 0x80, 0x00, 0x00, 0x00, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-        0xff, 0xde, 0x73, 0x7d, 0x56, 0xd3, 0x8b, 0xcf, 0x42, 0x79, 0xdc, 0xe5, 0x61, 0x7e, 0x31,
-        0x92, 0xa8,
-    ];
-    const P256_N_HALF_PLUS_1: [u8; 32] = [
-        0x7f, 0xff, 0xff, 0xff, 0x80, 0x00, 0x00, 0x00, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-        0xff, 0xde, 0x73, 0x7d, 0x56, 0xd3, 0x8b, 0xcf, 0x42, 0x79, 0xdc, 0xe5, 0x61, 0x7e, 0x31,
-        0x92, 0xa9,
-    ];
-
-    #[expect(
-        clippy::indexing_slicing,
-        reason = "fixed-size buffers with well-known bounds in test code"
-    )]
-    fn secp_sig(v: u8, r: &[u8; 32], s: &[u8; 32]) -> FrameSignature {
-        // [v(1) | r(32) | s(32)]
-        let mut bytes = vec![0u8; 65];
-        bytes[0] = v;
-        bytes[1..33].copy_from_slice(r);
-        bytes[33..65].copy_from_slice(s);
-        FrameSignature {
-            scheme: FRAME_SIG_SCHEME_SECP256K1,
-            signer: Some(Address::from_low_u64_be(0xBEEF)),
-            msg: Bytes::new(),
-            signature: Bytes::from(bytes),
-        }
-    }
-
-    #[expect(
-        clippy::indexing_slicing,
-        reason = "fixed-size buffers with well-known bounds in test code"
-    )]
-    fn p256_sig(r: &[u8; 32], s: &[u8; 32]) -> FrameSignature {
-        // [r(32) | s(32) | qx(32) | qy(32)]
-        let mut bytes = vec![0u8; 128];
-        bytes[0..32].copy_from_slice(r);
-        bytes[32..64].copy_from_slice(s);
-        FrameSignature {
-            scheme: FRAME_SIG_SCHEME_P256,
-            signer: Some(Address::from_low_u64_be(0xBEEF)),
-            msg: Bytes::new(),
-            signature: Bytes::from(bytes),
-        }
-    }
-
-    #[test]
-    fn high_s_above_n_half_is_rejected() {
-        // EIP-8141 requires low-s at consensus: s > n/2 is invalid for both
-        // schemes. s == n/2 is the largest canonical value; the positive case is
-        // covered end-to-end by `secp256k1_positive_and_tampered`.
-        assert!(!validates(&[secp_sig(0, &VALID_R, &SECP_N_HALF_PLUS_1)]));
-        assert!(!validates(&[p256_sig(&VALID_R, &P256_N_HALF_PLUS_1)]));
-    }
-
-    #[test]
-    fn zero_r_or_s_is_rejected() {
-        // EIP-8141 requires 0 < r < n and 0 < s <= n/2.
-        assert!(!validates(&[secp_sig(0, &[0u8; 32], &SECP_N_HALF)]));
-        assert!(!validates(&[secp_sig(0, &VALID_R, &[0u8; 32])]));
-        assert!(!validates(&[p256_sig(&[0u8; 32], &P256_N_HALF)]));
-        assert!(!validates(&[p256_sig(&VALID_R, &[0u8; 32])]));
-    }
-
-    #[test]
-    fn r_at_or_above_group_order_is_rejected() {
-        // secp256k1 n and P-256 n themselves are out of range for r.
-        const SECP_N: [u8; 32] = [
-            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-            0xff, 0xfe, 0xba, 0xae, 0xdc, 0xe6, 0xaf, 0x48, 0xa0, 0x3b, 0xbf, 0xd2, 0x5e, 0x8c,
-            0xd0, 0x36, 0x41, 0x41,
-        ];
-        const P256_N: [u8; 32] = [
-            0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-            0xff, 0xff, 0xbc, 0xe6, 0xfa, 0xad, 0xa7, 0x17, 0x9e, 0x84, 0xf3, 0xb9, 0xca, 0xc2,
-            0xfc, 0x63, 0x25, 0x51,
-        ];
-        assert!(!validates(&[secp_sig(0, &SECP_N, &SECP_N_HALF)]));
-        assert!(!validates(&[p256_sig(&P256_N, &P256_N_HALF)]));
-    }
-
-    #[test]
-    fn recovery_id_above_1_is_rejected() {
-        // EIP-8141 fixes `v` as a bare recovery id, so the EVM-style 27/28
-        // encoding is invalid.
-        assert!(!validates(&[secp_sig(2, &VALID_R, &SECP_N_HALF)]));
-        assert!(!validates(&[secp_sig(27, &VALID_R, &SECP_N_HALF)]));
-    }
-
-    #[test]
-    fn malformed_or_unknown_scheme_is_invalid() {
-        assert!(!validates(&[dummy_sig(FRAME_SIG_SCHEME_SECP256K1, 10)]));
-        assert!(!validates(&[dummy_sig(0xFF, 65)]));
-    }
-
-    #[test]
-    fn empty_list_is_valid() {
-        assert!(validate_frame_signatures(
-            &[],
-            H256::zero(),
-            Address::zero(),
-            hegota(),
-            &ethrex_crypto::NativeCrypto
-        ));
-    }
-
-    #[test]
-    fn scheme0_wrong_sig_length_is_invalid() {
-        let sig = dummy_sig(FRAME_SIG_SCHEME_SECP256K1, 10);
-        assert!(!validate_frame_signatures(
-            &[sig],
-            H256::zero(),
-            Address::zero(),
-            hegota(),
-            &ethrex_crypto::NativeCrypto
-        ));
-    }
-
-    #[test]
-    fn scheme1_wrong_sig_length_is_invalid() {
-        let sig = dummy_sig(FRAME_SIG_SCHEME_P256, 64);
-        assert!(!validate_frame_signatures(
-            &[sig],
-            H256::zero(),
-            Address::zero(),
-            hegota(),
-            &ethrex_crypto::NativeCrypto
-        ));
-    }
-
-    #[test]
-    fn unknown_scheme_is_invalid() {
-        let sig = dummy_sig(0xFF, 65);
-        assert!(!validate_frame_signatures(
-            &[sig],
-            H256::zero(),
-            Address::zero(),
-            hegota(),
-            &ethrex_crypto::NativeCrypto
-        ));
-    }
-
-    #[test]
-    fn arbitrary_empty_signer_is_valid() {
-        // ARBITRARY (scheme 0): no protocol crypto; signer must be empty; any
-        // signature bytes are accepted, and the canonicality rules on r/s/v do
-        // not apply since there is no ECDSA signature to canonicalize.
-        let sig = FrameSignature {
-            scheme: FRAME_SIG_SCHEME_ARBITRARY,
-            signer: None,
-            msg: Bytes::new(),
-            signature: Bytes::from(vec![0xAAu8; 10]),
-        };
-        assert!(validates(std::slice::from_ref(&sig)));
-    }
-
-    #[test]
-    fn arbitrary_with_signer_is_invalid() {
-        // Per EIP-8141 an ARBITRARY signature MUST NOT name a signer.
-        let sig = FrameSignature {
-            scheme: FRAME_SIG_SCHEME_ARBITRARY,
-            signer: Some(Address::from_low_u64_be(0xBEEF)),
-            msg: Bytes::new(),
-            signature: Bytes::from(vec![0xAAu8; 10]),
-        };
-        assert!(!validate_frame_signatures(
-            &[sig],
-            H256::zero(),
-            Address::zero(),
-            hegota(),
-            &ethrex_crypto::NativeCrypto
-        ));
-    }
-
-    #[test]
-    fn explicit_zero_32byte_msg_is_invalid() {
-        let sig = FrameSignature {
-            scheme: FRAME_SIG_SCHEME_SECP256K1,
-            signer: Some(Address::from_low_u64_be(0xBEEF)),
-            msg: Bytes::from(vec![0u8; 32]),
-            signature: Bytes::from(vec![0u8; 65]),
-        };
-        assert!(!validate_frame_signatures(
-            &[sig],
-            H256::zero(),
-            Address::zero(),
-            hegota(),
-            &ethrex_crypto::NativeCrypto
-        ));
-    }
-
-    #[test]
-    fn msg_len_not_0_or_32_is_invalid() {
-        let sig = FrameSignature {
-            scheme: FRAME_SIG_SCHEME_SECP256K1,
-            signer: Some(Address::from_low_u64_be(0xBEEF)),
-            msg: Bytes::from(vec![0xAAu8; 16]),
-            signature: Bytes::from(vec![0u8; 65]),
-        };
-        assert!(!validate_frame_signatures(
-            &[sig],
-            H256::zero(),
-            Address::zero(),
-            hegota(),
-            &ethrex_crypto::NativeCrypto
-        ));
-    }
-
-    #[test]
-    #[expect(
-        clippy::indexing_slicing,
-        reason = "fixed-size buffers with well-known bounds in test code"
-    )]
-    fn secp256k1_positive_and_tampered() {
-        // Build a real secp256k1 signature vector using k256.
-        use k256::ecdsa::SigningKey;
-
-        let pk_hex = "4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318";
-        let pk_bytes: Vec<u8> = (0..pk_hex.len())
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&pk_hex[i..i + 2], 16).unwrap())
-            .collect();
-        let private_key: [u8; 32] = pk_bytes.try_into().unwrap();
-        let signing_key = SigningKey::from_bytes(&private_key.into()).unwrap();
-
-        let msg_hash: H256 = H256::from_low_u64_be(0xDEADBEEF_CAFEBABE);
-
-        let (raw_sig, recovery_id) = signing_key
-            .sign_prehash_recoverable(msg_hash.as_bytes())
-            .unwrap();
-
-        // Derive the expected signer address
-        let uncompressed = signing_key.verifying_key().to_encoded_point(false);
-        let pub_hash = ethrex_crypto::keccak::keccak_hash(&uncompressed.as_bytes()[1..]);
-        let expected_signer = Address::from_slice(&pub_hash[12..]);
-
-        // Build the outer signature: v || r || s  (65 bytes).
-        // EIP-8141 carries `v` as the bare recovery id (0 or 1).
-        let mut sig_bytes = vec![0u8; 65];
-        sig_bytes[0] = recovery_id.to_byte();
-        sig_bytes[1..33].copy_from_slice(&raw_sig.to_bytes()[..32]); // r
-        sig_bytes[33..65].copy_from_slice(&raw_sig.to_bytes()[32..]); // s
-
-        let valid_sig = FrameSignature {
-            scheme: FRAME_SIG_SCHEME_SECP256K1,
-            signer: Some(expected_signer),
-            msg: Bytes::new(), // empty → use sig_hash
-            signature: Bytes::from(sig_bytes.clone()),
-        };
-
-        // Positive: correct signer → valid
-        assert!(
-            validate_frame_signatures(
-                std::slice::from_ref(&valid_sig),
-                msg_hash,
-                Address::zero(),
-                hegota(),
-                &ethrex_crypto::NativeCrypto
-            ),
-            "valid secp256k1 signature should pass"
-        );
-
-        // Tampered signer: wrong address → invalid
-        let wrong_addr = Address::from_low_u64_be(0xDEAD);
-        let tampered = FrameSignature {
-            signer: Some(wrong_addr),
-            ..valid_sig.clone()
-        };
-        assert!(
-            !validate_frame_signatures(
-                &[tampered],
-                msg_hash,
-                Address::zero(),
-                hegota(),
-                &ethrex_crypto::NativeCrypto
-            ),
-            "wrong signer should fail"
-        );
-
-        // Empty signer (None) resolves to tx.sender: valid iff sender == recovered.
-        let empty_signer_sig = FrameSignature {
-            scheme: FRAME_SIG_SCHEME_SECP256K1,
-            signer: None,
-            msg: Bytes::new(),
-            signature: Bytes::from(sig_bytes.clone()),
-        };
-        assert!(
-            validate_frame_signatures(
-                std::slice::from_ref(&empty_signer_sig),
-                msg_hash,
-                expected_signer,
-                hegota(),
-                &ethrex_crypto::NativeCrypto
-            ),
-            "empty signer must resolve to tx.sender and validate when sender == recovered"
-        );
-        assert!(
-            !validate_frame_signatures(
-                std::slice::from_ref(&empty_signer_sig),
-                msg_hash,
-                wrong_addr,
-                hegota(),
-                &ethrex_crypto::NativeCrypto
-            ),
-            "empty signer resolving to a different tx.sender must fail"
-        );
-
-        // Wrong hash: valid sig but different sig_hash → invalid
-        let other_hash = H256::from_low_u64_be(0x1234567890ABCDEFu64);
-        assert!(
-            !validate_frame_signatures(
-                &[valid_sig],
-                other_hash,
-                Address::zero(),
-                hegota(),
-                &ethrex_crypto::NativeCrypto
-            ),
-            "wrong sig_hash should fail"
-        );
-    }
-
-    #[test]
-    fn p256_wrong_signer_is_invalid() {
-        // Construct a syntactically-128-byte P256 sig with wrong signer address.
-        // The signer derivation check fires before the curve verification.
-        let sig = FrameSignature {
-            scheme: FRAME_SIG_SCHEME_P256,
-            signer: Some(Address::from_low_u64_be(0xDEAD)),
-            msg: Bytes::new(),
-            signature: Bytes::from(vec![0xAAu8; 128]),
-        };
-        // keccak(qx||qy)[12..] for all-0xAA will not equal 0xDEAD.
-        assert!(
-            !validate_frame_signatures(
-                &[sig],
-                H256::zero(),
-                Address::zero(),
-                hegota(),
-                &ethrex_crypto::NativeCrypto
-            ),
-            "mismatched P256 signer should fail"
-        );
-    }
-
-    #[test]
-    #[expect(
-        clippy::indexing_slicing,
-        reason = "fixed-size buffers with well-known bounds in test code"
-    )]
-    fn p256_positive_and_tampered() {
-        // Regression lock for the EIP-8141 P256 signature validation path
-        //. No external EEST reference vectors exist
-        // yet; these values exercise validate_frame_signatures end-to-end
-        // through P256VERIFY with a real p256-crate signature.
-        //
-        // Path used: live p256::ecdsa signing (p256 0.13.2 has `ecdsa` +
-        // `arithmetic` features enabled in levm's Cargo.toml).
-        use p256::ecdsa::SigningKey;
-        use p256::ecdsa::signature::hazmat::PrehashSigner;
-
-        // Fixed private key — deterministic, no randomness.
-        let pk_bytes: [u8; 32] = [
-            0xc9, 0x11, 0x0e, 0xa2, 0xf8, 0x7f, 0x3c, 0x06, 0x74, 0x1a, 0x4d, 0x35, 0x62, 0xb2,
-            0x11, 0x7d, 0x3e, 0x6a, 0x5c, 0x0b, 0x28, 0x0c, 0x3a, 0x0f, 0x56, 0x2e, 0x38, 0xa7,
-            0x21, 0xb0, 0x98, 0xc4,
-        ];
-        let signing_key = SigningKey::from_bytes(&pk_bytes.into()).unwrap();
-        let verifying_key = signing_key.verifying_key();
-        let encoded = verifying_key.to_encoded_point(false);
-        let encoded_bytes = encoded.as_bytes();
-        // Uncompressed point: 0x04 || qx (32B) || qy (32B)
-        let qx = &encoded_bytes[1..33];
-        let qy = &encoded_bytes[33..65];
-
-        // Fixed 32-byte non-zero digest (explicit msg path — sig_hash arg unused).
-        let digest: [u8; 32] = [
-            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
-            0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c,
-            0x1d, 0x1e, 0x1f, 0x20,
-        ];
-
-        // sign_prehash is deterministic for p256 with RFC-6979 nonce.
-        let raw_sig: p256::ecdsa::Signature = signing_key.sign_prehash(&digest).unwrap();
-        let sig_bytes_der = raw_sig.to_bytes(); // r || s (64 bytes, DER-unwrapped)
-        let r = &sig_bytes_der[..32];
-        let s = &sig_bytes_der[32..64];
-
-        // Derive signer: keccak256(qx || qy)[12..] — matches validate_frame_signatures.
-        let mut pk_concat = Vec::with_capacity(64);
-        pk_concat.extend_from_slice(qx);
-        pk_concat.extend_from_slice(qy);
-        let h = ethrex_crypto::keccak::keccak_hash(&pk_concat);
-        let signer = Address::from_slice(&h[12..]);
-
-        // Build the 128-byte signature: r || s || qx || qy.
-        let mut signature_blob = vec![0u8; 128];
-        signature_blob[..32].copy_from_slice(r);
-        signature_blob[32..64].copy_from_slice(s);
-        signature_blob[64..96].copy_from_slice(qx);
-        signature_blob[96..128].copy_from_slice(qy);
-
-        let valid_sig = FrameSignature {
-            scheme: FRAME_SIG_SCHEME_P256,
-            signer: Some(signer),
-            // Explicit 32-byte msg: sig_hash arg to validate_frame_signatures
-            // is irrelevant for this entry.
-            msg: Bytes::copy_from_slice(&digest),
-            signature: Bytes::from(signature_blob.clone()),
-        };
-
-        // Positive: real P256 signature → passes.
-        assert!(
-            validate_frame_signatures(
-                std::slice::from_ref(&valid_sig),
-                H256::zero(),
-                Address::zero(),
-                hegota(),
-                &ethrex_crypto::NativeCrypto
-            ),
-            "valid P256 signature must pass",
-        );
-
-        // Tampered r byte: flip one bit in r → curve verification fails.
-        let mut tampered_blob = signature_blob.clone();
-        tampered_blob[0] ^= 0x01;
-        let tampered_r = FrameSignature {
-            signature: Bytes::from(tampered_blob),
-            ..valid_sig.clone()
-        };
-        assert!(
-            !validate_frame_signatures(
-                &[tampered_r],
-                H256::zero(),
-                Address::zero(),
-                hegota(),
-                &ethrex_crypto::NativeCrypto
-            ),
-            "flipped r byte must fail curve verification",
-        );
-
-        // Wrong signer: signer-derivation check fires.
-        let wrong_signer = FrameSignature {
-            signer: Some(Address::from_low_u64_be(0xDEAD)),
-            ..valid_sig
-        };
-        assert!(
-            !validate_frame_signatures(
-                &[wrong_signer],
-                H256::zero(),
-                Address::zero(),
-                hegota(),
-                &ethrex_crypto::NativeCrypto
-            ),
-            "wrong signer must fail",
-        );
-    }
-}
-
 // ==================== Relocated from crates/vm/system_contracts.rs ====================
 mod expiry_verifier_tests {
     use ethrex_common::H160;
@@ -3765,319 +3287,6 @@ mod expiry_verifier_tests {
             H160(hex_literal::hex!(
                 "81413f0cF12e9b6a49B1D0439E081c577D57FfFf"
             ))
-        );
-    }
-}
-
-// ==================== SIGPARAM (0xB4) execution ====================
-
-/// End-to-end SIGPARAM tests: a DEFAULT frame runs real `SIGPARAM` bytecode and
-/// persists the result, so the opcode's stack order, gas and halt conditions are
-/// exercised rather than reimplemented.
-mod sigparam_execution_tests {
-    use super::*;
-    use ethrex_common::types::{
-        FRAME_RECEIPT_STATUS_FAILURE, FRAME_SIG_SCHEME_ARBITRARY, FrameSignature,
-    };
-
-    /// Read slot `slot` of `addr` from the post-execution cache.
-    fn storage_of(db: &GeneralizedDatabase, addr: Address, slot: U256) -> U256 {
-        let key = slot.to_big_endian();
-        db.current_accounts_state
-            .get(&addr)
-            .and_then(|account| account.storage.get(&ethrex_common::H256(key)).copied())
-            .unwrap_or_default()
-    }
-
-    /// `SIGPARAM(param, index)` then `SSTORE(0, result)`.
-    /// Metadata params take `[param, signatureIndex]` with the index on top, so
-    /// `param` is pushed first.
-    fn sigparam_metadata_code(param: u8, index: u8) -> Bytes {
-        Bytes::from(vec![
-            0x60, param, // PUSH1 param
-            0x60, index, // PUSH1 signatureIndex
-            0xB4,  // SIGPARAM
-            0x60, 0x00, // PUSH1 0 (slot)
-            0x55, // SSTORE
-            0x00, // STOP
-        ])
-    }
-
-    /// `SIGPARAM(0x04, index)` copying `length` bytes from `dataOffset` to
-    /// `memOffset`, then `SSTORE(0, MLOAD(memOffset))`. The copy form takes
-    /// `[signatureIndex, param, memOffset, dataOffset, length]` with the index on
-    /// top, so the pushes run in reverse.
-    /// `SIGDATACOPY` (0xB5) takes four operands, `memOffset` on top, then
-    /// `dataOffset`, `length` and `signatureIndex` -- so they are pushed in
-    /// reverse. EIP-8141 moved the copy out of `SIGPARAM` to make that opcode's
-    /// stack requirement static.
-    fn sigdatacopy_code(index: u8, length: u8, data_offset: u8, mem_offset: u8) -> Bytes {
-        Bytes::from(vec![
-            0x60,
-            index, // PUSH1 signatureIndex
-            0x60,
-            length, // PUSH1 length
-            0x60,
-            data_offset, // PUSH1 dataOffset
-            0x60,
-            mem_offset, // PUSH1 memOffset
-            0xB5,       // SIGDATACOPY
-            0x60,
-            mem_offset, // PUSH1 memOffset
-            0x51,       // MLOAD
-            0x60,
-            0x00, // PUSH1 0 (slot)
-            0x55, // SSTORE
-            0x00, // STOP
-        ])
-    }
-
-    /// One VERIFY frame approving both scopes from the sender, then a DEFAULT
-    /// frame running `code` at `reader`.
-    fn run_reader(
-        code: Bytes,
-        signatures: Vec<FrameSignature>,
-    ) -> (
-        Result<ExecutionReport, VMError>,
-        GeneralizedDatabase,
-        Address,
-    ) {
-        let reader = Address::from_low_u64_be(0xB4B4);
-        let mut tx = frame_tx_with_frames(vec![
-            verify_frame(FUNDED_SENDER),
-            Frame {
-                mode: u8::from(FrameMode::Default),
-                flags: 0,
-                target: Some(reader),
-                gas_limit: 200_000,
-                state_gas_limit: 1_000_000,
-                value: U256::zero(),
-                data: Bytes::new(),
-            },
-        ]);
-        tx.signatures = signatures;
-        let (result, db) = run_frame_tx(
-            &[
-                (
-                    FUNDED_SENDER,
-                    AUTO_SEED_SENDER_BALANCE,
-                    0,
-                    Bytes::from(APPROVE_BOTH_CODE.to_vec()),
-                ),
-                (reader, U256::zero(), 0, code),
-            ],
-            tx,
-        );
-        (result, db, reader)
-    }
-
-    fn arbitrary_sig(bytes: Vec<u8>) -> FrameSignature {
-        FrameSignature {
-            scheme: FRAME_SIG_SCHEME_ARBITRARY,
-            signer: None,
-            msg: Bytes::new(),
-            signature: Bytes::from(bytes),
-        }
-    }
-
-    #[test]
-    fn sigparam_0x01_returns_the_scheme() {
-        let (result, db, reader) = run_reader(
-            sigparam_metadata_code(0x01, 0),
-            vec![arbitrary_sig(vec![0xAA; 4])],
-        );
-        result.expect("valid tx");
-        assert_eq!(
-            storage_of(&db, reader, U256::zero()),
-            U256::from(u64::from(FRAME_SIG_SCHEME_ARBITRARY)),
-        );
-    }
-
-    #[test]
-    fn sigparam_0x03_returns_the_signature_length() {
-        let (result, db, reader) = run_reader(
-            sigparam_metadata_code(0x03, 0),
-            vec![arbitrary_sig(vec![0xAA; 7])],
-        );
-        result.expect("valid tx");
-        assert_eq!(storage_of(&db, reader, U256::zero()), U256::from(7u64));
-    }
-
-    #[test]
-    fn sigparam_0x00_halts_for_an_arbitrary_signature() {
-        // EIP-8141 assigns no resolved signer to ARBITRARY entries, so asking for
-        // one is an exceptional halt: the DEFAULT frame fails and writes nothing.
-        let (result, db, reader) = run_reader(
-            sigparam_metadata_code(0x00, 0),
-            vec![arbitrary_sig(vec![0xAA; 4])],
-        );
-        let report = result.expect("the tx itself stays valid; only the reader frame halts");
-        let frame_results = report.frame_results.expect("per-frame results");
-        assert_eq!(frame_results[1].0, FRAME_RECEIPT_STATUS_FAILURE);
-        assert_eq!(storage_of(&db, reader, U256::zero()), U256::zero());
-    }
-
-    #[test]
-    fn sigdatacopy_copies_arbitrary_signature_bytes() {
-        // 4 payload bytes copied into memory at 0; MLOAD reads them left-aligned
-        // in the word, with the rest zero-filled.
-        let (result, db, reader) = run_reader(
-            sigdatacopy_code(0, 4, 0, 0),
-            vec![arbitrary_sig(vec![0xDE, 0xAD, 0xBE, 0xEF])],
-        );
-        result.expect("valid tx");
-        let mut expected = [0u8; 32];
-        expected[..4].copy_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
-        assert_eq!(
-            storage_of(&db, reader, U256::zero()),
-            U256::from_big_endian(&expected),
-        );
-    }
-
-    #[test]
-    fn sigdatacopy_zero_fills_past_the_end() {
-        // Asking for 8 bytes of a 2-byte signature zero-fills the remainder.
-        let (result, db, reader) = run_reader(
-            sigdatacopy_code(0, 8, 0, 0),
-            vec![arbitrary_sig(vec![0x11, 0x22])],
-        );
-        result.expect("valid tx");
-        let mut expected = [0u8; 32];
-        expected[..2].copy_from_slice(&[0x11, 0x22]);
-        assert_eq!(
-            storage_of(&db, reader, U256::zero()),
-            U256::from_big_endian(&expected),
-        );
-    }
-
-    #[test]
-    fn sigdatacopy_reads_operands_in_calldatacopy_order() {
-        // The copy operands follow `CALLDATACOPY`: memOffset above dataOffset
-        // above length. Distinct values for all three, and a destination past the
-        // first word, pin the order — reading them in any other order lands the
-        // bytes somewhere else (or copies a different count).
-        let (result, db, reader) = run_reader(
-            sigdatacopy_code(0, 3, 1, 0x20),
-            vec![arbitrary_sig(vec![0xAA, 0xBB, 0xCC, 0xDD])],
-        );
-        result.expect("valid tx");
-        let mut expected = [0u8; 32];
-        expected[..3].copy_from_slice(&[0xBB, 0xCC, 0xDD]);
-        assert_eq!(
-            storage_of(&db, reader, U256::zero()),
-            U256::from_big_endian(&expected),
-        );
-    }
-}
-
-// ==================== Default code: signature index by scope ====================
-
-/// EIP-8141's default code verifies the signature at index 0 when the frame's
-/// allowed scope includes `APPROVE_EXECUTION`, and at index 1 otherwise (the
-/// payment-only case, where index 0 belongs to the sender's own verify frame).
-mod default_code_sig_index_tests {
-    use super::*;
-    use ethrex_common::types::{
-        FRAME_SIG_SCHEME_ARBITRARY, FRAME_SIG_SCHEME_SECP256K1, FrameSignature,
-    };
-    use k256::ecdsa::SigningKey;
-
-    /// A signing key plus the address it authenticates.
-    fn key_and_address(seed: u8) -> (SigningKey, Address) {
-        let signing_key = SigningKey::from_bytes(&[seed; 32].into()).unwrap();
-        let uncompressed = signing_key.verifying_key().to_encoded_point(false);
-        let pub_hash = ethrex_crypto::keccak::keccak_hash(&uncompressed.as_bytes()[1..]);
-        (signing_key, Address::from_slice(&pub_hash[12..]))
-    }
-
-    /// A canonical EIP-8141 SECP256K1 entry over `sig_hash`: `v` is the bare
-    /// recovery id and `signer` is left empty only when it is `tx.sender`.
-    fn sign(key: &SigningKey, sig_hash: ethrex_common::H256, signer: Address) -> FrameSignature {
-        let (raw_sig, recovery_id) = key.sign_prehash_recoverable(sig_hash.as_bytes()).unwrap();
-        let mut bytes = vec![0u8; 65];
-        bytes[0] = recovery_id.to_byte();
-        bytes[1..33].copy_from_slice(&raw_sig.to_bytes()[..32]);
-        bytes[33..65].copy_from_slice(&raw_sig.to_bytes()[32..]);
-        FrameSignature {
-            scheme: FRAME_SIG_SCHEME_SECP256K1,
-            signer: Some(signer),
-            msg: Bytes::new(),
-            signature: Bytes::from(bytes),
-        }
-    }
-
-    fn arbitrary() -> FrameSignature {
-        FrameSignature {
-            scheme: FRAME_SIG_SCHEME_ARBITRARY,
-            signer: None,
-            msg: Bytes::new(),
-            signature: Bytes::from(vec![0xAAu8; 4]),
-        }
-    }
-
-    /// Sender VERIFY frame (contract code approves execution) + payment-only
-    /// VERIFY frame whose target is a codeless payer, so default code runs.
-    /// `sig_at` is the index the payer's signature occupies; the other slot holds
-    /// an ARBITRARY entry, so both lists are fully valid and only the index the
-    /// default code consults differs.
-    fn run_payment_only_default_code(sig_at: usize) -> Result<ExecutionReport, VMError> {
-        let (payer_key, payer) = key_and_address(0x42);
-        let mut tx = frame_tx_with_frames(vec![verify_frame(FUNDED_SENDER), pay_frame(payer)]);
-        // The signature BYTES of an empty-msg entry are elided from the sig hash,
-        // but every other field (including `signer`) is committed — so the entry
-        // must already carry its final shape before the hash is computed.
-        let mut entries = vec![arbitrary(), arbitrary()];
-        entries[sig_at] = FrameSignature {
-            scheme: FRAME_SIG_SCHEME_SECP256K1,
-            signer: Some(payer),
-            msg: Bytes::new(),
-            signature: Bytes::from(vec![0u8; 65]),
-        };
-        tx.signatures = entries;
-        let sig_hash = tx.compute_sig_hash();
-        tx.signatures[sig_at] = sign(&payer_key, sig_hash, payer);
-        tx.inner_hash = Default::default();
-        tx.cached_canonical = Default::default();
-
-        let (result, _db) = run_frame_tx(
-            &[
-                (
-                    FUNDED_SENDER,
-                    AUTO_SEED_SENDER_BALANCE,
-                    0,
-                    Bytes::from(APPROVE_EXECUTION_CODE.to_vec()),
-                ),
-                // Codeless payer with enough balance to front the max cost.
-                (
-                    payer,
-                    U256::from(10u64).pow(U256::from(18u64)),
-                    0,
-                    Bytes::new(),
-                ),
-            ],
-            tx,
-        );
-        result
-    }
-
-    #[test]
-    fn payment_only_default_code_reads_signature_index_1() {
-        let report = run_payment_only_default_code(1)
-            .expect("default code must approve payment from the index-1 signature");
-        assert!(
-            report.payer_address.is_some(),
-            "default code should have set the payer"
-        );
-    }
-
-    #[test]
-    fn payment_only_default_code_ignores_signature_index_0() {
-        // The same signature at index 0 must NOT satisfy a payment-only frame:
-        // the spec binds that case to index 1, so no payer is approved and the
-        // transaction is invalid.
-        assert!(
-            run_payment_only_default_code(0).is_err(),
-            "a payer signature at index 0 must not approve a payment-only frame"
         );
     }
 }

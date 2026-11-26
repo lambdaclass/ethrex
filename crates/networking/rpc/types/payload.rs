@@ -8,7 +8,7 @@ use ethrex_common::{
     serde_utils,
     types::{
         BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, Transaction, Withdrawal,
-        block_access_list::BlockAccessList, compute_dependency_witnesses_hash,
+        block_access_list::BlockAccessList, compute_claim_witnesses_hash,
         compute_transactions_root, compute_withdrawals_root, requests::EncodedRequests,
     },
 };
@@ -75,17 +75,17 @@ pub struct ExecutionPayload {
         default
     )]
     pub burned_fees: Option<u64>,
-    // dependencyWitnesses (EIP-8504): the signatures the block carries outside
-    // its transactions, one for each of its dependencies. The header commits to
-    // them, so they must survive the getPayload → newPayload round-trip. Not a
-    // field of the specification's payload: a consensus client that knows it
-    // sends it on every payload, empty when the block has none.
+    // claimWitnesses (EIP-8141): the witnesses of the block's claims, which the
+    // block carries outside its transactions, as one opaque byte string. The
+    // header commits to it, so it must survive the getPayload → newPayload
+    // round-trip. The consensus layer neither parses nor verifies it: it sends
+    // it on every payload, empty when the block has no claims.
     #[serde(
         skip_serializing_if = "Option::is_none",
-        with = "serde_utils::bytes::vec_opt",
+        with = "serde_utils::bytes::opt",
         default
     )]
-    pub dependency_witnesses: Option<Vec<Bytes>>,
+    pub claim_witnesses: Option<Bytes>,
 }
 
 #[derive(Clone, Debug)]
@@ -142,7 +142,7 @@ impl ExecutionPayload {
                 .collect::<Result<Vec<_>, RLPDecodeError>>()?,
             ommers: vec![],
             withdrawals: self.withdrawals,
-            dependency_witnesses: self.dependency_witnesses,
+            claim_witnesses: self.claim_witnesses,
         };
         let header = BlockHeader {
             parent_hash: self.parent_hash,
@@ -175,8 +175,8 @@ impl ExecutionPayload {
             requests_hash,
             slot_number: self.slot_number,
             block_access_list_hash,
-            dependency_witnesses_hash: body.dependency_witnesses.as_ref().map(|witnesses| {
-                compute_dependency_witnesses_hash(witnesses, &ethrex_crypto::NativeCrypto)
+            claim_witnesses_hash: body.claim_witnesses.as_ref().map(|claim_witnesses| {
+                compute_claim_witnesses_hash(claim_witnesses, &ethrex_crypto::NativeCrypto)
             }),
             burned_fees: self.burned_fees,
             ..Default::default()
@@ -185,17 +185,18 @@ impl ExecutionPayload {
         Ok(Block::new(header, body))
     }
 
-    /// EIP-8504: reads `dependencyWitnesses` under the rules of the payload's
-    /// timestamp, before the payload becomes a block. While the EIP is active the
-    /// block always has a witness list, so an absent field is the empty list.
-    /// Before that the block has none: an absent or empty field is no list, and a
-    /// non-empty one is kept so the header rules reject the block.
-    pub(crate) fn normalize_dependency_witnesses(&mut self, eip8504_active: bool) {
-        let witnesses = self.dependency_witnesses.take();
-        self.dependency_witnesses = if eip8504_active {
-            Some(witnesses.unwrap_or_default())
+    /// EIP-8141: reads `claimWitnesses` under the rules of the payload's
+    /// timestamp, before the payload becomes a block. From Hegota on the block
+    /// always has claim witnesses, so an absent field is the empty byte string.
+    /// Before that the block has none: an absent or empty field is no claim
+    /// witnesses, and a non-empty one is kept so the header rules reject the
+    /// block.
+    pub(crate) fn normalize_claim_witnesses(&mut self, hegota_active: bool) {
+        let claim_witnesses = self.claim_witnesses.take();
+        self.claim_witnesses = if hegota_active {
+            Some(claim_witnesses.unwrap_or_default())
         } else {
-            witnesses.filter(|witnesses| !witnesses.is_empty())
+            claim_witnesses.filter(|claim_witnesses| !claim_witnesses.is_empty())
         };
     }
 
@@ -226,7 +227,7 @@ impl ExecutionPayload {
             slot_number: block.header.slot_number,
             block_access_list,
             burned_fees: block.header.burned_fees,
-            dependency_witnesses: block.body.dependency_witnesses,
+            claim_witnesses: block.body.claim_witnesses,
         }
     }
 
@@ -255,7 +256,7 @@ impl ExecutionPayload {
             slot_number: self.slot_number,
             block_access_list: None,
             burned_fees: self.burned_fees,
-            dependency_witnesses: self.dependency_witnesses.clone(),
+            claim_witnesses: self.claim_witnesses.clone(),
         }
     }
 }
@@ -392,13 +393,13 @@ mod optional_hex_bytes {
 pub struct ExecutionPayloadBody {
     pub transactions: Vec<EncodedTransaction>,
     pub withdrawals: Option<Vec<Withdrawal>>,
-    /// EIP-8504: the block's dependency witnesses, as in the payload.
+    /// EIP-8141: the block's claim witnesses, as in the payload.
     #[serde(
         skip_serializing_if = "Option::is_none",
-        with = "serde_utils::bytes::vec_opt",
+        with = "serde_utils::bytes::opt",
         default
     )]
-    pub dependency_witnesses: Option<Vec<Bytes>>,
+    pub claim_witnesses: Option<Bytes>,
 }
 
 impl From<BlockBody> for ExecutionPayloadBody {
@@ -410,7 +411,7 @@ impl From<BlockBody> for ExecutionPayloadBody {
                 .map(EncodedTransaction::encode)
                 .collect(),
             withdrawals: body.withdrawals,
-            dependency_witnesses: body.dependency_witnesses,
+            claim_witnesses: body.claim_witnesses,
         }
     }
 }
@@ -427,13 +428,13 @@ pub struct ExecutionPayloadBodyV2 {
         default
     )]
     pub block_access_list: Option<BlockAccessList>,
-    /// EIP-8504: the block's dependency witnesses, as in the payload.
+    /// EIP-8141: the block's claim witnesses, as in the payload.
     #[serde(
         skip_serializing_if = "Option::is_none",
-        with = "serde_utils::bytes::vec_opt",
+        with = "serde_utils::bytes::opt",
         default
     )]
-    pub dependency_witnesses: Option<Vec<Bytes>>,
+    pub claim_witnesses: Option<Bytes>,
 }
 
 impl ExecutionPayloadBodyV2 {
@@ -446,7 +447,7 @@ impl ExecutionPayloadBodyV2 {
                 .collect(),
             withdrawals: body.withdrawals,
             block_access_list: bal,
-            dependency_witnesses: body.dependency_witnesses,
+            claim_witnesses: body.claim_witnesses,
         }
     }
 }
@@ -499,70 +500,76 @@ mod test {
 
         assert_eq!(json["witness"], "0x1234");
     }
-    // EIP-8504: the payload carries the block's dependency witnesses.
+    // EIP-8141: the payload carries the block's claim witnesses.
 
     /// A minimal payload for the conversions below.
-    fn payload_with_witnesses(dependency_witnesses: Option<Vec<Bytes>>) -> ExecutionPayload {
+    fn payload_with_witnesses(claim_witnesses: Option<Bytes>) -> ExecutionPayload {
         let mut payload = ExecutionPayload::from_block(Block::default(), None);
         payload.withdrawals = Some(Vec::new());
-        payload.dependency_witnesses = dependency_witnesses;
+        payload.claim_witnesses = claim_witnesses;
         payload
     }
 
-    #[test]
-    fn dependency_witnesses_travel_as_an_array_of_hex_strings() {
-        let witnesses = vec![Bytes::from(vec![0x01, 0x02]), Bytes::from(vec![0xff])];
-        let json = serde_json::to_value(payload_with_witnesses(Some(witnesses.clone()))).unwrap();
-        assert_eq!(
-            json["dependencyWitnesses"],
-            serde_json::json!(["0x0102", "0xff"])
-        );
-
-        let parsed: ExecutionPayload = serde_json::from_value(json).unwrap();
-        assert_eq!(parsed.dependency_witnesses, Some(witnesses));
-
-        // An empty list is sent as an empty array; no list is no key.
-        let empty = serde_json::to_value(payload_with_witnesses(Some(Vec::new()))).unwrap();
-        assert_eq!(empty["dependencyWitnesses"], serde_json::json!([]));
-        let absent = serde_json::to_value(payload_with_witnesses(None)).unwrap();
-        assert!(absent.get("dependencyWitnesses").is_none());
-        let parsed: ExecutionPayload = serde_json::from_value(absent).unwrap();
-        assert_eq!(parsed.dependency_witnesses, None);
+    /// The claim witnesses of a block with two dependencies.
+    fn two_witnesses() -> Bytes {
+        ethrex_common::types::encode_claim_witnesses(&[
+            Bytes::from(vec![0xAB; 7740]),
+            Bytes::from(vec![0xCD; 65]),
+        ])
     }
 
     #[test]
-    fn dependency_witnesses_are_read_under_the_rules_of_the_payloads_timestamp() {
-        let witness = vec![Bytes::from(vec![0xAB; 7740])];
+    fn claim_witnesses_travel_as_one_hex_string() {
+        let claim_witnesses = Bytes::from(vec![0x00, 0xc2, 0x01, 0x02]);
+        let json =
+            serde_json::to_value(payload_with_witnesses(Some(claim_witnesses.clone()))).unwrap();
+        assert_eq!(json["claimWitnesses"], serde_json::json!("0x00c20102"));
+
+        let parsed: ExecutionPayload = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed.claim_witnesses, Some(claim_witnesses));
+
+        // Empty claim witnesses are sent as the empty string; none is no key.
+        let empty = serde_json::to_value(payload_with_witnesses(Some(Bytes::new()))).unwrap();
+        assert_eq!(empty["claimWitnesses"], serde_json::json!("0x"));
+        let absent = serde_json::to_value(payload_with_witnesses(None)).unwrap();
+        assert!(absent.get("claimWitnesses").is_none());
+        let parsed: ExecutionPayload = serde_json::from_value(absent).unwrap();
+        assert_eq!(parsed.claim_witnesses, None);
+    }
+
+    #[test]
+    fn claim_witnesses_are_read_under_the_rules_of_the_payloads_timestamp() {
+        let witnesses = two_witnesses();
         let cases = [
-            // (as received, EIP-8504 active, as read)
-            (None, true, Some(Vec::new())),
-            (Some(Vec::new()), true, Some(Vec::new())),
-            (Some(witness.clone()), true, Some(witness.clone())),
+            // (as received, Hegota active, as read)
+            (None, true, Some(Bytes::new())),
+            (Some(Bytes::new()), true, Some(Bytes::new())),
+            (Some(witnesses.clone()), true, Some(witnesses.clone())),
             (None, false, None),
-            (Some(Vec::new()), false, None),
+            (Some(Bytes::new()), false, None),
             // Kept, so the header rules reject a block that carries witnesses early.
-            (Some(witness.clone()), false, Some(witness)),
+            (Some(witnesses.clone()), false, Some(witnesses)),
         ];
         for (received, active, expected) in cases {
             let mut payload = payload_with_witnesses(received.clone());
-            payload.normalize_dependency_witnesses(active);
+            payload.normalize_claim_witnesses(active);
             assert_eq!(
-                payload.dependency_witnesses, expected,
-                "received {received:?} with EIP-8504 active = {active}"
+                payload.claim_witnesses, expected,
+                "received {received:?} with Hegota active = {active}"
             );
         }
     }
 
     #[test]
-    fn a_block_built_from_a_payload_commits_to_the_payloads_witnesses() {
-        let witnesses = vec![Bytes::from(vec![0xAB; 7740]), Bytes::from(vec![0xCD; 7740])];
+    fn a_block_built_from_a_payload_commits_to_the_payloads_claim_witnesses() {
+        let witnesses = two_witnesses();
         let block = payload_with_witnesses(Some(witnesses.clone()))
             .into_block(None, None, None)
             .unwrap();
-        assert_eq!(block.body.dependency_witnesses, Some(witnesses.clone()));
+        assert_eq!(block.body.claim_witnesses, Some(witnesses.clone()));
         assert_eq!(
-            block.header.dependency_witnesses_hash,
-            Some(compute_dependency_witnesses_hash(
+            block.header.claim_witnesses_hash,
+            Some(compute_claim_witnesses_hash(
                 &witnesses,
                 &ethrex_crypto::NativeCrypto
             ))
@@ -570,17 +577,17 @@ mod test {
 
         // The block gives back the same payload field, and its body response too.
         let round_trip = ExecutionPayload::from_block(block.clone(), None);
-        assert_eq!(round_trip.dependency_witnesses, Some(witnesses.clone()));
+        assert_eq!(round_trip.claim_witnesses, Some(witnesses.clone()));
         let body: ExecutionPayloadBody = block.body.clone().into();
-        assert_eq!(body.dependency_witnesses, Some(witnesses.clone()));
+        assert_eq!(body.claim_witnesses, Some(witnesses.clone()));
         let body = ExecutionPayloadBodyV2::from_body_with_bal(block.body, None);
-        assert_eq!(body.dependency_witnesses, Some(witnesses));
+        assert_eq!(body.claim_witnesses, Some(witnesses));
 
-        // Without the field the block has neither the list nor the commitment.
+        // Without the field the block has neither the witnesses nor the commitment.
         let block = payload_with_witnesses(None)
             .into_block(None, None, None)
             .unwrap();
-        assert_eq!(block.body.dependency_witnesses, None);
-        assert_eq!(block.header.dependency_witnesses_hash, None);
+        assert_eq!(block.body.claim_witnesses, None);
+        assert_eq!(block.header.claim_witnesses_hash, None);
     }
 }

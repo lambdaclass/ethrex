@@ -424,7 +424,7 @@ mod tests {
                 transactions,
                 ommers: vec![],
                 withdrawals: Some(vec![]),
-                dependency_witnesses: None,
+                claim_witnesses: None,
             },
         }
     }

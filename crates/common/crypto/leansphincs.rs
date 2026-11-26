@@ -1,4 +1,4 @@
-//! leanSPHINCS signature verification (EIP-8504).
+//! leanSPHINCS signature verification, for the `LEANSPHINCS_VERIFIER` of EIP-8141 claims.
 //!
 //! leanSPHINCS is SLH-DSA (FIPS 205) instantiated with Keccak-256 and with
 //! WOTS+C as its one-time signature. The scheme is specified by the

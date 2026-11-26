@@ -16,12 +16,13 @@ use ethrex_common::{
     },
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, Dependency, Fork, MempoolTransaction, Receipt, Transaction, TxType,
-        Withdrawal,
+        ChainConfig, Dependency, Fork, MAX_BLOCK_WITNESS_BYTES, MempoolTransaction, Receipt,
+        Transaction, TxType, Withdrawal,
         block_access_list::BlockAccessList,
         block_dependencies, bloom_from_logs, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
-        calculate_base_fee_per_gas, compute_dependency_witnesses_hash, compute_receipts_root,
-        compute_transactions_root, compute_withdrawals_root,
+        calculate_base_fee_per_gas, claim_witnesses_len_for_payload, compute_claim_witnesses_hash,
+        compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
+        encode_claim_witnesses,
         requests::{EncodedRequests, compute_requests_hash},
     },
 };
@@ -194,11 +195,11 @@ pub fn create_payload(
             .is_prague_activated(args.timestamp)
             .then_some(*DEFAULT_REQUESTS_HASH),
         slot_number: args.slot_number,
-        // EIP-8504: the commitment to the witnesses the block will carry. It is
-        // set again when the payload is finalized, once the transactions and so
-        // the witnesses are known.
-        dependency_witnesses_hash: (chain_config.fork(args.timestamp) >= Fork::Hegota)
-            .then(|| compute_dependency_witnesses_hash(&[], &NativeCrypto)),
+        // EIP-8141: the commitment to the claim witnesses the block will carry. It
+        // is set again when the payload is finalized, once the transactions and
+        // so the witnesses are known.
+        claim_witnesses_hash: (chain_config.fork(args.timestamp) >= Fork::Hegota)
+            .then(|| compute_claim_witnesses_hash(&[], &NativeCrypto)),
         ..Default::default()
     };
 
@@ -214,9 +215,9 @@ pub fn create_payload(
         withdrawals: chain_config
             .is_shanghai_activated(args.timestamp)
             .then(|| args.withdrawals.clone().unwrap_or_default()),
-        // EIP-8504: the list is part of the body from activation on, empty until
-        // a transaction with dependencies is included.
-        dependency_witnesses: (chain_config.fork(args.timestamp) >= Fork::Hegota).then(Vec::new),
+        // EIP-8141: the claim witnesses are part of the body from Hegota on, empty
+        // until a transaction with claims is included.
+        claim_witnesses: (chain_config.fork(args.timestamp) >= Fork::Hegota).then(Bytes::new),
     };
 
     // Delay applying withdrawals until the payload is requested and built
@@ -273,9 +274,12 @@ pub struct PayloadBuildContext {
     /// which carries no blob sidecars. Lets the blob path derive blob gas from the
     /// tx's versioned hashes instead of a mempool bundle.
     pub explicit_build: bool,
-    /// EIP-8504: the witness of each dependency of the transactions added so far.
+    /// EIP-8141: the witness of each dependency of the transactions added so far.
     /// A dependency shared by several transactions keeps the witness of the first.
-    pub dependency_witnesses: BTreeMap<Dependency, Bytes>,
+    pub claim_witnesses: BTreeMap<Dependency, Bytes>,
+    /// The bytes the witnesses in `claim_witnesses` take as items of an RLP list,
+    /// from which the length of the block's `claim_witnesses` follows.
+    pub claim_witnesses_payload_len: usize,
 }
 
 impl PayloadBuildContext {
@@ -355,7 +359,8 @@ impl PayloadBuildContext {
             payload_size,
             block_access_list: None,
             explicit_build: false,
-            dependency_witnesses: BTreeMap::new(),
+            claim_witnesses: BTreeMap::new(),
+            claim_witnesses_payload_len: 0,
         })
     }
 
@@ -1011,10 +1016,10 @@ impl Blockchain {
             // Check adding a transaction wouldn't exceed the Osaka block size limit of 10 MiB
             // if inclusion of the transaction puts the block size over the size limit
             // we don't add any more txs to the payload.
-            // EIP-8504: a transaction with dependencies also brings a witness for
-            // each one no earlier transaction of the block already has. A pooled
-            // one always has them; without them it can never be included.
-            let new_witnesses = match self.new_dependency_witnesses(&head_tx.tx, context) {
+            // EIP-8141: a transaction with claims also brings a witness for each
+            // of its dependencies no earlier transaction of the block already has.
+            // A pooled one always has them; without them it can never be included.
+            let new_witnesses = match self.new_claim_witnesses(&head_tx.tx, context) {
                 Ok(new_witnesses) => new_witnesses,
                 Err(e) => {
                     let tx_hash = head_tx.tx.hash(&NativeCrypto);
@@ -1024,12 +1029,33 @@ impl Blockchain {
                     continue;
                 }
             };
+            // EIP-8141 §Block Witnesses: the block's `claim_witnesses` is at most
+            // `MAX_BLOCK_WITNESS_BYTES` long. A transaction whose witnesses do not
+            // fit is left for a later block.
+            let claim_witnesses_len =
+                claim_witnesses_len_for_payload(context.claim_witnesses_payload_len);
+            let potential_claim_witnesses_len = claim_witnesses_len_for_payload(
+                context.claim_witnesses_payload_len
+                    + new_witnesses
+                        .iter()
+                        .map(|(_, witness)| witness.length())
+                        .sum::<usize>(),
+            );
+            if potential_claim_witnesses_len > MAX_BLOCK_WITNESS_BYTES {
+                debug!(
+                    "Skipping transaction: {}, its claim witnesses do not fit the block",
+                    head_tx.tx.hash(&NativeCrypto)
+                );
+                txs.pop();
+                continue;
+            }
+            // The block body carries the claim witnesses as one byte string, so the
+            // transaction adds what that string grows by.
             let potential_rlp_block_size = context.payload_size
                 + head_tx.encode_canonical_len() as u64
-                + new_witnesses
-                    .iter()
-                    .map(|(_, witness)| witness.length() as u64)
-                    .sum::<u64>();
+                + (ethrex_rlp::encode::bytes_length(potential_claim_witnesses_len, 0)
+                    - ethrex_rlp::encode::bytes_length(claim_witnesses_len, 0))
+                    as u64;
             if context
                 .chain_config()
                 .is_osaka_activated(context.payload.header.timestamp)
@@ -1244,9 +1270,25 @@ impl Blockchain {
         head: &HeadTransaction,
         context: &mut PayloadBuildContext,
     ) -> Result<Receipt, ChainError> {
-        // EIP-8504: the block must carry a witness for each dependency of the
+        // EIP-8141: the block must carry a witness for each dependency of the
         // transaction, so they are taken before it runs and kept once it is in.
-        let new_witnesses = self.new_dependency_witnesses(&head.tx, context)?;
+        let new_witnesses = self.new_claim_witnesses(&head.tx, context)?;
+        // A block's claims are verified against its pre-state. The pool verified
+        // these witnesses against the state it had when it admitted the
+        // transaction; a custom verifier may not exist in the state this block
+        // builds on, so its claims are verified again here. A protocol verifier's
+        // result depends on no state.
+        for (dependency, witness) in &new_witnesses {
+            if dependency.protocol_verifier().is_none()
+                && !context
+                    .vm
+                    .verify_dependency(dependency, witness, &context.payload.header)?
+            {
+                return Err(ChainError::InvalidTransaction(
+                    "a claim's witness does not satisfy it in the block's pre-state".to_string(),
+                ));
+            }
+        }
         let receipt = match **head {
             Transaction::EIP4844Transaction(_) => self.apply_blob_transaction(head, context),
             // EIP-8141: a frame tx with blobs counts toward the block's blob gas and
@@ -1258,15 +1300,18 @@ impl Blockchain {
             }
             _ => apply_plain_transaction(head, context),
         }?;
-        context.dependency_witnesses.extend(new_witnesses);
+        for (dependency, witness) in new_witnesses {
+            context.claim_witnesses_payload_len += witness.length();
+            context.claim_witnesses.insert(dependency, witness);
+        }
         Ok(receipt)
     }
 
-    /// EIP-8504: the witnesses `tx` adds to the block being built, one for each of
+    /// EIP-8141: the witnesses `tx` adds to the block being built, one for each of
     /// its dependencies that no earlier transaction of the block already has.
     /// They come from the pool, where they were verified when the transaction was
-    /// admitted. Empty for a transaction without proof frames.
-    fn new_dependency_witnesses(
+    /// admitted. Empty for a transaction without claims.
+    fn new_claim_witnesses(
         &self,
         tx: &Transaction,
         context: &PayloadBuildContext,
@@ -1274,24 +1319,30 @@ impl Blockchain {
         let Transaction::FrameTransaction(frame_tx) = tx else {
             return Ok(Vec::new());
         };
-        if !frame_tx.has_proof_frames() {
+        if frame_tx.claims.is_empty() {
             return Ok(Vec::new());
         }
-        let dependencies = frame_tx.dependencies();
+        let dependencies = frame_tx.claim_dependencies().ok_or_else(|| {
+            ChainError::InvalidTransaction("frame transaction has a malformed claim".to_string())
+        })?;
         let witnesses = self
             .mempool
-            .get_dependency_witnesses(tx.hash(&NativeCrypto))?
+            .get_claim_witnesses(tx.hash(&NativeCrypto))?
             .filter(|witnesses| witnesses.len() == dependencies.len())
             .ok_or_else(|| {
                 ChainError::Custom(
-                    "transaction with dependencies has no witnesses in the pool".to_string(),
+                    "transaction with claims has no witnesses in the pool".to_string(),
                 )
             })?;
-        Ok(dependencies
-            .into_iter()
-            .zip(witnesses)
-            .filter(|(dependency, _)| !context.dependency_witnesses.contains_key(dependency))
-            .collect())
+        // Claims of the transaction that resolve to the same dependency share one
+        // witness, the first.
+        let mut new_witnesses: BTreeMap<Dependency, Bytes> = BTreeMap::new();
+        for (dependency, witness) in dependencies.into_iter().zip(witnesses) {
+            if !context.claim_witnesses.contains_key(&dependency) {
+                new_witnesses.entry(dependency).or_insert(witness);
+            }
+        }
+        Ok(new_witnesses.into_iter().collect())
     }
 
     /// Runs a blob transaction, updates the gas count & blob data and returns the receipt
@@ -1423,14 +1474,19 @@ impl Blockchain {
             compute_transactions_root(&context.payload.body.transactions, &NativeCrypto);
         context.payload.header.receipts_root =
             compute_receipts_root(&context.receipts, &NativeCrypto);
-        // EIP-8504: the body carries one witness for each of the block's
-        // dependencies, in their order, and the header commits to that list.
-        if context.payload.body.dependency_witnesses.is_some() {
+        // EIP-8141: the body carries one witness for each of the block's
+        // dependencies, in their order, as one byte string the header commits to.
+        if context.payload.body.claim_witnesses.is_some() {
             let witnesses = block_dependencies(&context.payload.body.transactions)
+                .ok_or_else(|| {
+                    ChainError::Custom(
+                        "a frame transaction of the block has a malformed claim".to_string(),
+                    )
+                })?
                 .iter()
                 .map(|dependency| {
                     context
-                        .dependency_witnesses
+                        .claim_witnesses
                         .get(dependency)
                         .cloned()
                         .ok_or_else(|| {
@@ -1440,14 +1496,14 @@ impl Blockchain {
                         })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            context.payload.body.dependency_witnesses = Some(witnesses);
+            context.payload.body.claim_witnesses = Some(encode_claim_witnesses(&witnesses));
         }
-        context.payload.header.dependency_witnesses_hash = context
+        context.payload.header.claim_witnesses_hash = context
             .payload
             .body
-            .dependency_witnesses
+            .claim_witnesses
             .as_ref()
-            .map(|witnesses| compute_dependency_witnesses_hash(witnesses, &NativeCrypto));
+            .map(|claim_witnesses| compute_claim_witnesses_hash(claim_witnesses, &NativeCrypto));
         context.payload.header.requests_hash = context
             .requests
             .as_ref()

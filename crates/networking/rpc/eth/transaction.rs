@@ -972,18 +972,10 @@ impl RpcHandler for SendRawTransactionRequest {
                     wrapped_blob_tx.blobs_bundle.clone(),
                 )
                 .await
-        } else if let SendRawTransactionRequest::FrameWithBlobs(wrapped_frame_tx) = self {
+        } else if let SendRawTransactionRequest::Frame(pooled_frame_tx) = self {
             context
                 .blockchain
-                .add_local_blob_transaction_to_pool(
-                    Transaction::FrameTransaction(wrapped_frame_tx.tx.clone()),
-                    wrapped_frame_tx.blobs_bundle.clone(),
-                )
-                .await
-        } else if let SendRawTransactionRequest::FrameWithWitnesses(wrapper) = self {
-            context
-                .blockchain
-                .add_local_dependency_transaction_to_pool(wrapper.clone())
+                .add_local_frame_transaction_to_pool(pooled_frame_tx.clone())
                 .await
         } else {
             context
