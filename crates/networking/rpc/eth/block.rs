@@ -387,6 +387,7 @@ pub async fn get_all_block_rpc_receipts(
     // Fetch receipt info from block
     let block_hash = header.hash();
     let block_timestamp = header.timestamp;
+    let fork = config.fork(block_timestamp);
     let block_info = RpcReceiptBlockInfo::from_block_header(header);
     // Fetch receipts: only up to target_index+1 when set, otherwise all
     let fetch_count = target_index
@@ -414,7 +415,8 @@ pub async fn get_all_block_rpc_receipts(
     {
         let index = index as u64;
         let gas_used = receipt.cumulative_gas_used - last_cumulative_gas_used;
-        let tx_info = RpcReceiptTxInfo::from_transaction(
+        let tx_info = RpcReceiptTxInfo::from_transaction_at(
+            fork,
             tx.clone(),
             index,
             gas_used,

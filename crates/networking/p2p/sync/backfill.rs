@@ -555,6 +555,7 @@ mod tests {
                         ommers: vec![],
                         withdrawals: Some(vec![]),
                         dependency_witnesses: None,
+                        dependency_proof: None,
                     },
                 )
                 .await

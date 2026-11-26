@@ -498,6 +498,34 @@ pub mod bytes {
         }
     }
 
+    /// An optional byte string, a 0x prefixed hex string. An absent or `null`
+    /// value is `None`.
+    pub mod opt {
+        use super::*;
+
+        pub fn deserialize<'de, D>(d: D) -> Result<Option<Bytes>, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let Some(value) = Option::<String>::deserialize(d)? else {
+                return Ok(None);
+            };
+            let bytes = hex_simd::decode_to_vec(value.trim_start_matches("0x"))
+                .map_err(|e| D::Error::custom(e.to_string()))?;
+            Ok(Some(Bytes::from(bytes)))
+        }
+
+        pub fn serialize<S>(value: &Option<Bytes>, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            match value {
+                Some(value) => serializer.serialize_str(&format!("0x{value:x}")),
+                None => serializer.serialize_none(),
+            }
+        }
+    }
+
     /// An optional list of byte strings, each a 0x prefixed hex string. An absent
     /// or `null` value is `None`.
     pub mod vec_opt {

@@ -8,8 +8,9 @@ use ethrex_common::{
     serde_utils,
     types::{
         BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, Transaction, Withdrawal,
-        block_access_list::BlockAccessList, compute_dependency_witnesses_hash,
-        compute_transactions_root, compute_withdrawals_root, requests::EncodedRequests,
+        block_access_list::BlockAccessList, block_dependencies, compute_dependency_proof_hash,
+        compute_dependency_witnesses_hash, compute_deps_hash, compute_transactions_root,
+        compute_withdrawals_root, requests::EncodedRequests,
     },
 };
 
@@ -86,6 +87,17 @@ pub struct ExecutionPayload {
         default
     )]
     pub dependency_witnesses: Option<Vec<Bytes>>,
+    // dependencyProof (EIP-8288, LStar+): the proof the block carries for the
+    // dependencies of its transactions, in place of their witnesses; empty when
+    // the block has none. The header commits to it, so it must survive the
+    // getPayload → newPayload round-trip. `None` for pre-LStar payloads (skipped
+    // in serialization).
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        with = "serde_utils::bytes::opt",
+        default
+    )]
+    pub dependency_proof: Option<Bytes>,
 }
 
 #[derive(Clone, Debug)]
@@ -143,6 +155,7 @@ impl ExecutionPayload {
             ommers: vec![],
             withdrawals: self.withdrawals,
             dependency_witnesses: self.dependency_witnesses,
+            dependency_proof: self.dependency_proof,
         };
         let header = BlockHeader {
             parent_hash: self.parent_hash,
@@ -179,6 +192,20 @@ impl ExecutionPayload {
                 compute_dependency_witnesses_hash(witnesses, &ethrex_crypto::NativeCrypto)
             }),
             burned_fees: self.burned_fees,
+            // EIP-8288: the payload carries the proof alone. The header's
+            // commitments to it and to the block's dependencies are computed
+            // here, so a payload whose block hash was made over other values
+            // fails the block hash check.
+            dependency_proof_hash: body
+                .dependency_proof
+                .as_ref()
+                .map(|proof| compute_dependency_proof_hash(proof, &ethrex_crypto::NativeCrypto)),
+            block_deps_hash: body.dependency_proof.as_ref().map(|_| {
+                compute_deps_hash(
+                    &block_dependencies(&body.transactions),
+                    &ethrex_crypto::NativeCrypto,
+                )
+            }),
             ..Default::default()
         };
 
@@ -196,6 +223,20 @@ impl ExecutionPayload {
             Some(witnesses.unwrap_or_default())
         } else {
             witnesses.filter(|witnesses| !witnesses.is_empty())
+        };
+    }
+
+    /// EIP-8288: reads `dependencyProof` under the rules of the payload's
+    /// timestamp, before the payload becomes a block. From LStar the block always
+    /// has a dependency proof, so an absent field is the empty proof. Before that
+    /// the block has none: an absent or empty field is no proof, and a non-empty
+    /// one is kept so the header rules reject the block.
+    pub(crate) fn normalize_dependency_proof(&mut self, eip8288_active: bool) {
+        let proof = self.dependency_proof.take();
+        self.dependency_proof = if eip8288_active {
+            Some(proof.unwrap_or_default())
+        } else {
+            proof.filter(|proof| !proof.is_empty())
         };
     }
 
@@ -227,6 +268,7 @@ impl ExecutionPayload {
             block_access_list,
             burned_fees: block.header.burned_fees,
             dependency_witnesses: block.body.dependency_witnesses,
+            dependency_proof: block.body.dependency_proof,
         }
     }
 
@@ -256,6 +298,7 @@ impl ExecutionPayload {
             block_access_list: None,
             burned_fees: self.burned_fees,
             dependency_witnesses: self.dependency_witnesses.clone(),
+            dependency_proof: self.dependency_proof.clone(),
         }
     }
 }
@@ -399,6 +442,13 @@ pub struct ExecutionPayloadBody {
         default
     )]
     pub dependency_witnesses: Option<Vec<Bytes>>,
+    /// EIP-8288: the block's dependency proof, as in the payload.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        with = "serde_utils::bytes::opt",
+        default
+    )]
+    pub dependency_proof: Option<Bytes>,
 }
 
 impl From<BlockBody> for ExecutionPayloadBody {
@@ -411,6 +461,7 @@ impl From<BlockBody> for ExecutionPayloadBody {
                 .collect(),
             withdrawals: body.withdrawals,
             dependency_witnesses: body.dependency_witnesses,
+            dependency_proof: body.dependency_proof,
         }
     }
 }
@@ -434,6 +485,13 @@ pub struct ExecutionPayloadBodyV2 {
         default
     )]
     pub dependency_witnesses: Option<Vec<Bytes>>,
+    /// EIP-8288: the block's dependency proof, as in the payload.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        with = "serde_utils::bytes::opt",
+        default
+    )]
+    pub dependency_proof: Option<Bytes>,
 }
 
 impl ExecutionPayloadBodyV2 {
@@ -447,6 +505,7 @@ impl ExecutionPayloadBodyV2 {
             withdrawals: body.withdrawals,
             block_access_list: bal,
             dependency_witnesses: body.dependency_witnesses,
+            dependency_proof: body.dependency_proof,
         }
     }
 }
@@ -582,5 +641,95 @@ mod test {
             .unwrap();
         assert_eq!(block.body.dependency_witnesses, None);
         assert_eq!(block.header.dependency_witnesses_hash, None);
+    }
+
+    // EIP-8288: from LStar the payload carries the block's dependency proof.
+
+    fn payload_with_proof(dependency_proof: Option<Bytes>) -> ExecutionPayload {
+        let mut payload = payload_with_witnesses(None);
+        payload.dependency_proof = dependency_proof;
+        payload
+    }
+
+    #[test]
+    fn dependency_proof_travels_as_a_hex_string() {
+        let proof = Bytes::from(vec![0x01, 0x02, 0xff]);
+        let json = serde_json::to_value(payload_with_proof(Some(proof.clone()))).unwrap();
+        assert_eq!(json["dependencyProof"], serde_json::json!("0x0102ff"));
+        let parsed: ExecutionPayload = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed.dependency_proof, Some(proof));
+
+        // The empty proof is sent as the empty byte string; no proof is no key.
+        let empty = serde_json::to_value(payload_with_proof(Some(Bytes::new()))).unwrap();
+        assert_eq!(empty["dependencyProof"], serde_json::json!("0x"));
+        let parsed: ExecutionPayload = serde_json::from_value(empty).unwrap();
+        assert_eq!(parsed.dependency_proof, Some(Bytes::new()));
+        let absent = serde_json::to_value(payload_with_proof(None)).unwrap();
+        assert!(absent.get("dependencyProof").is_none());
+        let parsed: ExecutionPayload = serde_json::from_value(absent).unwrap();
+        assert_eq!(parsed.dependency_proof, None);
+    }
+
+    #[test]
+    fn dependency_proof_is_read_under_the_rules_of_the_payloads_timestamp() {
+        let proof = Bytes::from(vec![0xEE; 300]);
+        let cases = [
+            // (as received, EIP-8288 active, as read)
+            (None, true, Some(Bytes::new())),
+            (Some(Bytes::new()), true, Some(Bytes::new())),
+            (Some(proof.clone()), true, Some(proof.clone())),
+            (None, false, None),
+            (Some(Bytes::new()), false, None),
+            // Kept, so the header rules reject a block that carries a proof early.
+            (Some(proof.clone()), false, Some(proof)),
+        ];
+        for (received, active, expected) in cases {
+            let mut payload = payload_with_proof(received.clone());
+            payload.normalize_dependency_proof(active);
+            assert_eq!(
+                payload.dependency_proof, expected,
+                "received {received:?} with EIP-8288 active = {active}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_block_built_from_a_payload_commits_to_the_payloads_proof() {
+        let proof = Bytes::from(vec![0xEE; 300]);
+        let block = payload_with_proof(Some(proof.clone()))
+            .into_block(None, None, None)
+            .unwrap();
+        assert_eq!(block.body.dependency_proof, Some(proof.clone()));
+        assert_eq!(block.body.dependency_witnesses, None);
+        assert_eq!(block.header.dependency_witnesses_hash, None);
+        // The payload carries the proof alone: the header's commitments to it and
+        // to the dependencies of the transactions, none here, are derived.
+        assert_eq!(
+            block.header.dependency_proof_hash,
+            Some(compute_dependency_proof_hash(
+                &proof,
+                &ethrex_crypto::NativeCrypto
+            ))
+        );
+        assert_eq!(
+            block.header.block_deps_hash,
+            Some(compute_deps_hash(&[], &ethrex_crypto::NativeCrypto))
+        );
+
+        // The block gives back the same payload field, and its body response too.
+        let round_trip = ExecutionPayload::from_block(block.clone(), None);
+        assert_eq!(round_trip.dependency_proof, Some(proof.clone()));
+        let body: ExecutionPayloadBody = block.body.clone().into();
+        assert_eq!(body.dependency_proof, Some(proof.clone()));
+        let body = ExecutionPayloadBodyV2::from_body_with_bal(block.body, None);
+        assert_eq!(body.dependency_proof, Some(proof));
+
+        // Without the field the block has neither the proof nor the commitments.
+        let block = payload_with_proof(None)
+            .into_block(None, None, None)
+            .unwrap();
+        assert_eq!(block.body.dependency_proof, None);
+        assert_eq!(block.header.dependency_proof_hash, None);
+        assert_eq!(block.header.block_deps_hash, None);
     }
 }

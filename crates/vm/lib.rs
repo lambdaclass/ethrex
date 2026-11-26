@@ -6,11 +6,11 @@ mod witness_db;
 
 pub mod backends;
 
-/// EIP-8037 (Amsterdam+, PR #2703) per-tx 2D inclusion check. Re-exported so the
-/// payload builder can enforce it with identical semantics to the validator.
-pub use backends::levm::check_2d_gas_allowance;
 /// Bounds the parallel Amsterdam path uses to reject an over-limit block early.
 pub use backends::levm::{CompletedGas, block_work_budget, check_minimum_block_work};
+/// EIP-8037 (Amsterdam+, PR #2703) per-tx 2D inclusion check. Re-exported so the
+/// payload builder can enforce it with identical semantics to the validator.
+pub use backends::levm::{check_2d_gas_allowance, check_2d_gas_allowance_at};
 pub use backends::{
     BlockExecutionResult, Evm, TxGasBreakdown, TxStatus, compute_burned_fees, log_gas_used_mismatch,
 };

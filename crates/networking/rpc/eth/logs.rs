@@ -597,6 +597,7 @@ mod tests {
                 ommers: Default::default(),
                 withdrawals: Default::default(),
                 dependency_witnesses: None,
+                dependency_proof: None,
             };
             Block::new(header, body)
         };

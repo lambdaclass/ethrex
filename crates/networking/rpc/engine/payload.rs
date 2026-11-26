@@ -9,7 +9,10 @@ use ethrex_common::types::block_execution_witness::{
 };
 use ethrex_common::types::payload::PayloadBundle;
 use ethrex_common::types::requests::{EncodedRequests, compute_requests_hash};
-use ethrex_common::types::{Block, BlockBody, BlockHash, BlockHeader, BlockNumber, Fork};
+use ethrex_common::types::{
+    Block, BlockBody, BlockHash, BlockHeader, BlockNumber, Fork, InvalidBlockBodyError,
+    MAX_DEPENDENCY_PROOF_BYTES,
+};
 use ethrex_common::validate_bal_code_sizes;
 use ethrex_common::{H256, U256};
 use ethrex_crypto::NativeCrypto;
@@ -51,7 +54,11 @@ impl RpcHandler for NewPayloadV1Request {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         validate_execution_payload_v1(&self.payload)?;
-        let block = match get_block_from_payload(&self.payload, None, None, None, false) {
+        let fork = context
+            .storage
+            .get_chain_config()
+            .fork(self.payload.timestamp);
+        let block = match get_block_from_payload(&self.payload, None, None, None, fork) {
             Ok(block) => block,
             Err(err) => {
                 return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
@@ -84,7 +91,11 @@ impl RpcHandler for NewPayloadV2Request {
             // Behave as a v1
             validate_execution_payload_v1(&self.payload)?;
         }
-        let block = match get_block_from_payload(&self.payload, None, None, None, false) {
+        let fork = context
+            .storage
+            .get_chain_config()
+            .fork(self.payload.timestamp);
+        let block = match get_block_from_payload(&self.payload, None, None, None, fork) {
             Ok(block) => block,
             Err(err) => {
                 return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
@@ -142,7 +153,10 @@ impl RpcHandler for NewPayloadV3Request {
             Some(self.parent_beacon_block_root),
             None,
             None,
-            false,
+            context
+                .storage
+                .get_chain_config()
+                .fork(self.payload.timestamp),
         ) {
             Ok(block) => block,
             Err(err) => {
@@ -239,7 +253,10 @@ impl NewPayloadV4Request {
             Some(self.parent_beacon_block_root),
             Some(requests_hash),
             None,
-            false,
+            context
+                .storage
+                .get_chain_config()
+                .fork(self.payload.timestamp),
         ) {
             Ok(block) => block,
             Err(err) => {
@@ -476,6 +493,17 @@ impl NewPayloadV5Request {
         }
         validate_execution_payload_v5(&self.payload)?;
 
+        // EIP-8288: a dependency proof over `MAX_DEPENDENCY_PROOF_BYTES` makes the
+        // payload invalid. It is checked here, before the proof is hashed to build
+        // the block's header.
+        if let Some(proof) = &self.payload.dependency_proof
+            && proof.len() > MAX_DEPENDENCY_PROOF_BYTES
+        {
+            return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
+                &InvalidBlockBodyError::DependencyProofTooLarge(proof.len()).to_string(),
+            ))?);
+        }
+
         // validate the received requests
         validate_execution_requests(&self.execution_requests)?;
 
@@ -492,7 +520,7 @@ impl NewPayloadV5Request {
             Some(self.parent_beacon_block_root),
             Some(requests_hash),
             block_access_list_hash,
-            chain_config.fork(self.payload.timestamp) >= Fork::Hegota,
+            chain_config.fork(self.payload.timestamp),
         ) {
             Ok(block) => block,
             Err(err) => {
@@ -1317,21 +1345,23 @@ fn validate_execution_requests(execution_requests: &[EncodedRequests]) -> Result
     Ok(())
 }
 
-/// `eip8504_active` says whether EIP-8504 is active at the payload's timestamp,
-/// which decides how its `dependencyWitnesses` field is read.
+/// `fork` is the fork at the payload's timestamp. It decides how the payload's
+/// `dependencyWitnesses` (EIP-8504, from Hegota until LStar) and
+/// `dependencyProof` (EIP-8288, from LStar) fields are read.
 fn get_block_from_payload(
     payload: &ExecutionPayload,
     parent_beacon_block_root: Option<H256>,
     requests_hash: Option<H256>,
     block_access_list_hash: Option<H256>,
-    eip8504_active: bool,
+    fork: Fork,
 ) -> Result<Block, RLPDecodeError> {
     let block_hash = payload.block_hash;
     let block_number = payload.block_number;
     debug!(%block_hash, %block_number, "Received new payload");
 
     let mut payload = payload.clone();
-    payload.normalize_dependency_witnesses(eip8504_active);
+    payload.normalize_dependency_witnesses(fork.has_dependency_witnesses());
+    payload.normalize_dependency_proof(fork.has_dependency_proof());
     payload.into_block(
         parent_beacon_block_root,
         requests_hash,
@@ -1553,7 +1583,7 @@ async fn try_execute_payload(
             parent_beacon_block_root,
             requests_hash,
             block_access_list_hash,
-            context.storage.get_chain_config().fork(payload.timestamp) >= Fork::Hegota,
+            context.storage.get_chain_config().fork(payload.timestamp),
         )?;
         status =
             payload_status_for_existing_block(&block, &context.storage, &context.blockchain, true)
@@ -1586,14 +1616,14 @@ fn rebuild_block(
     parent_beacon_block_root: Option<H256>,
     requests_hash: Option<H256>,
     block_access_list_hash: Option<H256>,
-    eip8504_active: bool,
+    fork: Fork,
 ) -> Result<Block, RpcErr> {
     get_block_from_payload(
         payload,
         parent_beacon_block_root,
         requests_hash,
         block_access_list_hash,
-        eip8504_active,
+        fork,
     )
     .map_err(|e| RpcErr::Internal(format!("failed to rebuild the block from its payload: {e}")))
 }
@@ -1627,7 +1657,7 @@ async fn classify_execution(
             parent_beacon_block_root,
             requests_hash,
             block_access_list_hash,
-            storage.get_chain_config().fork(payload.timestamp) >= Fork::Hegota,
+            storage.get_chain_config().fork(payload.timestamp),
         )
     };
 
@@ -1896,6 +1926,7 @@ mod tests {
             block_access_list: Some(BlockAccessList::default()),
             burned_fees: None,
             dependency_witnesses: None,
+            dependency_proof: None,
         }
     }
 

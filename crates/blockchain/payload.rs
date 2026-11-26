@@ -20,7 +20,8 @@ use ethrex_common::{
         Withdrawal,
         block_access_list::BlockAccessList,
         block_dependencies, bloom_from_logs, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
-        calculate_base_fee_per_gas, compute_dependency_witnesses_hash, compute_receipts_root,
+        calculate_base_fee_per_gas, compute_dependency_proof_hash,
+        compute_dependency_witnesses_hash, compute_deps_hash, compute_receipts_root,
         compute_transactions_root, compute_withdrawals_root,
         requests::{EncodedRequests, compute_requests_hash},
     },
@@ -28,7 +29,7 @@ use ethrex_common::{
 
 use ethrex_crypto::NativeCrypto;
 use ethrex_crypto::keccak::Keccak256;
-use ethrex_vm::{Evm, EvmError, check_2d_gas_allowance, compute_burned_fees};
+use ethrex_vm::{Evm, EvmError, check_2d_gas_allowance_at, compute_burned_fees};
 
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{Store, error::StoreError};
@@ -44,6 +45,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     Blockchain, BlockchainType, MAX_PAYLOADS,
     constants::{GAS_LIMIT_BOUND_DIVISOR, MIN_GAS_LIMIT, TX_GAS_COST},
+    dependency_proof::{prepare_prover, prove_dependencies},
     error::{ChainError, InvalidBlockError},
     mempool::PendingTxFilter,
     new_evm,
@@ -197,8 +199,18 @@ pub fn create_payload(
         // EIP-8504: the commitment to the witnesses the block will carry. It is
         // set again when the payload is finalized, once the transactions and so
         // the witnesses are known.
-        dependency_witnesses_hash: (chain_config.fork(args.timestamp) >= Fork::Hegota)
+        dependency_witnesses_hash: fork
+            .has_dependency_witnesses()
             .then(|| compute_dependency_witnesses_hash(&[], &NativeCrypto)),
+        // EIP-8288: from LStar, the commitments to the dependency proof and to
+        // the dependencies it proves. They are set again as the payload is
+        // finalized and as its proof is made.
+        dependency_proof_hash: fork
+            .has_dependency_proof()
+            .then(|| compute_dependency_proof_hash(&[], &NativeCrypto)),
+        block_deps_hash: fork
+            .has_dependency_proof()
+            .then(|| compute_deps_hash(&[], &NativeCrypto)),
         ..Default::default()
     };
 
@@ -214,9 +226,12 @@ pub fn create_payload(
         withdrawals: chain_config
             .is_shanghai_activated(args.timestamp)
             .then(|| args.withdrawals.clone().unwrap_or_default()),
-        // EIP-8504: the list is part of the body from activation on, empty until
-        // a transaction with dependencies is included.
-        dependency_witnesses: (chain_config.fork(args.timestamp) >= Fork::Hegota).then(Vec::new),
+        // EIP-8504: the list is part of the body from activation until LStar,
+        // empty until a transaction with dependencies is included.
+        dependency_witnesses: fork.has_dependency_witnesses().then(Vec::new),
+        // EIP-8288: from LStar the block carries one proof in its place, empty
+        // while the block has no dependencies.
+        dependency_proof: fork.has_dependency_proof().then(Bytes::new),
     };
 
     // Delay applying withdrawals until the payload is requested and built
@@ -276,6 +291,11 @@ pub struct PayloadBuildContext {
     /// EIP-8504: the witness of each dependency of the transactions added so far.
     /// A dependency shared by several transactions keeps the witness of the first.
     pub dependency_witnesses: BTreeMap<Dependency, Bytes>,
+    /// EIP-8288: the dependencies of the finalized block, each with its witness,
+    /// in the order of `block_dependencies`. The dependency proof is made from
+    /// them (see [`PayloadBuildResult::with_dependency_proof`]). Empty before
+    /// LStar.
+    pub unproven_dependencies: Vec<(Dependency, Bytes)>,
 }
 
 impl PayloadBuildContext {
@@ -330,7 +350,9 @@ impl PayloadBuildContext {
         } else {
             0
         };
-        let payload_size = payload.length() as u64;
+        // EIP-8288: the dependency proof is not part of the RLP block whose size
+        // is limited.
+        let payload_size = payload.length_without_dependency_proof() as u64;
         Ok(PayloadBuildContext {
             remaining_gas: payload.header.gas_limit,
             cumulative_gas_spent: 0,
@@ -356,6 +378,7 @@ impl PayloadBuildContext {
             block_access_list: None,
             explicit_build: false,
             dependency_witnesses: BTreeMap::new(),
+            unproven_dependencies: Vec::new(),
         })
     }
 
@@ -382,6 +405,11 @@ impl PayloadBuildContext {
         self.store.get_chain_config()
     }
 
+    /// The fork of the block being built.
+    fn fork(&self) -> Fork {
+        self.chain_config().fork(self.payload.header.timestamp)
+    }
+
     fn base_fee_per_gas(&self) -> Option<u64> {
         self.payload.header.base_fee_per_gas
     }
@@ -406,6 +434,12 @@ pub struct PayloadBuildResult {
     pub payload: Block,
     /// Block Access List for EIP-7928
     pub block_access_list: Option<BlockAccessList>,
+    /// EIP-8288: the block's dependencies, each with its witness, that the
+    /// dependency proof is still to be made from. While it is not empty the
+    /// block has an empty proof in place of the real one and is not valid.
+    /// Empty before LStar, for a block without dependencies, and once
+    /// [`Self::with_dependency_proof`] has put the proof in the block.
+    pub unproven_dependencies: Vec<(Dependency, Bytes)>,
 }
 
 impl From<PayloadBuildContext> for PayloadBuildResult {
@@ -418,6 +452,7 @@ impl From<PayloadBuildContext> for PayloadBuildResult {
             account_updates,
             payload,
             block_access_list,
+            unproven_dependencies,
             ..
         } = value;
 
@@ -429,7 +464,44 @@ impl From<PayloadBuildContext> for PayloadBuildResult {
             account_updates,
             payload,
             block_access_list,
+            unproven_dependencies,
         }
+    }
+}
+
+impl PayloadBuildResult {
+    /// EIP-8288: makes the dependency proof of the block from the witnesses of
+    /// its dependencies and puts it in the block, with the header's commitment to
+    /// it. Nothing changes for a block that has no dependency left to prove.
+    ///
+    /// Proving takes from a tenth of a second to several seconds, so a payload is
+    /// proven once, when no transaction will be added to it any more, and not
+    /// each time it is rebuilt. The witnesses were copied out of the pool as the
+    /// transactions were added, so no lock is held meanwhile. A proof that cannot
+    /// be made fails the build: the block cannot fall back to the witnesses.
+    pub fn with_dependency_proof(mut self) -> Result<Self, ChainError> {
+        if self.unproven_dependencies.is_empty() {
+            return Ok(self);
+        }
+        let since = Instant::now();
+        let proof = prove_dependencies(&self.unproven_dependencies).map_err(|error| {
+            ChainError::Custom(format!(
+                "Failed to prove the dependencies of the payload: {error}"
+            ))
+        })?;
+        debug!(
+            "Proved {} dependencies in {} ms, proof of {} bytes",
+            self.unproven_dependencies.len(),
+            since.elapsed().as_millis(),
+            proof.len()
+        );
+        self.payload.header.dependency_proof_hash =
+            Some(compute_dependency_proof_hash(&proof, &NativeCrypto));
+        // The header changed: drop a block hash computed before the proof.
+        let _ = self.payload.header.hash.take();
+        self.payload.body.dependency_proof = Some(proof);
+        self.unproven_dependencies.clear();
+        Ok(self)
     }
 }
 
@@ -464,6 +536,17 @@ impl Blockchain {
         // provider, so it holds complete blob data for every blob tx it may include.
         // Inert unless blob sampling is enabled.
         self.mempool.latch_eager_provider();
+        // EIP-8288: the payload of an LStar block is proven when it is handed
+        // out. The prover is prepared now, off this thread, so that the proof
+        // does not wait for it. It is done once in the process.
+        if self
+            .storage
+            .get_chain_config()
+            .fork(payload.header.timestamp)
+            .has_dependency_proof()
+        {
+            tokio::task::spawn_blocking(prepare_prover);
+        }
         let self_clone = self.clone();
         let cancel_token = CancellationToken::new();
         let cancel_token_clone = cancel_token.clone();
@@ -556,6 +639,17 @@ impl Blockchain {
             }
         }
 
+        // EIP-8288: the dependency proof is made here, once, for the payload the
+        // loop ends with, and not for each rebuild. It runs on a blocking thread:
+        // proving is CPU-bound and takes up to several seconds.
+        if !res.unproven_dependencies.is_empty() {
+            res = tokio::task::spawn_blocking(move || res.with_dependency_proof())
+                .await
+                .map_err(|_| {
+                    ChainError::Custom("Failed to join the dependency proof task".to_string())
+                })??;
+        }
+
         self.log_glamsterdam_banner_if_first_amsterdam_block(&res.payload.header);
 
         Ok(res)
@@ -620,11 +714,14 @@ impl Blockchain {
     /// Completes the payload building process, return the block value.
     /// Transactions are pulled from the mempool.
     pub fn build_payload(&self, payload: Block) -> Result<PayloadBuildResult, ChainError> {
-        self.build_payload_inner(payload, None, None)
+        self.build_payload_inner(payload, None, None)?
+            .with_dependency_proof()
     }
 
     /// Same as `build_payload`, but once `stop` is cancelled it stops adding
-    /// transactions and seals the block with the ones it already has.
+    /// transactions and seals the block with the ones it already has. The block
+    /// is left without its dependency proof (EIP-8288): `build_payload_loop`
+    /// calls this for every rebuild and proves the payload it ends with.
     fn build_payload_until(
         &self,
         payload: Block,
@@ -642,7 +739,8 @@ impl Blockchain {
         payload: Block,
         transactions: Vec<Transaction>,
     ) -> Result<PayloadBuildResult, ChainError> {
-        self.build_payload_inner(payload, Some(transactions), None)
+        self.build_payload_inner(payload, Some(transactions), None)?
+            .with_dependency_proof()
     }
 
     /// Builds a payload for the t8n tool from an explicit, ordered list of
@@ -748,7 +846,9 @@ impl Blockchain {
                     continue;
                 }
             };
-            let tip = tx.effective_gas_tip(base_fee).unwrap_or_default();
+            let tip = tx
+                .effective_gas_tip_at(context.fork(), base_fee)
+                .unwrap_or_default();
             let head = HeadTransaction {
                 tx: MempoolTransaction::new(tx, sender),
                 tip,
@@ -901,10 +1001,12 @@ impl Blockchain {
         let blob_fee: u64 = context.base_fee_per_blob_gas.try_into().map_err(|_| {
             ChainError::Custom("base_fee_per_blob_gas does not fit in u64".to_owned())
         })?;
+        let fork = context.fork();
         let tx_filter = PendingTxFilter {
             /*TODO(https://github.com/lambdaclass/ethrex/issues/680): add tip filter */
             base_fee: context.base_fee_per_gas(),
             blob_fee: Some(blob_fee),
+            fork,
             ..Default::default()
         };
         let plain_tx_filter = PendingTxFilter {
@@ -920,11 +1022,13 @@ impl Blockchain {
             TransactionQueue::new(
                 self.mempool.filter_transactions(&plain_tx_filter)?,
                 context.base_fee_per_gas(),
+                fork,
             )?,
             // Blob txs
             TransactionQueue::new(
                 self.mempool.filter_transactions(&blob_tx_filter)?,
                 context.base_fee_per_gas(),
+                fork,
             )?,
         ))
     }
@@ -951,6 +1055,7 @@ impl Blockchain {
         stop: Option<&CancellationToken>,
     ) -> Result<(), ChainError> {
         let chain_config = context.chain_config();
+        let fork = chain_config.fork(context.payload.header.timestamp);
         let max_blob_number_per_block = self.effective_max_blobs(context);
 
         debug!("Fetching transactions from mempool");
@@ -994,9 +1099,12 @@ impl Blockchain {
             // EIP-7825/EIP-8037: for Amsterdam, cap at TX_MAX_GAS_LIMIT since
             // remaining_gas tracks regular gas only.
             let tx_gas_reservation = if context.is_amsterdam {
-                head_tx.tx.gas_limit().min(TX_MAX_GAS_LIMIT_AMSTERDAM)
+                head_tx
+                    .tx
+                    .gas_limit_at(fork)
+                    .min(TX_MAX_GAS_LIMIT_AMSTERDAM)
             } else {
-                head_tx.tx.gas_limit()
+                head_tx.tx.gas_limit_at(fork)
             };
             if context.remaining_gas < tx_gas_reservation {
                 debug!(
@@ -1024,12 +1132,19 @@ impl Blockchain {
                     continue;
                 }
             };
-            let potential_rlp_block_size = context.payload_size
-                + head_tx.encode_canonical_len() as u64
-                + new_witnesses
+            // From LStar the block carries one proof in place of the witnesses
+            // (EIP-8288), and the proof is not part of the RLP block that the size
+            // limit covers.
+            let new_witnesses_size = if fork.has_dependency_witnesses() {
+                new_witnesses
                     .iter()
                     .map(|(_, witness)| witness.length() as u64)
-                    .sum::<u64>();
+                    .sum::<u64>()
+            } else {
+                0
+            };
+            let potential_rlp_block_size =
+                context.payload_size + head_tx.encode_canonical_len() as u64 + new_witnesses_size;
             if context
                 .chain_config()
                 .is_osaka_activated(context.payload.header.timestamp)
@@ -1146,7 +1261,9 @@ impl Blockchain {
             let sender = tx.sender(&NativeCrypto).map_err(|err| {
                 ChainError::Custom(format!("invalid transaction signature: {err}"))
             })?;
-            let tip = tx.effective_gas_tip(base_fee).unwrap_or_default();
+            let tip = tx
+                .effective_gas_tip_at(context.fork(), base_fee)
+                .unwrap_or_default();
             let head = HeadTransaction {
                 tx: MempoolTransaction::new(tx, sender),
                 tip,
@@ -1177,7 +1294,8 @@ impl Blockchain {
         // running block totals. Run BEFORE we touch the BAL recorder so a
         // rejected tx doesn't even produce a sender/recipient touch.
         if context.is_amsterdam
-            && let Err(e) = check_2d_gas_allowance(
+            && let Err(e) = check_2d_gas_allowance_at(
+                context.fork(),
                 &head.tx,
                 context.block_regular_gas_used,
                 context.block_state_gas_used,
@@ -1448,6 +1566,30 @@ impl Blockchain {
             .dependency_witnesses
             .as_ref()
             .map(|witnesses| compute_dependency_witnesses_hash(witnesses, &NativeCrypto));
+        // EIP-8288: from LStar the block carries one proof in place of that list,
+        // and the header commits to the dependencies the proof is for. The proof
+        // itself is made later, once, from the witnesses gathered here; until
+        // then the block keeps the empty proof it was created with.
+        if context.payload.body.dependency_proof.is_some() {
+            let dependencies = block_dependencies(&context.payload.body.transactions);
+            context.payload.header.block_deps_hash =
+                Some(compute_deps_hash(&dependencies, &NativeCrypto));
+            context.unproven_dependencies = dependencies
+                .into_iter()
+                .map(|dependency| {
+                    let witness = context
+                        .dependency_witnesses
+                        .get(&dependency)
+                        .cloned()
+                        .ok_or_else(|| {
+                            ChainError::Custom(
+                                "a dependency of the block has no witness".to_string(),
+                            )
+                        })?;
+                    Ok((dependency, witness))
+                })
+                .collect::<Result<Vec<_>, ChainError>>()?;
+        }
         context.payload.header.requests_hash = context
             .requests
             .as_ref()
@@ -1696,6 +1838,8 @@ pub struct TransactionQueue {
     txs: FxHashMap<Address, Vec<MempoolTransaction>>,
     // Base Fee stored for tip calculations
     base_fee: Option<u64>,
+    // Fork of the block being built: its rules decide a frame transaction's `max_gas`
+    fork: Fork,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1723,6 +1867,7 @@ impl TransactionQueue {
     fn new(
         mut txs: FxHashMap<Address, Vec<MempoolTransaction>>,
         base_fee: Option<u64>,
+        fork: Fork,
     ) -> Result<Self, ChainError> {
         let mut heads = Vec::with_capacity(100);
         for txs in txs.values_mut() {
@@ -1732,7 +1877,7 @@ impl TransactionQueue {
             heads.push(HeadTransaction {
                 // We already ran this method when filtering the transactions from the mempool so it shouldn't fail
                 tip: head_tx
-                    .effective_gas_tip(base_fee)
+                    .effective_gas_tip_at(fork, base_fee)
                     .ok_or(ChainError::InvalidBlock(
                         InvalidBlockError::InvalidTransaction("Attempted to add an invalid transaction to the block. The transaction filter must have failed.".to_owned()),
                     ))?,
@@ -1745,6 +1890,7 @@ impl TransactionQueue {
             heads,
             txs,
             base_fee,
+            fork,
         })
     }
 
@@ -1783,7 +1929,7 @@ impl TransactionQueue {
                 let head_tx = txs.remove(0);
                 let head = HeadTransaction {
                     // We already ran this method when filtering the transactions from the mempool so it shouldn't fail
-                    tip: head_tx.effective_gas_tip(self.base_fee).ok_or(
+                    tip: head_tx.effective_gas_tip_at(self.fork, self.base_fee).ok_or(
                         ChainError::InvalidBlock(
                             InvalidBlockError::InvalidTransaction("Attempted to add an invalid transaction to the block. The transaction filter must have failed.".to_owned()),
                         ),

@@ -556,8 +556,9 @@ pub struct FrameTxContext {
     pub tx: ethrex_common::types::FrameTransaction,
     /// Whether APPROVE was called in the current frame
     pub approve_called_in_current_frame: bool,
-    /// Cached `FrameTransaction::max_gas()`. Computing it re-encodes every frame
-    /// and signature, so it must not run per-opcode. Computed once at tx entry.
+    /// Cached `FrameTransaction::max_gas_at` for the block's fork. Computing it
+    /// re-encodes every frame and signature, so it must not run per-opcode.
+    /// Computed once at tx entry.
     pub max_gas: u64,
     /// EIP-8250 `TXPARAM(0x0D)`: the sender's account nonce in the transaction's
     /// pre-state, observed before any frame executes. Payment approval, keyed
@@ -1862,7 +1863,11 @@ impl<'a> VM<'a> {
         frame_tx: &ethrex_common::types::FrameTransaction,
     ) -> Result<FrameFeeBudget, VMError> {
         frame_tx
-            .fee_budget(self.env.base_fee_per_gas, self.env.base_blob_fee_per_gas)
+            .fee_budget_at(
+                self.env.config.fork,
+                self.env.base_fee_per_gas,
+                self.env.base_blob_fee_per_gas,
+            )
             .ok_or(VMError::TxValidation(
                 crate::errors::TxValidationError::InsufficientMaxFeePerGas,
             ))
@@ -2034,11 +2039,15 @@ impl<'a> VM<'a> {
         // the wrong anchor here: it carries the frames' state budgets, which would
         // reject a transaction whose execution half is exactly at the cap simply
         // because it also declared state gas.
+        //
+        // The intrinsic gas is that of this block's fork: what the transaction's
+        // dependencies cost changes at LStar (EIP-8288).
+        let fork = self.env.config.fork;
         let capped_gas = frame_tx
-            .mandatory_gas()
+            .mandatory_gas_at(fork)
             .saturating_add(frame_tx.data_cost())
             .saturating_add(frame_tx.total_frame_execution_gas())
-            .max(frame_tx.calldata_floor_total());
+            .max(frame_tx.calldata_floor_total_at(fork));
         if capped_gas > crate::constants::TX_MAX_GAS_LIMIT_AMSTERDAM {
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::TxMaxGasLimitExceeded {
@@ -2060,7 +2069,7 @@ impl<'a> VM<'a> {
 
         // Initialize FrameTxContext
         let sig_hash = frame_tx.compute_sig_hash();
-        let max_gas = frame_tx.max_gas();
+        let max_gas = frame_tx.max_gas_at(fork);
         self.frame_tx_context = Some(FrameTxContext {
             sender_approved: false,
             payer_address: None,
@@ -2116,7 +2125,7 @@ impl<'a> VM<'a> {
         // calldata floor dominates, the extra reservation is not intrinsic gas and
         // is applied once at settlement instead.
         let intrinsic_gas = frame_tx
-            .mandatory_gas()
+            .mandatory_gas_at(fork)
             .saturating_add(frame_tx.data_cost());
         let mut total_gas_used: u64 = intrinsic_gas;
         let mut tx_invalid = false;
@@ -3005,12 +3014,13 @@ impl<'a> VM<'a> {
             .refunded_gas
             .min(gas_used_before_refund / crate::hooks::default_hook::MAX_REFUND_QUOTIENT);
         let gas_used_after_refund = gas_used_before_refund.saturating_sub(applied_refund);
+        let calldata_floor_total = frame_tx.calldata_floor_total_at(fork);
         let payer_execution_gas = gas_used_after_refund
             .saturating_sub(tx_state_gas)
-            .max(frame_tx.calldata_floor_total());
+            .max(calldata_floor_total);
         let block_execution_gas = gas_used_before_refund
             .saturating_sub(tx_state_gas)
-            .max(frame_tx.calldata_floor_total());
+            .max(calldata_floor_total);
         let total_gas_used = payer_execution_gas;
 
         // EIP-8141 settlement of the `max_cost` escrow collected at APPROVE: the gas
@@ -3233,7 +3243,7 @@ impl<'a> VM<'a> {
         self.check_nonce_set(&frame_tx)?;
 
         let sig_hash = frame_tx.compute_sig_hash();
-        let max_gas = frame_tx.max_gas();
+        let max_gas = frame_tx.max_gas_at(self.env.config.fork);
         self.frame_tx_context = Some(FrameTxContext {
             sender_approved: false,
             payer_address: None,

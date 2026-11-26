@@ -403,6 +403,7 @@ impl From<Block> for CoreBlock {
                 ommers: val.uncle_headers.iter().map(|h| h.clone().into()).collect(),
                 withdrawals: val.withdrawals,
                 dependency_witnesses: val.dependency_witnesses,
+                dependency_proof: None,
             },
         )
     }

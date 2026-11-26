@@ -271,7 +271,12 @@ impl CompletedGas {
 /// because our `report.gas_used` already reflects `max(raw_regular, calldata_floor)`
 /// per-tx — i.e. the floor is applied before aggregation, not after. Keep this in
 /// sync with the aggregation loop in [`execute_block_parallel`].
-pub fn check_2d_gas_allowance(
+///
+/// `fork` is the fork of the block. It matters to a frame transaction alone: its
+/// intrinsic gas includes what its dependencies cost, which changes at LStar
+/// (EIP-8288).
+pub fn check_2d_gas_allowance_at(
+    fork: Fork,
     tx: &Transaction,
     block_gas_used_regular: u64,
     block_gas_used_state: u64,
@@ -285,10 +290,10 @@ pub fn check_2d_gas_allowance(
     let (regular_gas, state_gas) = match tx {
         Transaction::FrameTransaction(frame_tx) => (
             frame_tx
-                .mandatory_gas()
+                .mandatory_gas_at(fork)
                 .saturating_add(frame_tx.data_cost())
                 .saturating_add(frame_tx.total_frame_execution_gas())
-                .max(frame_tx.calldata_floor_total()),
+                .max(frame_tx.calldata_floor_total_at(fork)),
             frame_tx
                 .total_frame_gas()
                 .saturating_sub(frame_tx.total_frame_execution_gas()),
@@ -322,6 +327,23 @@ pub fn check_2d_gas_allowance(
     }
 
     Ok(())
+}
+
+/// [`check_2d_gas_allowance_at`] for a block of Hegota, the fork that introduces
+/// frame transactions.
+pub fn check_2d_gas_allowance(
+    tx: &Transaction,
+    block_gas_used_regular: u64,
+    block_gas_used_state: u64,
+    block_gas_limit: u64,
+) -> Result<(), EvmError> {
+    check_2d_gas_allowance_at(
+        Fork::Hegota,
+        tx,
+        block_gas_used_regular,
+        block_gas_used_state,
+        block_gas_limit,
+    )
 }
 
 /// Error type for BAL validation failures, distinguishing state mismatches
@@ -416,7 +438,8 @@ impl LEVM {
 
             // EIP-8037 (Amsterdam+, PR #2703): per-tx 2D inclusion check.
             if is_amsterdam {
-                check_2d_gas_allowance(
+                check_2d_gas_allowance_at(
+                    chain_config.fork(block.header.timestamp),
                     tx,
                     block_regular_gas_used,
                     block_state_gas_used,
@@ -903,7 +926,8 @@ impl LEVM {
 
             // EIP-8037 (Amsterdam+, PR #2703): per-tx 2D inclusion check.
             if is_amsterdam {
-                check_2d_gas_allowance(
+                check_2d_gas_allowance_at(
+                    chain_config.fork(block.header.timestamp),
                     tx,
                     block_regular_gas_used,
                     block_state_gas_used,
@@ -1921,7 +1945,8 @@ impl LEVM {
                 .get(*tx_idx)
                 .ok_or_else(|| EvmError::Custom(format!("tx index {tx_idx} out of bounds")))?;
             if is_amsterdam {
-                check_2d_gas_allowance(
+                check_2d_gas_allowance_at(
+                    chain_config.fork(header.timestamp),
                     tx,
                     block_regular_gas_used,
                     block_state_gas_used,
@@ -3450,7 +3475,11 @@ impl LEVM {
             // leaves the transaction invalid, which the VM reports in its place in
             // the validation order, before any frame can read this.
             Transaction::FrameTransaction(frame_tx) => frame_tx
-                .fee_budget(U256::from(base_fee_per_gas), base_blob_fee_per_gas)
+                .fee_budget_at(
+                    config.fork,
+                    U256::from(base_fee_per_gas),
+                    base_blob_fee_per_gas,
+                )
                 .map_or(U256::from(base_fee_per_gas), |budget| budget.gas_price),
             _ => calculate_gas_price_for_tx(tx, base_fee_per_gas, &vm_type)?,
         };
@@ -3458,7 +3487,7 @@ impl LEVM {
         let block_excess_blob_gas = block_header.excess_blob_gas;
         let env = Environment {
             origin: tx_sender,
-            gas_limit: tx.gas_limit(),
+            gas_limit: tx.gas_limit_at(config.fork),
             config,
             block_number: block_header.number,
             coinbase: block_header.coinbase,
@@ -5175,6 +5204,7 @@ mod burned_fees_tests {
             ommers: vec![],
             withdrawals: Some(vec![]),
             dependency_witnesses: None,
+            dependency_proof: None,
         };
         Block::new(header, body)
     }

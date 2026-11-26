@@ -48,11 +48,21 @@ pub fn satisfies(dependency: &Dependency, witness: &[u8]) -> bool {
 /// witnesses must come from the same test: with a check on the `hegotaTime`
 /// field alone, a chain that schedules a later fork without naming Hegota would
 /// execute proof frames with no signature behind them.
+///
+/// From LStar a block carries one proof in place of the list (EIP-8288), and
+/// `validate_dependency_proof` checks the proof. A block without a list has
+/// nothing to check here. One that still carries a list is invalid there
+/// whatever the list holds; the list is held to the block's dependencies all
+/// the same, as every list a block carries is.
 pub fn validate_dependency_witnesses(
     block: &Block,
     chain_config: &ChainConfig,
 ) -> Result<(), InvalidBlockError> {
-    if chain_config.fork(block.header.timestamp) < Fork::Hegota {
+    let fork = chain_config.fork(block.header.timestamp);
+    if fork < Fork::Hegota {
+        return Ok(());
+    }
+    if fork.has_dependency_proof() && block.body.dependency_witnesses.is_none() {
         return Ok(());
     }
     #[cfg(feature = "metrics")]
@@ -183,6 +193,7 @@ mod tests {
                 ommers: Vec::new(),
                 withdrawals: Some(Vec::new()),
                 dependency_witnesses: witnesses,
+                dependency_proof: None,
             },
         )
     }

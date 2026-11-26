@@ -4,7 +4,7 @@ use ethrex_common::{
     evm::calculate_create_address,
     serde_utils,
     types::{
-        BlockHash, BlockHeader, BlockNumber, FrameReceipt, Log, Receipt, Transaction, TxKind,
+        BlockHash, BlockHeader, BlockNumber, Fork, FrameReceipt, Log, Receipt, Transaction, TxKind,
         TxType, bloom_from_logs,
     },
 };
@@ -267,7 +267,28 @@ pub struct RpcReceiptTxInfo {
 }
 
 impl RpcReceiptTxInfo {
+    /// [`Self::from_transaction_at`] for a transaction in a Hegota block.
     pub fn from_transaction(
+        transaction: Transaction,
+        index: u64,
+        gas_used: u64,
+        block_blob_gas_price: u64,
+        base_fee_per_gas: Option<u64>,
+    ) -> Result<Self, RpcErr> {
+        Self::from_transaction_at(
+            Fork::Hegota,
+            transaction,
+            index,
+            gas_used,
+            block_blob_gas_price,
+            base_fee_per_gas,
+        )
+    }
+
+    /// `fork` is the fork of the block the transaction is in. Its rules decide
+    /// the `max_gas` of a frame transaction, which its price per gas follows from.
+    pub fn from_transaction_at(
+        fork: Fork,
         transaction: Transaction,
         index: u64,
         gas_used: u64,
@@ -282,7 +303,8 @@ impl RpcReceiptTxInfo {
             // budget at the block's base fees. Report the price `GASPRICE` returned
             // to its frames, the lower bound of what the payer paid per gas used.
             Transaction::FrameTransaction(tx) => tx
-                .fee_budget(
+                .fee_budget_at(
+                    fork,
                     U256::from(base_fee_per_gas.unwrap_or_default()),
                     U256::from(block_blob_gas_price),
                 )

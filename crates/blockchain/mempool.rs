@@ -1580,7 +1580,7 @@ impl Mempool {
             // Filter by tip & base_fee
             if let Some(min_tip) = filter.min_tip.map(U256::from) {
                 if tx
-                    .effective_gas_tip(filter.base_fee)
+                    .effective_gas_tip_at(filter.fork, filter.base_fee)
                     .is_none_or(|tip| tip < min_tip)
                 {
                     return false;
@@ -1588,7 +1588,10 @@ impl Mempool {
             // This is a temporary fix to avoid invalid transactions to be included.
             // This should be removed once https://github.com/lambdaclass/ethrex/issues/680
             // is addressed.
-            } else if tx.effective_gas_tip(filter.base_fee).is_none() {
+            } else if tx
+                .effective_gas_tip_at(filter.fork, filter.base_fee)
+                .is_none()
+            {
                 return false;
             }
 
@@ -1598,7 +1601,8 @@ impl Mempool {
                     // EIP-8141: one `max_fee` budget pays for the blob gas too, so it
                     // must cover the worst case at both base fees.
                     Transaction::FrameTransaction(frame_tx) => frame_tx
-                        .fee_budget(
+                        .fee_budget_at(
+                            filter.fork,
                             U256::from(filter.base_fee.unwrap_or_default()),
                             U256::from(blob_fee),
                         )
@@ -2460,6 +2464,9 @@ pub struct PendingTxFilter {
     pub blob_fee: Option<u64>,
     pub only_plain_txs: bool,
     pub only_blob_txs: bool,
+    /// Fork of the block the transactions are picked for. Its rules decide the
+    /// `max_gas` of a frame transaction, which its fee budget is measured against.
+    pub fork: Fork,
 }
 
 pub fn transaction_intrinsic_gas(
@@ -2474,7 +2481,7 @@ pub fn transaction_intrinsic_gas(
     // exactly the non-frame-gas overhead the VM charges as intrinsic.
     if let Transaction::FrameTransaction(frame_tx) = tx {
         return Ok(frame_tx
-            .mandatory_gas()
+            .mandatory_gas_at(config.fork(header.timestamp))
             .saturating_add(frame_tx.data_cost()));
     }
 
