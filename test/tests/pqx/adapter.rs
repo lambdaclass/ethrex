@@ -1,12 +1,23 @@
-//! Adapter of the measurement harness for EIP-8141 with declarative claims.
+//! Adapter of the measurement harness for EIP-8141 with declarative claims,
+//! from `Fork::IStar`: a block carries one aggregate proof in place of its
+//! leanSPHINCS signatures.
 //!
 //! The signature travels beside the transaction. The transaction body declares
 //! claims, `[verifier, key, msg, gas_limit, witness_len]`; the leanSPHINCS
 //! signature that satisfies a claim, its witness, is submitted, pooled and
 //! exchanged with the transaction in its pooled representation,
-//! `0x06 || rlp([tx_body, wrapper_version, witnesses, blob_sidecar])`, and the
-//! block carries it in `claim_witnesses`, one byte string of its body that the
-//! header commits to.
+//! `0x06 || rlp([tx_body, wrapper_version, witnesses, blob_sidecar])`. None of
+//! that changes at IStar, and neither do the gas, the header and the Engine API.
+//!
+//! What changes is the block's `claim_witnesses`, the byte string of its body
+//! that the header commits to. Before IStar it lists one raw witness for each
+//! dependency. From IStar it is
+//! `0x01 || rlp([aggregate_proof, [raw witnesses of the other dependencies]])`:
+//! the builder aggregates the leanSPHINCS witnesses it took from the pool into
+//! one proof, and an importing node verifies that proof against the leanSPHINCS
+//! dependencies it derives from the block's transactions. This adapter makes
+//! IStar active from the genesis block, so every block it measures has that
+//! form.
 //!
 //! Transactions here are `[VERIFY, SENDER]` with one claim for each key of the
 //! account, `[LEANSPHINCS_VERIFIER, key, "", 0, 0]`: a signature of the
@@ -16,16 +27,17 @@
 //! the other alternatives.
 
 use bytes::Bytes;
-use ethrex_blockchain::Blockchain;
+use ethrex_blockchain::{Blockchain, claim_witnesses::aggregate_claim_witnesses};
 use ethrex_common::{
     Address, H256, U256,
-    constants::TX_MAX_GAS_LIMIT_AMSTERDAM,
+    constants::{MAX_RLP_BLOCK_SIZE, TX_MAX_GAS_LIMIT_AMSTERDAM},
     types::{
-        Block, Claim, Dependency, FRAME_TX_MAX_VERIFY_GAS, Frame, FrameMode, FrameTransaction,
-        Genesis, LEANSPHINCS_SIGNATURE_SIZE, LEANSPHINCS_VERIFICATION_GAS, LEANSPHINCS_VERIFIER,
-        MAX_BLOCK_WITNESS_BYTES, MAX_CLAIM_WITNESS_BYTES, MAX_CLAIMS, P2PTransaction,
-        PooledFrameTransaction, Transaction, WITNESS_BYTE_GAS, block_dependencies,
-        claim_witnesses_len_for_payload, compute_claim_witnesses_hash, decode_claim_witnesses,
+        Block, Claim, ClaimWitnesses, Dependency, FRAME_TX_MAX_VERIFY_GAS, Fork, Frame, FrameMode,
+        FrameTransaction, Genesis, LEANSPHINCS_SIGNATURE_SIZE, LEANSPHINCS_VERIFICATION_GAS,
+        LEANSPHINCS_VERIFIER, MAX_AGGREGATE_PROOF_BYTES, MAX_BLOCK_WITNESS_BYTES,
+        MAX_CLAIM_WITNESS_BYTES, MAX_CLAIMS, P2PTransaction, PooledFrameTransaction, Transaction,
+        WITNESS_BYTE_GAS, aggregated_claim_witnesses_len, block_dependencies,
+        compute_claim_witnesses_hash, decode_claim_witnesses_at, encode_aggregated_claim_witnesses,
         encode_claim_witnesses, max_pooled_frame_tx_len,
     },
 };
@@ -44,32 +56,40 @@ use super::lifecycle::{
 pub const ALTERNATIVE: &str = "Alternative 4";
 pub const ALTERNATIVE_ID: &str = "a4";
 pub const PROPOSAL: &str = "EIP-8141 with declarative claims";
-pub const MILESTONE: u8 = 1;
+pub const MILESTONE: u8 = 2;
 pub const SIGNATURE_SCHEME: &str = "leanSPHINCS";
 pub const KEY_CACHE_NAMESPACE: &str = "leansphincs";
 pub const VERIFIER_PACKAGE: &str = "lean_sphincs";
 
-/// Where this implementation verifies signatures, stage by stage.
+/// Where this implementation verifies signatures from IStar, stage by stage.
 pub const VERIFICATION: &[(&str, &str)] = &[
     (
         "pool admission",
-        "the witness of each claim is verified once, natively, on the calling thread, one \
-         after another in the order of the claims, before any state is read and before the \
-         validation prefix is simulated; the revalidation after a block does not repeat it",
+        "as before IStar: the witness of each claim is verified once, natively, on the \
+         calling thread, one after another in the order of the claims, before any state is \
+         read and before the validation prefix is simulated; the revalidation after a block \
+         does not repeat it",
     ),
     (
         "block construction",
-        "none: the builder takes the witnesses the pool already verified; it verifies again \
-         only the claims of custom verifiers, which these transactions do not have",
+        "no signature is verified: the builder proves them. Once no transaction will be \
+         added it aggregates the leanSPHINCS witnesses it took from the pool into one \
+         proof, inside build_payload, which waits for it. The prover runs one proof at a \
+         time in the process and proves the leaves and the nodes of the aggregation tree \
+         one after another, each on leanVM's own pool of workers: the physical cores, less \
+         one performance core on a machine that also has efficiency cores, or what \
+         LEANVM_NUM_THREADS says; RAYON_NUM_THREADS does not size it",
     ),
     (
         "block import, add_block",
-        "one loop over the block's dependencies on the calling thread, before execution",
+        "no signature is verified: one verification of the block's aggregate proof, \
+         against the leanSPHINCS dependencies derived from the block's transactions, on \
+         the calling thread, before execution; the proof's verifier is single threaded",
     ),
     (
         "block import, add_block_pipeline",
-        "the same loop on the calling thread, before execution starts; only the \
-         execution of the transactions uses the thread pool",
+        "the same single verification on the calling thread, before execution starts; \
+         only the execution of the transactions uses the thread pool",
     ),
 ];
 
@@ -95,10 +115,11 @@ pub fn sign(key: &KeyPair, message: &[u8; 32]) -> Vec<u8> {
     lean_sphincs::sign(&secret, message).to_bytes().to_vec()
 }
 
-/// The call the client makes for every witness of a leanSPHINCS claim, on
-/// admission to the pool and on import of a block: the native verifier of the
-/// dependency, over `key || msg || witness`. It wraps
-/// `ethrex_crypto::leansphincs::leansphincs_verify`.
+/// The call the client makes for every witness of a leanSPHINCS claim on
+/// admission to the pool, which IStar does not change: the native verifier of
+/// the dependency, over `key || msg || witness`. It wraps
+/// `ethrex_crypto::leansphincs::leansphincs_verify`. Importing an IStar block
+/// calls it for no leanSPHINCS claim: the aggregate proof stands for them.
 pub fn verify(public: &[u8], message: &[u8; 32], signature: &[u8]) -> bool {
     if public.len() != H256::len_bytes() {
         return false;
@@ -127,8 +148,12 @@ fn leansphincs_dependency(key: H256, msg: H256) -> Dependency {
 // The chain and its accounts
 // ---------------------------------------------------------------------------
 
-/// Claims are part of Hegota: nothing else is needed in the genesis.
-pub fn prepare_genesis(_genesis: &mut Genesis) {}
+/// IStar is active from the genesis block whatever fork the run selects, so
+/// that every block measured carries an aggregate proof. LStar, the fork after
+/// it, is left as the run scheduled it.
+pub fn prepare_genesis(genesis: &mut Genesis) {
+    genesis.config.istar_time = Some(0);
+}
 
 pub fn supports(_kind: AccountKind) -> Result<(), &'static str> {
     Ok(())
@@ -344,39 +369,41 @@ pub async fn admit_from_peer(blockchain: &Blockchain, peer: &[u8]) -> Result<H25
 // Blocks
 // ---------------------------------------------------------------------------
 
-/// The witnesses a block carries, one for each of its dependencies.
-fn block_witnesses(block: &Block) -> Vec<Bytes> {
-    decode_claim_witnesses(block.body.claim_witnesses.as_deref().unwrap_or_default())
-        .expect("the claim witnesses of a block the builder made decode")
+/// What the claim witnesses of an IStar block hold: the aggregate proof of its
+/// leanSPHINCS dependencies and one raw witness for each of the others.
+fn block_claim_witnesses(block: &Block) -> ClaimWitnesses {
+    decode_claim_witnesses_at(
+        Fork::IStar,
+        block.body.claim_witnesses.as_deref().unwrap_or_default(),
+    )
+    .expect("the claim witnesses of a block the builder made decode")
 }
 
 pub fn block_extras(block: &Block) -> BlockExtras {
-    let witnesses = block_witnesses(block);
+    let ClaimWitnesses {
+        aggregate_proof,
+        witnesses,
+    } = block_claim_witnesses(block);
     BlockExtras {
+        // Raw witnesses remain only for dependencies that are not leanSPHINCS
+        // ones, which the transactions here do not have.
         witnesses: witnesses.len(),
         witness_bytes: witnesses.iter().map(Bytes::len).sum(),
-        aggregate_proof_bytes: 0,
-        // The claim witnesses are part of the body, and so of the block's RLP
-        // encoding.
+        aggregate_proof_bytes: aggregate_proof.len(),
+        // The proof travels inside the block's RLP encoding: it is part of
+        // `claim_witnesses`, in the body, so the encoding's size already
+        // counts it and nothing is added here.
         outside_block_rlp_bytes: 0,
     }
 }
 
-/// Bytes one leanSPHINCS witness takes in a block's `claim_witnesses`: the
-/// signature and the header of its RLP string.
-fn witness_bytes_in_block() -> u64 {
-    bytes_length(LEANSPHINCS_SIGNATURE_SIZE, 0xff) as u64
-}
-
-/// leanSPHINCS witnesses the `claim_witnesses` of a block holds within
-/// `MAX_BLOCK_WITNESS_BYTES`, by the length the builder computes for it.
-fn witnesses_a_block_holds() -> u64 {
-    let one = bytes_length(LEANSPHINCS_SIGNATURE_SIZE, 0xff);
-    let mut count = MAX_BLOCK_WITNESS_BYTES / one;
-    while count > 0 && claim_witnesses_len_for_payload(count * one) > MAX_BLOCK_WITNESS_BYTES {
-        count -= 1;
-    }
-    count as u64
+/// Bytes of a block's RLP encoding the builder sets aside for the aggregate
+/// proof from the first leanSPHINCS dependency on: `claim_witnesses` with a
+/// proof at its bound and no raw witness, as one RLP string, less the byte the
+/// empty string took.
+fn proof_reservation_in_block() -> u64 {
+    let reserved = aggregated_claim_witnesses_len(MAX_AGGREGATE_PROOF_BYTES, 0);
+    (bytes_length(reserved, 0) - bytes_length(0, 0)) as u64
 }
 
 /// The most bytes the node accepts for the pooled representation of a
@@ -425,22 +452,53 @@ pub fn limits(facts: &TxFacts) -> Vec<Limit> {
             source: "EIP-8141 with declarative claims, Block Witnesses (provisional)",
             layer: "consensus",
             enforced: true,
-            enforced_at: "payload builder, which leaves out a transaction whose witnesses do \
-                          not fit, and block import; pool admission refuses a transaction \
-                          whose own witnesses exceed it",
-            per_transaction: Some(facts.signatures * witness_bytes_in_block()),
+            enforced_at: "payload builder and block import, on the aggregate proof and the raw \
+                          witnesses together; from IStar a leanSPHINCS claim adds no bytes of \
+                          its own, so it no longer bounds the leanSPHINCS claims of a block. \
+                          Pool admission still refuses a transaction whose own witnesses, \
+                          raw, exceed it",
+            per_transaction: Some(0),
         },
         Limit {
-            name: "leanSPHINCS witnesses in a block under MAX_BLOCK_WITNESS_BYTES",
-            value: witnesses_a_block_holds(),
-            unit: "signatures",
+            name: "MAX_AGGREGATE_PROOF_BYTES, on the proof inside claim_witnesses",
+            value: MAX_AGGREGATE_PROOF_BYTES as u64,
+            unit: "bytes",
             scope: "block",
-            source: "EIP-8141 with declarative claims, Block Witnesses: the limit over the \
-                     bytes one witness takes in claim_witnesses",
+            source: "decision of this implementation, which takes EIP-8288's \
+                     MAX_DEPENDENCY_PROOF_BYTES; the proposal bounds claim_witnesses and \
+                     gives the proof no bound",
             layer: "consensus",
             enforced: true,
-            enforced_at: "payload builder and block import, through MAX_BLOCK_WITNESS_BYTES",
-            per_transaction: Some(facts.signatures),
+            enforced_at: "block import, when the claim witnesses are decoded; the builder \
+                          fails a build whose proof is longer",
+            per_transaction: None,
+        },
+        Limit {
+            name: "room the builder reserves for the aggregate proof, toward \
+                   MAX_BLOCK_WITNESS_BYTES and toward the EIP-7934 block size",
+            value: MAX_AGGREGATE_PROOF_BYTES as u64,
+            unit: "bytes",
+            scope: "block",
+            source: "decision of this implementation: the proof's length is not known until \
+                     the proof is made, so it is counted at its bound",
+            layer: "builder",
+            enforced: true,
+            enforced_at: "payload builder, from the first leanSPHINCS dependency of the block; \
+                          it leaves the rest of MAX_BLOCK_WITNESS_BYTES for raw witnesses",
+            per_transaction: None,
+        },
+        Limit {
+            name: "EIP-7934 block size as the builder counts it from IStar: the limit less \
+                   the room reserved for the proof",
+            value: MAX_RLP_BLOCK_SIZE.saturating_sub(proof_reservation_in_block()),
+            unit: "bytes",
+            scope: "block",
+            source: "EIP-7934, and the reservation above",
+            layer: "builder",
+            enforced: true,
+            enforced_at: "payload builder, which counts each transaction at its canonical size \
+                          and stops when one more would take the block over the limit",
+            per_transaction: Some(facts.canonical_bytes),
         },
         Limit {
             name: "leanSPHINCS claims in a block by gas: block gas limit / \
@@ -448,11 +506,14 @@ pub fn limits(facts: &TxFacts) -> Vec<Limit> {
             value: facts.block_gas_limit / LEANSPHINCS_CLAIM_GAS,
             unit: "signatures",
             scope: "block",
-            source: "EIP-8141 with declarative claims, Gas (WITNESS_BYTE_GAS is provisional)",
+            source: "EIP-8141 with declarative claims, Gas (WITNESS_BYTE_GAS is provisional); \
+                     the proposal defines no discount, so from IStar a claim still pays for \
+                     the bytes of a witness the block does not carry",
             layer: "consensus",
             enforced: false,
             enforced_at: "no check of its own: it follows from the block gas limit, since both \
-                          charges are intrinsic gas of the transaction",
+                          charges are intrinsic gas of the transaction. From IStar the block \
+                          gas limit is what bounds the leanSPHINCS claims of a block",
             per_transaction: Some(facts.signatures),
         },
         Limit {
@@ -479,7 +540,8 @@ pub fn limits(facts: &TxFacts) -> Vec<Limit> {
             layer: "consensus",
             enforced: true,
             enforced_at: "block import, in the check of the claim witnesses; a block within \
-                          its gas limit never fails it",
+                          its gas limit never fails it. From IStar it still counts every \
+                          leanSPHINCS claim, though no verifier runs for one",
             per_transaction: Some(facts.signatures * LEANSPHINCS_VERIFICATION_GAS),
         },
         Limit {
@@ -709,18 +771,46 @@ pub fn faulty_submissions(
     }
 }
 
+/// An aggregate proof of leanSPHINCS signatures for `claims`, each a key and
+/// the message it signed.
+fn proof_of(claims: &[(&KeyPair, H256)]) -> Bytes {
+    let signed: Vec<(Dependency, Bytes)> = claims
+        .iter()
+        .map(|(key, message)| {
+            (
+                leansphincs_dependency(public_key(key), *message),
+                Bytes::from(signature(key, *message)),
+            )
+        })
+        .collect();
+    aggregate_claim_witnesses(&signed).expect("valid signatures aggregate")
+}
+
+/// From IStar the block has no individual leanSPHINCS signature, so each fault
+/// is stated against its aggregate proof. `block` holds one transaction with
+/// one claim: a proof that misses a claim of the block is no proof at all.
 pub fn faulty_blocks(
     fault: Fault,
     block: &Block,
-    _request: &TxRequest,
+    request: &TxRequest,
     other: &KeyPair,
 ) -> Vec<FaultCase<FaultyBlock>> {
-    const NOT_SATISFIED: &str = "ClaimNotSatisfied(0)";
+    const NOT_PROVEN: &str = "InvalidAggregateProof(1)";
     const COUNT: &str = "ClaimWitnessesCountMismatch";
     const MALFORMED: &str = "InvalidClaimWitnesses";
-    let valid = block_witnesses(block);
+    let ClaimWitnesses {
+        aggregate_proof: valid,
+        witnesses: raw,
+    } = block_claim_witnesses(block);
     let dependency = block_dependencies(&block.body.transactions)
         .expect("the claims of the block are well formed")[0];
+    let signer = request
+        .keys
+        .iter()
+        .find(|key| public_key(key) == dependency.key)
+        .expect("the key of the block's claim");
+    // The signature the pool held, which the block's proof was made from.
+    let witness = Bytes::from(signature(signer, dependency.msg));
     // The block with other claim witnesses, refused on both import paths.
     let carrying = |variant, claim_witnesses: Bytes, expected_error| {
         case(
@@ -732,48 +822,67 @@ pub fn faulty_blocks(
             expected_error,
         )
     };
-    let listed = |variant, witnesses: Vec<Bytes>, expected_error| {
-        carrying(variant, encode_claim_witnesses(&witnesses), expected_error)
+    let proven = |variant, proof: &[u8], expected_error| {
+        carrying(
+            variant,
+            encode_aggregated_claim_witnesses(proof, &raw),
+            expected_error,
+        )
     };
     match fault {
-        Fault::InvalidSignature => vec![listed(
-            "one bit of the witness flipped",
-            vec![flipped(&valid[0])],
-            NOT_SATISFIED,
-        )],
-        Fault::WrongKey => vec![listed(
-            "witness signed with another key",
-            vec![Bytes::from(signature(other, dependency.msg))],
-            NOT_SATISFIED,
+        Fault::InvalidSignature => {
+            let mut middle = valid.to_vec();
+            middle[valid.len() / 2] ^= 0x01;
+            let mut last = valid.to_vec();
+            last[valid.len() - 1] ^= 0x01;
+            vec![
+                proven(
+                    "one bit in the middle of the proof flipped",
+                    &middle,
+                    NOT_PROVEN,
+                ),
+                proven(
+                    "one bit of the proof's last byte flipped",
+                    &last,
+                    NOT_PROVEN,
+                ),
+            ]
+        }
+        Fault::WrongKey => vec![proven(
+            "proof made for another key's signature of the same message",
+            &proof_of(&[(other, dependency.msg)]),
+            NOT_PROVEN,
         )],
         Fault::MalformedSignature => {
-            // The valid witness under the version byte of another form.
-            let mut other_version = encode_claim_witnesses(&valid).to_vec();
-            other_version[0] = 0x01;
+            let mut longer = valid.to_vec();
+            longer.push(0);
+            let mut oversized = valid.to_vec();
+            oversized.resize(MAX_AGGREGATE_PROOF_BYTES + 1, 0);
             vec![
-                listed(
-                    "witness one byte short",
-                    vec![truncated(&valid[0])],
-                    NOT_SATISFIED,
+                proven(
+                    "proof one byte short",
+                    &valid[..valid.len() - 1],
+                    NOT_PROVEN,
                 ),
-                listed(
-                    "witness one byte long",
-                    vec![extended(&valid[0])],
-                    NOT_SATISFIED,
+                proven("proof one byte long", &longer, NOT_PROVEN),
+                proven(
+                    "the signature itself in place of the proof",
+                    &witness,
+                    NOT_PROVEN,
                 ),
-                listed("empty witness", vec![Bytes::new()], NOT_SATISFIED),
-                carrying(
-                    "witness under a version byte the fork does not define",
-                    Bytes::from(other_version),
-                    MALFORMED,
+                proven(
+                    "proof padded past its size bound",
+                    &oversized,
+                    "MAX_AGGREGATE_PROOF_BYTES",
                 ),
             ]
         }
         Fault::MissingSignature => vec![
-            listed("empty claim witnesses", Vec::new(), COUNT),
+            // A proof that covers one claim fewer than the block's one claim.
+            proven("empty claim witnesses: no proof", &[], NOT_PROVEN),
             carrying(
-                "an empty witness list spelled out",
-                Bytes::from_static(&[0x00, 0xc0]),
+                "an empty proof spelled out",
+                Bytes::from_static(&[0x01, 0xc2, 0x80, 0xc0]),
                 MALFORMED,
             ),
         ],
@@ -784,10 +893,25 @@ pub fn faulty_blocks(
             other_commitment.header.claim_witnesses_hash = Some(H256::repeat_byte(0x11));
             other_commitment.header.hash = Default::default();
             vec![
-                listed(
-                    "two witnesses for one dependency",
-                    vec![valid[0].clone(), valid[0].clone()],
+                proven(
+                    "proof of the block's claim and of one more",
+                    &proof_of(&[(signer, dependency.msg), (other, dependency.msg)]),
+                    NOT_PROVEN,
+                ),
+                proven(
+                    "proof of the key's signature of another message",
+                    &proof_of(&[(signer, H256::repeat_byte(0x11))]),
+                    NOT_PROVEN,
+                ),
+                carrying(
+                    "the signature as a raw witness beside the proof",
+                    encode_aggregated_claim_witnesses(&valid, std::slice::from_ref(&witness)),
                     COUNT,
+                ),
+                carrying(
+                    "the signature in the raw form of the fork before",
+                    encode_claim_witnesses(std::slice::from_ref(&witness)),
+                    MALFORMED,
                 ),
                 case(
                     "header commitment that is not the claim witnesses'",
