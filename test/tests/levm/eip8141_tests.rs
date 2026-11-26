@@ -139,6 +139,7 @@ fn frame_tx_with_frames(frames: Vec<Frame>) -> FrameTransaction {
         blob_versioned_hashes: Vec::new(),
         inner_hash: Default::default(),
         cached_canonical: Default::default(),
+        stripped_proofs: Default::default(),
     }
 }
 

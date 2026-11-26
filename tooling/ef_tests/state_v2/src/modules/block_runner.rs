@@ -185,6 +185,7 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
         block_access_list_hash: None,
         slot_number: None,
         burned_fees: None,
+        aggregate_proof_hash: None,
     };
     let block = Block::new(header, body);
 

@@ -1883,6 +1883,7 @@ mod tests {
             slot_number: Some(0),
             block_access_list: Some(BlockAccessList::default()),
             burned_fees: None,
+            aggregate_proof: None,
         }
     }
 

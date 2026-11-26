@@ -5174,6 +5174,7 @@ mod burned_fees_tests {
             transactions: vec![tx],
             ommers: vec![],
             withdrawals: Some(vec![]),
+            aggregate_proof: None,
         };
         Block::new(header, body)
     }

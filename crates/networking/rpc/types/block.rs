@@ -1,10 +1,10 @@
 use super::transaction::RpcTransaction;
+use bytes::Bytes;
 use ethrex_common::{
     H256, serde_utils,
     types::{Block, BlockBody, BlockHash, BlockHeader, BlockNumber, Withdrawal},
 };
 use ethrex_crypto::NativeCrypto;
-use ethrex_rlp::encode::RLPEncode;
 
 use crate::utils::RpcErr;
 use serde::{Deserialize, Serialize};
@@ -33,6 +33,17 @@ pub struct FullBlockBody {
     pub transactions: Vec<RpcTransaction>,
     pub uncles: Vec<H256>,
     pub withdrawals: Vec<Withdrawal>,
+    /// The block's aggregate proof (EIP-8141 §Aggregation), the one proof an
+    /// LStar block carries for the claims of its stripped proof frames. Present
+    /// from LStar. The form with transaction hashes only leaves it out; the
+    /// header's `aggregateProofHash` commits to it either way.
+    #[serde(
+        rename = "aggregateProof",
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_utils::bytes::opt"
+    )]
+    pub aggregate_proof: Option<Bytes>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -61,6 +72,7 @@ impl TryInto<Block> for RpcBlock {
                 transactions,
                 ommers: Vec::new(),
                 withdrawals: Some(block_body.withdrawals),
+                aggregate_proof: block_body.aggregate_proof,
             },
         })
     }
@@ -73,7 +85,8 @@ impl RpcBlock {
         hash: H256,
         full_transactions: bool,
     ) -> Result<RpcBlock, RpcErr> {
-        let size = Block::new(header.clone(), body.clone()).length();
+        // The aggregate proof is not part of the RLP block.
+        let size = Block::new(header.clone(), body.clone()).length_without_aggregate_proof();
         let body_wrapper = if full_transactions {
             BlockBodyWrapper::Full(FullBlockBody::from_body(body, header.number, hash)?)
         } else {
@@ -116,6 +129,7 @@ impl FullBlockBody {
             transactions,
             uncles: body.ommers.iter().map(|ommer| ommer.hash()).collect(),
             withdrawals: body.withdrawals.unwrap_or_default(),
+            aggregate_proof: body.aggregate_proof,
         })
     }
 }
@@ -128,6 +142,7 @@ mod test {
         constants::EMPTY_KECCAK_HASH,
         types::{EIP1559Transaction, Transaction, TxKind},
     };
+    use ethrex_rlp::encode::RLPEncode;
     use std::str::FromStr;
 
     use super::*;
@@ -214,11 +229,56 @@ mod test {
             transactions: vec![Transaction::EIP1559Transaction(tx)],
             ommers: vec![],
             withdrawals: Some(vec![]),
+            aggregate_proof: None,
         };
         let hash = block_header.hash();
 
         let block = RpcBlock::build(block_header, block_body, hash, true).unwrap();
         let expected_block = r#"{"hash":"0x94fb81ef7259ad4cef032745a2a5254babe26037f2850d320b872692f7c60178","size":"0x2f7","parentHash":"0x48e29e7357408113a4166e04e9f1aeff0680daa2b97ba93df6512a73ddf7a154","sha3Uncles":"0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347","miner":"0x2adc25665018aa1fe0e6bc666dac8fc2697ff9ba","stateRoot":"0x9de6f95cb4ff4ef22a73705d6ba38c4b927c7bca9887ef5d24a734bb863218d9","transactionsRoot":"0x578602b2b7e3a3291c3eefca3a08bc13c0d194f9845a39b6f3bcf843d9fed79d","receiptsRoot":"0x035d56bac3f47246c5eed0e6642ca40dc262f9144b582f058bc23ded72aa72fa","logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","difficulty":"0x0","number":"0x1","gasLimit":"0x16345785d8a0000","gasUsed":"0xa8de","timestamp":"0x3e8","extraData":"0x","mixHash":"0x0000000000000000000000000000000000000000000000000000000000000000","nonce":"0x0000000000000000","baseFeePerGas":"0x7","withdrawalsRoot":"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421","blobGasUsed":"0x0","excessBlobGas":"0x0","parentBeaconBlockRoot":"0x0000000000000000000000000000000000000000000000000000000000000000","requestsHash":"0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470","transactions":[{"type":"0x2","nonce":"0x0","to":"0x6177843db3138ae69679a54b95cf345ed759450d","gas":"0xf618","value":"0xaa87bee538000","input":"0x307831353638","maxPriorityFeePerGas":"0x11","maxFeePerGas":"0x4e","gasPrice":"0x4e","accessList":[{"address":"0x6177843db3138ae69679a54b95cf345ed759450d","storageKeys":[]}],"chainId":"0x301824","yParity":"0x0","v":"0x0","r":"0x151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65d","s":"0x64c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4","blockNumber":"0x1","blockHash":"0x94fb81ef7259ad4cef032745a2a5254babe26037f2850d320b872692f7c60178","from":"0x35af8ea983a3ba94c655e19b82b932a30d6b9558","hash":"0x0b8c8f37731d9493916b06d666c3fd5dee2c3bbda06dfe866160d717e00dda91","transactionIndex":"0x0"}],"uncles":[],"withdrawals":[]}"#;
         assert_eq!(serde_json::to_string(&block).unwrap(), expected_block)
+    }
+
+    #[test]
+    fn aggregate_proof_is_listed_with_the_full_block_body() {
+        let proof = Bytes::from(vec![0x01, 0x02, 0xff]);
+        let header = BlockHeader {
+            aggregate_proof_hash: Some(H256::repeat_byte(0x6B)),
+            ..Default::default()
+        };
+        let body = BlockBody {
+            aggregate_proof: Some(proof.clone()),
+            ..BlockBody::empty()
+        };
+        let without_proof = Block::new(header.clone(), BlockBody::empty());
+
+        // With full transactions the proof is a hex string beside them, and the
+        // block gives it back.
+        let block = RpcBlock::build(header.clone(), body.clone(), header.hash(), true).unwrap();
+        let json = serde_json::to_value(&block).unwrap();
+        assert_eq!(json["aggregateProof"], serde_json::json!("0x0102ff"));
+        assert_eq!(
+            json["aggregateProofHash"],
+            serde_json::json!(format!("{:#x}", H256::repeat_byte(0x6B)))
+        );
+        // The size is that of the RLP block, which the proof is not part of.
+        assert_eq!(block.size, without_proof.length() as u64);
+        let parsed: RpcBlock = serde_json::from_value(json).unwrap();
+        let round_trip: Block = parsed.try_into().unwrap();
+        assert_eq!(round_trip.body.aggregate_proof, Some(proof));
+
+        // With transaction hashes only it is left out; the header still commits
+        // to it.
+        let block = RpcBlock::build(header.clone(), body, header.hash(), false).unwrap();
+        let json = serde_json::to_value(&block).unwrap();
+        assert!(json.get("aggregateProof").is_none());
+        assert!(json.get("aggregateProofHash").is_some());
+
+        // A block before LStar has neither field.
+        let header = BlockHeader::default();
+        let block =
+            RpcBlock::build(header.clone(), BlockBody::empty(), header.hash(), true).unwrap();
+        let json = serde_json::to_value(&block).unwrap();
+        assert!(json.get("aggregateProof").is_none());
+        assert!(json.get("aggregateProofHash").is_none());
     }
 }

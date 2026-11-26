@@ -149,6 +149,8 @@ pub enum MempoolError {
     InvalidFrameTransaction(String),
     #[error("Invalid frame transaction: the claim of a proof frame does not hold")]
     InvalidFrameProof,
+    #[error("Invalid frame transaction: a stripped proof frame is valid only in a block")]
+    FrameTxStrippedProof,
     #[error("Frame transaction proof frames exceed MAX_VERIFY_GAS")]
     FrameTxVerifyGasExceeded,
     #[error("Frame transaction validation prefix does not match any recognized shape")]

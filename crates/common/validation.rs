@@ -13,7 +13,6 @@ use crate::types::{
     validate_prague_header_fields, validate_pre_cancun_header_fields,
 };
 use ethrex_crypto::{Crypto, NativeCrypto};
-use ethrex_rlp::encode::RLPEncode;
 
 /// Performs pre-execution validation of the block's header values in reference to the parent_header.
 /// Verifies that blob gas fields in the header are correct in reference to the block's body.
@@ -35,7 +34,9 @@ pub fn validate_block_pre_execution(
     validate_block_header(&block.header, parent_header, elasticity_multiplier)?;
 
     if chain_config.is_osaka_activated(block.header.timestamp) {
-        let block_rlp_size = block.length();
+        // The aggregate proof is not part of the RLP block that the size limit
+        // of EIP-7934 covers. `MAX_AGGREGATE_PROOF_BYTES` bounds it instead.
+        let block_rlp_size = block.length_without_aggregate_proof();
         if block_rlp_size > MAX_RLP_BLOCK_SIZE as usize {
             return Err(InvalidBlockError::MaximumRlpSizeExceeded(
                 MAX_RLP_BLOCK_SIZE,
@@ -424,6 +425,7 @@ mod tests {
                 transactions,
                 ommers: vec![],
                 withdrawals: Some(vec![]),
+                aggregate_proof: None,
             },
         }
     }

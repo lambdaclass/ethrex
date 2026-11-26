@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::block_execution_witness::{ExecutionWitness, GuestProgramState};
-use ethrex_common::types::{Block, Receipt, validate_block_body};
+use ethrex_common::types::{Block, Receipt, Transaction, validate_block_body};
 use ethrex_common::{
-    H256, U256, validate_block_access_list_hash, validate_block_pre_execution, validate_gas_used,
-    validate_receipts_root_and_logs_bloom, validate_requests_hash,
+    H256, InvalidBlockError, U256, validate_block_access_list_hash, validate_block_pre_execution,
+    validate_gas_used, validate_receipts_root_and_logs_bloom, validate_requests_hash,
 };
 use ethrex_crypto::Crypto;
 use ethrex_vm::{Evm, GuestProgramStateWrapper, VmDatabase};
@@ -33,6 +33,30 @@ pub struct BatchExecutionResult {
     /// Per-block recomputed Block Access List (EIP-7928, Amsterdam+). `None` for pre-Amsterdam.
     /// One entry per block in the same order as `receipts`.
     pub bals: Vec<Option<BlockAccessList>>,
+}
+
+/// Rejects a block that relies on its aggregate proof (EIP-8141 §Aggregation): a
+/// block with a stripped proof frame, or with a proof that is not empty.
+///
+/// The claim of a stripped proof frame holds because the block's aggregate proof
+/// covers it, and executing the frame does not check that. This program does not
+/// verify aggregate proofs, so it must not vouch for such a block. A proof frame
+/// that keeps its proof is executed like any other frame.
+fn reject_unverified_aggregate_proof(block: &Block) -> Result<(), ExecutionError> {
+    let has_stripped_proof_frame = block.body.transactions.iter().any(|tx| {
+        matches!(tx, Transaction::FrameTransaction(frame_tx) if frame_tx.has_stripped_proofs())
+    });
+    let has_aggregate_proof = block
+        .body
+        .aggregate_proof
+        .as_ref()
+        .is_some_and(|proof| !proof.is_empty());
+    if has_stripped_proof_frame || has_aggregate_proof {
+        return Err(ExecutionError::BlockValidation(
+            InvalidBlockError::AggregateProofNotVerified,
+        ));
+    }
+    Ok(())
 }
 
 /// Execute a batch of blocks using the provided VM factory.
@@ -117,6 +141,8 @@ where
             validate_block_body(&block.header, &block.body, crypto.as_ref())
                 .map_err(ExecutionError::BlockBodyValidation)
         })?;
+
+        reject_unverified_aggregate_proof(block)?;
 
         // Validate the block header pre-execution
         report_cycles("validate_block_pre_execution", || {
@@ -221,4 +247,78 @@ where
         burned_fees: acc_burned_fees,
         bals: acc_bals,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::Bytes;
+    use ethrex_common::types::{
+        BlockBody, BlockHeader, FRAME_TX_LEANSPHINCS_VERIFIER, Frame, FrameMode, FrameTransaction,
+    };
+
+    /// A block whose only transaction has one leanSPHINCS proof frame, with its
+    /// proof or stripped of it, and the given aggregate proof.
+    fn block(strip: bool, aggregate_proof: Option<Bytes>) -> Block {
+        let mut data = vec![0x11u8; 64];
+        data.extend_from_slice(&[0x22u8; 7740]);
+        let mut tx = FrameTransaction {
+            frames: vec![Frame {
+                mode: u8::from(FrameMode::Proof),
+                target: Some(FRAME_TX_LEANSPHINCS_VERIFIER),
+                data: Bytes::from(data),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        if strip {
+            assert_eq!(tx.strip_proofs().len(), 1);
+        }
+        Block::new(
+            BlockHeader::default(),
+            BlockBody {
+                transactions: vec![Transaction::FrameTransaction(tx)],
+                aggregate_proof,
+                ..BlockBody::empty()
+            },
+        )
+    }
+
+    fn is_rejected(result: Result<(), ExecutionError>) -> bool {
+        matches!(
+            result,
+            Err(ExecutionError::BlockValidation(
+                InvalidBlockError::AggregateProofNotVerified
+            ))
+        )
+    }
+
+    #[test]
+    fn a_block_with_a_stripped_proof_frame_is_rejected() {
+        let proof = Some(Bytes::from(vec![0x33u8; 100]));
+        assert!(is_rejected(reject_unverified_aggregate_proof(&block(
+            true,
+            proof.clone()
+        ))));
+        // Whatever it carries for an aggregate proof.
+        assert!(is_rejected(reject_unverified_aggregate_proof(&block(
+            true,
+            Some(Bytes::new())
+        ))));
+        assert!(is_rejected(reject_unverified_aggregate_proof(&block(
+            true, None
+        ))));
+        // A proof that stands for nothing in the block is not verified either.
+        assert!(is_rejected(reject_unverified_aggregate_proof(&block(
+            false, proof
+        ))));
+    }
+
+    #[test]
+    fn a_block_whose_proof_frames_keep_their_proofs_is_executed() {
+        // From LStar, with the empty aggregate proof.
+        assert!(reject_unverified_aggregate_proof(&block(false, Some(Bytes::new()))).is_ok());
+        // Before LStar, without one.
+        assert!(reject_unverified_aggregate_proof(&block(false, None)).is_ok());
+    }
 }

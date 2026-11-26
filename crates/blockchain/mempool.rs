@@ -1301,6 +1301,35 @@ impl Mempool {
         Ok(())
     }
 
+    /// Removes the sender's pending frame transaction if `sig_hash` is its
+    /// canonical signature hash (EIP-8141).
+    ///
+    /// A block from LStar may carry a frame transaction without some of its
+    /// proofs, which the block's aggregate proof stands for. That changes the
+    /// transaction's hash but not its signature hash, so this is how an included
+    /// transaction is found in the pool, where it still carries its proofs.
+    pub fn remove_frame_transaction_by_sig_hash(
+        &self,
+        sender: Address,
+        sig_hash: H256,
+    ) -> Result<(), StoreError> {
+        let mut inner = self.write()?;
+        let Some((hash, _, _)) = inner.pending_frame_tx_by_sender.get(&sender) else {
+            return Ok(());
+        };
+        let hash = *hash;
+        let is_same_transaction = inner.transaction_pool.get(&hash).is_some_and(|pending| {
+            matches!(
+                pending.transaction(),
+                Transaction::FrameTransaction(frame_tx) if frame_tx.compute_sig_hash() == sig_hash
+            )
+        });
+        if is_same_transaction {
+            inner.remove_transaction_with_lock(&hash)?;
+        }
+        Ok(())
+    }
+
     /// Applies the filter and returns a set of suitable transactions from the mempool.
     /// These transactions will be grouped by sender and sorted by nonce
     pub fn filter_transactions(

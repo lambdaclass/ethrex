@@ -51,6 +51,21 @@ impl Block {
     pub fn hash(&self) -> BlockHash {
         self.header.hash()
     }
+
+    /// The length of the block's RLP encoding as it is without the aggregate
+    /// proof. This is the size EIP-7934 limits: the proof travels beside the
+    /// block's other items and has a bound of its own,
+    /// [`MAX_AGGREGATE_PROOF_BYTES`].
+    pub fn length_without_aggregate_proof(&self) -> usize {
+        if self.body.aggregate_proof.is_none() {
+            return self.length();
+        }
+        let payload = self.header.length()
+            + self.body.transactions.length()
+            + self.body.ommers.length()
+            + self.body.withdrawals.as_ref().map_or(0, RLPEncode::length);
+        ethrex_rlp::encode::list_length(payload)
+    }
 }
 
 impl RLPEncode for Block {
@@ -60,6 +75,7 @@ impl RLPEncode for Block {
             .encode_field(&self.body.transactions)
             .encode_field(&self.body.ommers)
             .encode_optional_field(&self.body.withdrawals)
+            .encode_optional_field(&self.body.aggregate_proof)
             .finish();
     }
 }
@@ -71,11 +87,13 @@ impl RLPDecode for Block {
         let (transactions, decoder) = decoder.decode_field("transactions")?;
         let (ommers, decoder) = decoder.decode_field("ommers")?;
         let (withdrawals, decoder) = decoder.decode_optional_field();
+        let (aggregate_proof, decoder) = decoder.decode_optional_field();
         let remaining = decoder.finish()?;
         let body = BlockBody {
             transactions,
             ommers,
             withdrawals,
+            aggregate_proof,
         };
         let block = Block::new(header, body);
         Ok((block, remaining))
@@ -162,6 +180,13 @@ pub struct BlockHeader {
         default = "Option::default"
     )]
     pub burned_fees: Option<u64>,
+    /// `keccak256(aggregate_proof)`: the commitment to the proof the block
+    /// carries for the claims of its stripped proof frames (EIP-8141
+    /// §Aggregation). Present from LStar, even when the block has no stripped
+    /// frame and the proof is empty.
+    #[serde(skip_serializing_if = "Option::is_none", default = "Option::default")]
+    #[rkyv(with=crate::rkyv_utils::OptionH256Wrapper)]
+    pub aggregate_proof_hash: Option<H256>,
 }
 
 // Needs a explicit impl due to the hash OnceLock.
@@ -193,6 +218,7 @@ impl PartialEq for BlockHeader {
             block_access_list_hash,
             slot_number,
             burned_fees,
+            aggregate_proof_hash,
         } = self;
 
         parent_hash == &other.parent_hash
@@ -217,6 +243,7 @@ impl PartialEq for BlockHeader {
             && block_access_list_hash == &other.block_access_list_hash
             && slot_number == &other.slot_number
             && burned_fees == &other.burned_fees
+            && aggregate_proof_hash == &other.aggregate_proof_hash
             && logs_bloom == &other.logs_bloom
             && extra_data == &other.extra_data
     }
@@ -249,6 +276,9 @@ impl RLPEncode for BlockHeader {
             .encode_optional_field(&self.block_access_list_hash)
             .encode_optional_field(&self.slot_number)
             .encode_optional_field(&self.burned_fees)
+            // A hash after an integer: `burned_fees` is present whenever this
+            // field is, so the trailing fields decode by position.
+            .encode_optional_field(&self.aggregate_proof_hash)
             .finish();
     }
 }
@@ -281,6 +311,7 @@ impl RLPDecode for BlockHeader {
         let (block_access_list_hash, decoder) = decoder.decode_optional_field();
         let (slot_number, decoder) = decoder.decode_optional_field();
         let (burned_fees, decoder) = decoder.decode_optional_field();
+        let (aggregate_proof_hash, decoder) = decoder.decode_optional_field();
 
         Ok((
             BlockHeader {
@@ -309,6 +340,7 @@ impl RLPDecode for BlockHeader {
                 block_access_list_hash,
                 slot_number,
                 burned_fees,
+                aggregate_proof_hash,
             },
             decoder.finish()?,
         ))
@@ -325,6 +357,19 @@ pub struct BlockBody {
     #[serde(rename = "uncles")]
     pub ommers: Vec<BlockHeader>,
     pub withdrawals: Option<Vec<Withdrawal>>,
+    /// The block's aggregate proof (EIP-8141 §Aggregation): one proof that the
+    /// claim of every stripped proof frame of its transactions has a valid
+    /// leanSPHINCS signature. `Some` from LStar, empty when the block has no
+    /// stripped frame; `None` before. No root of the body covers it: the header
+    /// commits to it with `aggregate_proof_hash`. It follows the body's other
+    /// items in storage and on the network.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "crate::serde_utils::bytes::opt"
+    )]
+    #[rkyv(with = rkyv::with::Map<crate::rkyv_utils::BytesWrapper>)]
+    pub aggregate_proof: Option<Bytes>,
 }
 
 impl BlockBody {
@@ -333,6 +378,7 @@ impl BlockBody {
             transactions: Vec::new(),
             ommers: Vec::new(),
             withdrawals: Some(Vec::new()),
+            aggregate_proof: None,
         }
     }
 
@@ -412,6 +458,9 @@ impl RLPEncode for BlockBody {
             .encode_field(&self.transactions)
             .encode_field(&self.ommers)
             .encode_optional_field(&self.withdrawals)
+            // A byte string after a list: it is present only from LStar, where
+            // the withdrawals are too, so the trailing items decode by position.
+            .encode_optional_field(&self.aggregate_proof)
             .finish();
     }
 }
@@ -422,11 +471,13 @@ impl RLPDecode for BlockBody {
         let (transactions, decoder) = decoder.decode_field("transactions")?;
         let (ommers, decoder) = decoder.decode_field("ommers")?;
         let (withdrawals, decoder) = decoder.decode_optional_field();
+        let (aggregate_proof, decoder) = decoder.decode_optional_field();
         Ok((
             BlockBody {
                 transactions,
                 ommers,
                 withdrawals,
+                aggregate_proof,
             },
             decoder.finish()?,
         ))
@@ -694,6 +745,10 @@ pub enum InvalidBlockHeaderError {
     SlotNumberNotPresent,
     #[error("Slot number is present")]
     SlotNumberPresent,
+    #[error("Aggregate proof hash is not present")]
+    AggregateProofHashNotPresent,
+    #[error("Aggregate proof hash is present")]
+    AggregateProofHashPresent,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -704,6 +759,10 @@ pub enum InvalidBlockBodyError {
     TransactionsRootNotMatch,
     #[error("Ommers is not empty")]
     OmmersIsNotEmpty,
+    #[error("Aggregate proof has {0} bytes, more than MAX_AGGREGATE_PROOF_BYTES")]
+    AggregateProofTooLarge(usize),
+    #[error("Aggregate proof does not match the header's aggregate_proof_hash")]
+    AggregateProofHashNotMatch,
 }
 
 /// Validates that the header fields are correct in reference to the parent_header
@@ -797,7 +856,52 @@ pub fn validate_block_body(
         _ => return Err(InvalidBlockBodyError::WithdrawalsRootNotMatch),
     }
 
+    // From LStar the header commits to the aggregate proof the body carries.
+    // The proof and its commitment are present together or not at all; whether
+    // they are required is a header rule.
+    if block_header.aggregate_proof_hash.is_some() || block_body.aggregate_proof.is_some() {
+        validate_aggregate_proof_commitment(block_header, block_body, crypto)?;
+    }
+
     Ok(())
+}
+
+/// The most bytes a block's aggregate proof may have: the bound EIP-8288 gives
+/// the proof of a block's dependencies (`MAX_DEPENDENCY_PROOF_BYTES`).
+pub const MAX_AGGREGATE_PROOF_BYTES: usize = 1_048_576;
+
+/// Checks a block's aggregate proof against the header: the proof is within
+/// [`MAX_AGGREGATE_PROOF_BYTES`], checked before it is hashed, and the header's
+/// `aggregate_proof_hash` is its hash.
+///
+/// Whether the proof holds for the block's stripped proof frames is not checked
+/// here: that needs the verifier.
+pub fn validate_aggregate_proof_commitment(
+    block_header: &BlockHeader,
+    block_body: &BlockBody,
+    crypto: &dyn Crypto,
+) -> Result<(), InvalidBlockBodyError> {
+    let (Some(proof_hash), Some(proof)) = (
+        block_header.aggregate_proof_hash,
+        &block_body.aggregate_proof,
+    ) else {
+        // The proof without its commitment, or the commitment without the proof.
+        return Err(InvalidBlockBodyError::AggregateProofHashNotMatch);
+    };
+    if proof.len() > MAX_AGGREGATE_PROOF_BYTES {
+        return Err(InvalidBlockBodyError::AggregateProofTooLarge(proof.len()));
+    }
+    if proof_hash != compute_aggregate_proof_hash(proof, crypto) {
+        return Err(InvalidBlockBodyError::AggregateProofHashNotMatch);
+    }
+    Ok(())
+}
+
+/// `aggregate_proof_hash`: the Keccak-256 hash of a block's aggregate proof. For
+/// the empty proof of a block without stripped proof frames it is the hash of the
+/// empty byte string.
+pub fn compute_aggregate_proof_hash(proof: &[u8], crypto: &dyn Crypto) -> H256 {
+    H256(crypto.keccak256(proof))
 }
 
 /// Normalizes a legacy post-Shanghai body shape produced by older ethrex versions,
@@ -860,6 +964,15 @@ pub fn validate_prague_header_fields(
             return Err(InvalidBlockHeaderError::SlotNumberPresent);
         }
     }
+    // The commitment to the block's aggregate proof (EIP-8141 §Aggregation) is a
+    // header field from LStar, and never before.
+    if chain_config.is_lstar_activated(header.timestamp) {
+        if header.aggregate_proof_hash.is_none() {
+            return Err(InvalidBlockHeaderError::AggregateProofHashNotPresent);
+        }
+    } else if header.aggregate_proof_hash.is_some() {
+        return Err(InvalidBlockHeaderError::AggregateProofHashPresent);
+    }
     Ok(())
 }
 
@@ -889,6 +1002,9 @@ pub fn validate_cancun_header_fields(
     if header.slot_number.is_some() {
         return Err(InvalidBlockHeaderError::SlotNumberPresent);
     }
+    if header.aggregate_proof_hash.is_some() {
+        return Err(InvalidBlockHeaderError::AggregateProofHashPresent);
+    }
     Ok(())
 }
 
@@ -914,6 +1030,9 @@ pub fn validate_pre_cancun_header_fields(
     }
     if header.slot_number.is_some() {
         return Err(InvalidBlockHeaderError::SlotNumberPresent);
+    }
+    if header.aggregate_proof_hash.is_some() {
+        return Err(InvalidBlockHeaderError::AggregateProofHashPresent);
     }
     Ok(())
 }
@@ -1463,5 +1582,193 @@ mod test {
         let before = canonical.withdrawals.clone();
         normalize_legacy_withdrawals(&header, &mut canonical);
         assert_eq!(canonical.withdrawals, before);
+    }
+
+    // From LStar the block carries one aggregate proof for the claims of its
+    // stripped proof frames (EIP-8141 §Aggregation), and the header commits to it.
+
+    #[test]
+    fn aggregate_proof_hash_roundtrips_in_the_header_of_every_fork() {
+        // The trailing fields a header has by fork: from Amsterdam the block
+        // access list hash and the slot number; from LStar also the fees burned
+        // and the commitment to the aggregate proof. A decoder that reads the
+        // trailing fields by position attributes each one to its field.
+        let proof_hash = Some(H256::repeat_byte(0x6B));
+        let shapes = [(None, None), (Some(11u64), proof_hash)];
+        let mut seen = std::collections::HashSet::new();
+        for (burned_fees, aggregate_proof_hash) in shapes {
+            let header = BlockHeader {
+                base_fee_per_gas: Some(1),
+                withdrawals_root: Some(H256::zero()),
+                blob_gas_used: Some(0),
+                excess_blob_gas: Some(0),
+                parent_beacon_block_root: Some(H256::zero()),
+                requests_hash: Some(H256::zero()),
+                block_access_list_hash: Some(H256::zero()),
+                slot_number: Some(7),
+                burned_fees,
+                aggregate_proof_hash,
+                ..Default::default()
+            };
+            let decoded = BlockHeader::decode(&header.encode_to_vec()).expect("the header decodes");
+            assert_eq!(decoded, header);
+            assert_eq!(decoded.burned_fees, burned_fees);
+            assert_eq!(decoded.aggregate_proof_hash, aggregate_proof_hash);
+            assert!(seen.insert(header.compute_block_hash(&NativeCrypto)));
+        }
+
+        // The commitment is part of the block hash.
+        let header = BlockHeader {
+            slot_number: Some(7),
+            burned_fees: Some(11),
+            aggregate_proof_hash: proof_hash,
+            ..Default::default()
+        };
+        let other_proof = BlockHeader {
+            aggregate_proof_hash: Some(H256::repeat_byte(0x7C)),
+            ..header.clone()
+        };
+        assert_ne!(header.hash(), other_proof.compute_block_hash(&NativeCrypto));
+    }
+
+    #[test]
+    fn aggregate_proof_roundtrips_in_the_body_and_the_block() {
+        // A body has the proof (LStar) or not. It is a byte string after the list
+        // of withdrawals, so it reads back as it was written, the empty one
+        // included, and a body without it reads back without it.
+        for aggregate_proof in [None, Some(Bytes::new()), Some(Bytes::from(vec![0xAB; 300]))] {
+            let body = BlockBody {
+                aggregate_proof: aggregate_proof.clone(),
+                ..BlockBody::empty()
+            };
+            let decoded = BlockBody::decode(&body.encode_to_vec()).expect("the body decodes");
+            assert_eq!(decoded, body);
+            assert_eq!(decoded.aggregate_proof, aggregate_proof);
+
+            let block = Block::new(BlockHeader::default(), body);
+            let decoded = Block::decode(&block.encode_to_vec()).expect("the block decodes");
+            assert_eq!(decoded, block);
+            assert_eq!(decoded.body.aggregate_proof, aggregate_proof);
+
+            // The size EIP-7934 limits leaves the proof out.
+            let without_proof = Block::new(BlockHeader::default(), BlockBody::empty());
+            assert_eq!(
+                block.length_without_aggregate_proof(),
+                without_proof.length()
+            );
+        }
+    }
+
+    #[test]
+    fn block_body_is_checked_against_the_headers_aggregate_proof_hash() {
+        let crypto = NativeCrypto;
+        let proof = Bytes::from(vec![0xAB; 300]);
+        let header = BlockHeader {
+            transactions_root: compute_transactions_root(&[], &crypto),
+            withdrawals_root: Some(compute_withdrawals_root(&[], &crypto)),
+            aggregate_proof_hash: Some(compute_aggregate_proof_hash(&proof, &crypto)),
+            ..Default::default()
+        };
+        let body = BlockBody {
+            aggregate_proof: Some(proof),
+            ..BlockBody::empty()
+        };
+        assert!(validate_block_body(&header, &body, &crypto).is_ok());
+
+        // Another proof than the header commits to, the empty one included.
+        for other in [Bytes::from(vec![0xAC; 300]), Bytes::new()] {
+            let other_body = BlockBody {
+                aggregate_proof: Some(other),
+                ..BlockBody::empty()
+            };
+            assert!(matches!(
+                validate_block_body(&header, &other_body, &crypto),
+                Err(InvalidBlockBodyError::AggregateProofHashNotMatch)
+            ));
+        }
+        // The commitment without the proof, and the proof without the commitment.
+        assert!(matches!(
+            validate_block_body(&header, &BlockBody::empty(), &crypto),
+            Err(InvalidBlockBodyError::AggregateProofHashNotMatch)
+        ));
+        let uncommitted = BlockHeader {
+            aggregate_proof_hash: None,
+            ..header.clone()
+        };
+        assert!(matches!(
+            validate_block_body(&uncommitted, &body, &crypto),
+            Err(InvalidBlockBodyError::AggregateProofHashNotMatch)
+        ));
+        // Neither, as before LStar.
+        assert!(validate_block_body(&uncommitted, &BlockBody::empty(), &crypto).is_ok());
+
+        // A proof over the bound is rejected before it is hashed, whatever the
+        // header says.
+        let oversized = Bytes::from(vec![0u8; MAX_AGGREGATE_PROOF_BYTES + 1]);
+        let oversized_header = BlockHeader {
+            aggregate_proof_hash: Some(compute_aggregate_proof_hash(&oversized, &crypto)),
+            ..header
+        };
+        let oversized_body = BlockBody {
+            aggregate_proof: Some(oversized),
+            ..BlockBody::empty()
+        };
+        assert!(matches!(
+            validate_block_body(&oversized_header, &oversized_body, &crypto),
+            Err(InvalidBlockBodyError::AggregateProofTooLarge(len))
+                if len == MAX_AGGREGATE_PROOF_BYTES + 1
+        ));
+    }
+
+    #[test]
+    fn aggregate_proof_hash_is_a_header_field_exactly_from_lstar() {
+        const LSTAR: u64 = 1_000;
+        let config = ChainConfig {
+            cancun_time: Some(0),
+            prague_time: Some(0),
+            amsterdam_time: Some(0),
+            hegota_time: Some(0),
+            lstar_time: Some(LSTAR),
+            ..Default::default()
+        };
+        let parent = BlockHeader {
+            excess_blob_gas: Some(0),
+            blob_gas_used: Some(0),
+            ..Default::default()
+        };
+        let header = |timestamp: u64, aggregate_proof_hash: Option<H256>| BlockHeader {
+            timestamp,
+            excess_blob_gas: Some(0),
+            blob_gas_used: Some(0),
+            parent_beacon_block_root: Some(H256::zero()),
+            requests_hash: Some(H256::zero()),
+            block_access_list_hash: Some(H256::zero()),
+            slot_number: Some(1),
+            aggregate_proof_hash,
+            ..Default::default()
+        };
+        let hash = Some(compute_aggregate_proof_hash(&[], &NativeCrypto));
+
+        // Before LStar a header has no commitment to an aggregate proof.
+        assert!(validate_prague_header_fields(&header(LSTAR - 1, None), &parent, &config).is_ok());
+        assert!(matches!(
+            validate_prague_header_fields(&header(LSTAR - 1, hash), &parent, &config),
+            Err(InvalidBlockHeaderError::AggregateProofHashPresent)
+        ));
+        // From LStar it always has one.
+        assert!(validate_prague_header_fields(&header(LSTAR, hash), &parent, &config).is_ok());
+        assert!(matches!(
+            validate_prague_header_fields(&header(LSTAR, None), &parent, &config),
+            Err(InvalidBlockHeaderError::AggregateProofHashNotPresent)
+        ));
+        // Nor does a header of an older fork carry one.
+        let old = BlockHeader {
+            aggregate_proof_hash: hash,
+            ..Default::default()
+        };
+        assert!(matches!(
+            validate_pre_cancun_header_fields(&old),
+            Err(InvalidBlockHeaderError::AggregateProofHashPresent)
+        ));
     }
 }

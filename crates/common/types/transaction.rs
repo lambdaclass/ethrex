@@ -1,5 +1,6 @@
 use std::{
     cmp::min,
+    collections::BTreeMap,
     fmt::Display,
     num::NonZeroUsize,
     sync::{LazyLock, Mutex},
@@ -2166,6 +2167,25 @@ impl RLPEncode for Frame {
 
 impl RLPDecode for Frame {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        let (decoded, rest) = DecodedFrame::decode_unfinished(rlp)?;
+        if decoded.stripped_proof_len.is_some() {
+            return Err(RLPDecodeError::Custom(
+                "A stripped proof frame decodes only as part of its transaction".to_string(),
+            ));
+        }
+        Ok((decoded.frame, rest))
+    }
+}
+
+/// A frame as the encoding of its transaction carries it, with the length of its
+/// proof when the proof was stripped (see [`FrameTransaction::stripped_proofs`]).
+struct DecodedFrame {
+    frame: Frame,
+    stripped_proof_len: Option<u64>,
+}
+
+impl RLPDecode for DecodedFrame {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let decoder = Decoder::new(rlp)?;
         let (mode_u64, decoder): (u64, _) = decoder.decode_field("mode")?;
         let mode = u8::try_from(mode_u64)
@@ -2181,7 +2201,29 @@ impl RLPDecode for Frame {
         let ((gas_limit, state_gas_limit), decoder): ((u64, u64), _) =
             decoder.decode_field("limits")?;
         let (value, decoder): (U256, _) = decoder.decode_field("value")?;
-        let (data, decoder) = decoder.decode_field("data")?;
+        // EIP-8141 §Aggregation: the `data` of a proof frame is a byte string or,
+        // once its proof was stripped, the list `[claim, proof_length]`. No other
+        // frame has a list for its `data`.
+        let (stripped, decoder): (Option<(Bytes, u64)>, _) = if mode == FrameMode::Proof as u8 {
+            decoder.decode_optional_field()
+        } else {
+            (None, decoder)
+        };
+        let (data, stripped_proof_len, decoder) = match stripped {
+            Some((claim, proof_len)) => {
+                if claim.len() != PROOF_CLAIM_LENGTH {
+                    return Err(RLPDecodeError::Custom(format!(
+                        "Stripped proof frame must hold a {PROOF_CLAIM_LENGTH}-byte claim, got {} bytes",
+                        claim.len()
+                    )));
+                }
+                (claim, Some(proof_len), decoder)
+            }
+            None => {
+                let (data, decoder) = decoder.decode_field("data")?;
+                (data, None, decoder)
+            }
+        };
         let frame = Frame {
             mode,
             flags,
@@ -2191,7 +2233,56 @@ impl RLPDecode for Frame {
             value,
             data,
         };
-        Ok((frame, decoder.finish()?))
+        Ok((
+            DecodedFrame {
+                frame,
+                stripped_proof_len,
+            },
+            decoder.finish()?,
+        ))
+    }
+}
+
+/// Encodes `frame` with its `data` in elided form (EIP-8141 §Signature Hash): the
+/// list of its claim and `proof_len`, extended with `digest` when there is one.
+fn encode_elided_frame(
+    frame: &Frame,
+    proof_len: u64,
+    digest: Option<H256>,
+    buf: &mut dyn bytes::BufMut,
+) {
+    let target_kind = match frame.target {
+        Some(addr) => TxKind::Call(addr),
+        None => TxKind::Create,
+    };
+    let claim = Bytes::copy_from_slice(frame.proof_claim());
+    let encoder = Encoder::new(buf)
+        .encode_field(&(frame.mode as u64))
+        .encode_field(&(frame.flags as u64))
+        .encode_field(&target_kind)
+        .encode_field(&(frame.gas_limit, frame.state_gas_limit))
+        .encode_field(&frame.value);
+    match digest {
+        Some(digest) => encoder.encode_field(&(claim, proof_len, digest)).finish(),
+        None => encoder.encode_field(&(claim, proof_len)).finish(),
+    }
+}
+
+/// A frame as the encoding of its transaction carries it (EIP-8141 §Aggregation):
+/// as it is, unless its proof was stripped. A stripped proof frame keeps its
+/// elided form, the one the signature hash gives it, so its `data` is the list
+/// `[claim, proof_length]`.
+struct EncodedFrame<'a> {
+    frame: &'a Frame,
+    stripped_proof_len: Option<u64>,
+}
+
+impl RLPEncode for EncodedFrame<'_> {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        match self.stripped_proof_len {
+            Some(proof_len) => encode_elided_frame(self.frame, proof_len, None, buf),
+            None => self.frame.encode(buf),
+        }
     }
 }
 
@@ -2200,34 +2291,30 @@ impl RLPDecode for Frame {
 /// list `[claim, len(proof)]`, extended with `keccak256(proof)` when the frame sets
 /// `PROOF_COMMIT_FLAG`. A proof over the signature hash cannot commit to its own
 /// bytes, but committing to their length fixes what the payer is charged for them.
-struct SigHashFrame<'a>(&'a Frame);
+///
+/// A stripped proof frame already has that form, with the length of the proof
+/// that left, so stripping a proof does not change the signature hash.
+struct SigHashFrame<'a> {
+    frame: &'a Frame,
+    stripped_proof_len: Option<u64>,
+}
 
 impl RLPEncode for SigHashFrame<'_> {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        let frame = self.0;
+        let frame = self.frame;
         if !frame.is_proof() {
             frame.encode(buf);
             return;
         }
-        let target_kind = match frame.target {
-            Some(addr) => TxKind::Call(addr),
-            None => TxKind::Create,
-        };
-        let claim = Bytes::copy_from_slice(frame.proof_claim());
-        let proof = frame.proof_bytes();
-        let proof_len = proof.len() as u64;
-        let encoder = Encoder::new(buf)
-            .encode_field(&(frame.mode as u64))
-            .encode_field(&(frame.flags as u64))
-            .encode_field(&target_kind)
-            .encode_field(&(frame.gas_limit, frame.state_gas_limit))
-            .encode_field(&frame.value);
-        if frame.commits_proof() {
-            encoder
-                .encode_field(&(claim, proof_len, keccak(proof)))
-                .finish();
-        } else {
-            encoder.encode_field(&(claim, proof_len)).finish();
+        match self.stripped_proof_len {
+            // Only a proof without `PROOF_COMMIT_FLAG` is stripped, so there is no
+            // digest to commit to.
+            Some(proof_len) => encode_elided_frame(frame, proof_len, None, buf),
+            None => {
+                let proof = frame.proof_bytes();
+                let digest = frame.commits_proof().then(|| keccak(proof));
+                encode_elided_frame(frame, proof.len() as u64, digest, buf);
+            }
         }
     }
 }
@@ -2249,6 +2336,13 @@ pub struct FrameTransaction {
     #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
     pub sender: Address,
     pub frames: Vec<Frame>,
+    /// EIP-8141 §Aggregation: the proof frames whose proof was stripped, by frame
+    /// index, each with the byte length of the proof that left. The `data` of such
+    /// a frame holds its claim alone, and the transaction encodes it as the list
+    /// `[claim, proof_length]`, the frame's elided form in the signature hash.
+    /// The block's aggregate proof stands for the proofs that left, so only a
+    /// transaction inside a block from LStar has an entry here.
+    pub stripped_proofs: BTreeMap<usize, u64>,
     /// EIP-8141 `fees.max_fee`: one budget, in wei, for all of the transaction's
     /// execution, state and blob gas. The fee fields are bounded at 2**256, not
     /// 2**64: a frame transaction may legitimately name a fee no balance could
@@ -2275,6 +2369,7 @@ impl Default for FrameTransaction {
             nonce_seq: 0,
             sender: Address::zero(),
             frames: Vec::new(),
+            stripped_proofs: BTreeMap::new(),
             max_fee: U256::zero(),
             max_priority_fee_per_gas: U256::zero(),
             blob_versioned_hashes: Vec::new(),
@@ -2345,6 +2440,9 @@ pub const SECP256K1_VERIFIER_GAS: u64 = 3000;
 pub const P256_VERIFIER_GAS: u64 = 6900;
 /// Gas the `LEANSPHINCS_VERIFIER` precompile requires on every input.
 pub const LEANSPHINCS_VERIFIER_GAS: u64 = 13200;
+/// Length in bytes of the proof the `LEANSPHINCS_VERIFIER` precompile accepts: a
+/// leanSPHINCS signature.
+pub const LEANSPHINCS_VERIFIER_PROOF_LENGTH: u64 = 7740;
 /// EIP-8141 §Mempool `MAX_VERIFY_GAS`: the maximum gas
 /// a public-mempool node should expend simulating the validation prefix,
 /// including its proof frames. Their `limits.execution` count against this budget
@@ -2552,7 +2650,15 @@ impl FrameTransaction {
     /// covered, and so are the flags.
     pub fn compute_sig_hash(&self) -> H256 {
         let mut buf = vec![TxType::Frame as u8];
-        let elided_frames: Vec<SigHashFrame> = self.frames.iter().map(SigHashFrame).collect();
+        let elided_frames: Vec<SigHashFrame> = self
+            .frames
+            .iter()
+            .enumerate()
+            .map(|(index, frame)| SigHashFrame {
+                frame,
+                stripped_proof_len: self.stripped_proof_len(index),
+            })
+            .collect();
         Encoder::new(&mut buf)
             .encode_field(&self.chain_id)
             .encode_field(&self.nonce_keys)
@@ -2580,6 +2686,144 @@ impl FrameTransaction {
             .fold(0u64, |acc, f| acc.saturating_add(f.gas_limit))
     }
 
+    /// The byte length of the proof that proof frame `index` had before it was
+    /// stripped (EIP-8141 §Aggregation), or `None` for a frame that carries its
+    /// `data` whole.
+    pub fn stripped_proof_len(&self, index: usize) -> Option<u64> {
+        self.stripped_proofs.get(&index).copied()
+    }
+
+    /// Whether the proof of any proof frame was stripped. Such a transaction is
+    /// valid only inside a block from LStar, whose aggregate proof covers the
+    /// claims of its stripped frames.
+    pub fn has_stripped_proofs(&self) -> bool {
+        !self.stripped_proofs.is_empty()
+    }
+
+    /// The byte length of the `data` of frame `index` as EVM code observes it
+    /// (`FRAMEPARAM`). A stripped proof frame keeps the length it had, that of its
+    /// claim and of the proof that left. Zero for an index out of bounds.
+    pub fn frame_data_len(&self, index: usize) -> u64 {
+        let carried = self.frames.get(index).map_or(0, |f| f.data.len() as u64);
+        carried.saturating_add(self.stripped_proof_len(index).unwrap_or(0))
+    }
+
+    /// Checks that the protocol may strip a proof of `proof_len` bytes from the
+    /// proof frame `frame` of a transaction from `sender` (EIP-8141 §Aggregation):
+    ///
+    /// - the frame's verifier, its resolved target, is `LEANSPHINCS_VERIFIER`,
+    ///   whose claims a block's aggregate proof covers;
+    /// - `PROOF_READ_FLAG` is clear, since an aggregate does not supply the bytes
+    ///   `VERIFY` code may read;
+    /// - `PROOF_COMMIT_FLAG` is clear, since the aggregate does not show that the
+    ///   proof hashes to a committed digest;
+    /// - the proof is one leanSPHINCS signature long.
+    fn check_proof_can_be_stripped(
+        frame: &Frame,
+        sender: Address,
+        proof_len: u64,
+    ) -> Result<(), &'static str> {
+        if !frame.is_proof() {
+            return Err("only a proof frame has a proof to strip");
+        }
+        if frame.target.unwrap_or(sender) != FRAME_TX_LEANSPHINCS_VERIFIER {
+            return Err("only a proof for LEANSPHINCS_VERIFIER can be stripped");
+        }
+        if frame.proof_is_readable() {
+            return Err("a proof with PROOF_READ_FLAG cannot be stripped");
+        }
+        if frame.commits_proof() {
+            return Err("a proof with PROOF_COMMIT_FLAG cannot be stripped");
+        }
+        if proof_len != LEANSPHINCS_VERIFIER_PROOF_LENGTH {
+            return Err("only a proof of 7740 bytes can be stripped");
+        }
+        Ok(())
+    }
+
+    /// Validates the stripped proof frames (EIP-8141 §Aggregation): each holds its
+    /// claim alone, and only a proof the protocol may strip left its frame (see
+    /// [`Self::check_proof_can_be_stripped`]). Whether a stripped frame may appear
+    /// at all, which is only in a block from LStar, is for the caller to decide.
+    pub fn validate_stripped_proofs(&self) -> Result<(), String> {
+        for (index, proof_len) in &self.stripped_proofs {
+            let Some(frame) = self.frames.get(*index) else {
+                return Err(format!(
+                    "Frame {index}: no such frame to strip a proof from"
+                ));
+            };
+            Self::check_proof_can_be_stripped(frame, self.sender, *proof_len)
+                .map_err(|reason| format!("Frame {index}: {reason}"))?;
+            if frame.data.len() != PROOF_CLAIM_LENGTH {
+                return Err(format!(
+                    "Frame {index}: a stripped proof frame holds its {PROOF_CLAIM_LENGTH}-byte claim alone, got {} bytes",
+                    frame.data.len()
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// The claim of the proof frame `frame` as its verifier checks it:
+    /// `(key, msg)`, with the canonical signature hash in place of a zero `msg`.
+    fn resolved_claim(frame: &Frame, sig_hash: H256) -> (H256, H256) {
+        let msg = frame.proof_msg();
+        (
+            frame.proof_key(),
+            if msg.is_zero() { sig_hash } else { msg },
+        )
+    }
+
+    /// The claims of the stripped proof frames, resolved (see
+    /// [`Self::resolved_claim`]), in frame order. These are the claims a block's
+    /// aggregate proof has to cover for this transaction.
+    pub fn stripped_claims(&self) -> Vec<(H256, H256)> {
+        if !self.has_stripped_proofs() {
+            return Vec::new();
+        }
+        let sig_hash = self.compute_sig_hash();
+        self.stripped_proofs
+            .keys()
+            .filter_map(|index| self.frames.get(*index))
+            .map(|frame| Self::resolved_claim(frame, sig_hash))
+            .collect()
+    }
+
+    /// Strips every proof the protocol may strip (see
+    /// [`Self::check_proof_can_be_stripped`]): the frame keeps its claim and the
+    /// length of its proof, and the proof leaves the transaction. Returns the
+    /// resolved claim and the proof of each frame this call stripped, in frame
+    /// order, for the aggregate proof that will stand for them.
+    ///
+    /// The signature hash, and with it the payer's charge, stay those of the
+    /// transaction before the call. The transaction hash does not: it covers the
+    /// encoding, which no longer holds the proofs.
+    pub fn strip_proofs(&mut self) -> Vec<((H256, H256), Bytes)> {
+        let sig_hash = self.compute_sig_hash();
+        let sender = self.sender;
+        let mut stripped = Vec::new();
+        for (index, frame) in self.frames.iter_mut().enumerate() {
+            let proof_len = frame.proof_bytes().len() as u64;
+            if self.stripped_proofs.contains_key(&index)
+                || Self::check_proof_can_be_stripped(frame, sender, proof_len).is_err()
+            {
+                continue;
+            }
+            stripped.push((
+                Self::resolved_claim(frame, sig_hash),
+                frame.data.slice(PROOF_CLAIM_LENGTH..),
+            ));
+            frame.data.truncate(PROOF_CLAIM_LENGTH);
+            self.stripped_proofs.insert(index, proof_len);
+        }
+        if !stripped.is_empty() {
+            // The encoding changed, and the transaction hash with it.
+            self.inner_hash = OnceCell::new();
+            self.cached_canonical = OnceCell::new();
+        }
+        stripped
+    }
+
     /// Iterate the data priced by its content: each frame's `data`, except that a
     /// proof frame contributes only its claim. Its proof is priced by length alone
     /// (see [`Self::elided_proof_len`]). The RLP framing and the remaining scalar
@@ -2598,12 +2842,19 @@ impl FrameTransaction {
     /// signature hash commits only to their length, so the intrinsic cost prices
     /// them as if all non-zero: the payer's charge then depends only on what the
     /// signature hash covers.
+    ///
+    /// A stripped proof counts with the length it had: the frame keeps it, so the
+    /// charge is the same with the proof in the transaction or out of it.
     fn elided_proof_len(&self) -> u64 {
         self.frames
             .iter()
-            .filter(|f| f.is_proof())
-            .fold(0u64, |acc, f| {
-                acc.saturating_add(f.proof_bytes().len() as u64)
+            .enumerate()
+            .filter(|(_, f)| f.is_proof())
+            .fold(0u64, |acc, (index, f)| {
+                acc.saturating_add(
+                    self.stripped_proof_len(index)
+                        .unwrap_or(f.proof_bytes().len() as u64),
+                )
             })
     }
 
@@ -2877,6 +3128,9 @@ impl FrameTransaction {
                 "Frame count must be between 1 and {FRAME_TX_MAX_FRAMES}"
             ));
         }
+        // EIP-8141 §Aggregation: a proof left its frame only if the protocol may
+        // strip it.
+        self.validate_stripped_proofs()?;
         // Per EIP-8141, every versioned hash must carry the EIP-4844 KZG version
         // byte. Blob gas is paid from the `max_fee` budget, so there is no blob fee
         // field to constrain.
@@ -3457,12 +3711,21 @@ pub enum FrameValidationError {
 
 impl RLPEncode for FrameTransaction {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        let encoded_frames: Vec<EncodedFrame> = self
+            .frames
+            .iter()
+            .enumerate()
+            .map(|(index, frame)| EncodedFrame {
+                frame,
+                stripped_proof_len: self.stripped_proof_len(index),
+            })
+            .collect();
         Encoder::new(buf)
             .encode_field(&self.chain_id)
             .encode_field(&self.nonce_keys)
             .encode_field(&self.nonce_seq)
             .encode_field(&self.sender)
-            .encode_field(&self.frames)
+            .encode_field(&encoded_frames)
             .encode_field(&(self.max_fee, self.max_priority_fee_per_gas))
             .encode_field(&self.blob_versioned_hashes)
             .finish();
@@ -3480,7 +3743,18 @@ impl RLPDecode for FrameTransaction {
         // decoding like any other frame-transaction field too wide for its type.
         let (nonce_seq, decoder) = decoder.decode_field("nonce_seq")?;
         let (sender, decoder) = decoder.decode_field("sender")?;
-        let (frames, decoder) = decoder.decode_field("frames")?;
+        let (decoded_frames, decoder): (Vec<DecodedFrame>, _) = decoder.decode_field("frames")?;
+        let mut stripped_proofs = BTreeMap::new();
+        let frames = decoded_frames
+            .into_iter()
+            .enumerate()
+            .map(|(index, decoded)| {
+                if let Some(proof_len) = decoded.stripped_proof_len {
+                    stripped_proofs.insert(index, proof_len);
+                }
+                decoded.frame
+            })
+            .collect();
         // Decode the nested `fees` list, `[max_fee, max_priority_fee_per_gas]`,
         // field by field rather than as one tuple. A fee wider than 256 bits is
         // rejected here, during decoding, and the field name is the only thing that
@@ -3499,6 +3773,7 @@ impl RLPDecode for FrameTransaction {
             nonce_seq,
             sender,
             frames,
+            stripped_proofs,
             max_fee,
             max_priority_fee_per_gas,
             blob_versioned_hashes,
@@ -3864,6 +4139,15 @@ mod serde_impl {
         pub value: U256,
         #[serde(with = "crate::serde_utils::bytes")]
         pub data: Bytes,
+        /// EIP-8141 §Aggregation: the byte length of the proof a stripped proof
+        /// frame had. The `data` of such a frame is its claim alone. Absent for
+        /// every other frame.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            with = "crate::serde_utils::u64::hex_str_opt"
+        )]
+        pub proof_length: Option<u64>,
     }
 
     fn serialize_u256_hex<S: serde::Serializer>(value: &U256, s: S) -> Result<S::Ok, S::Error> {
@@ -3880,6 +4164,7 @@ mod serde_impl {
                 state_gas: value.state_gas_limit,
                 value: value.value,
                 data: value.data.clone(),
+                proof_length: None,
             }
         }
     }
@@ -4182,7 +4467,15 @@ mod serde_impl {
             // carries it as `from`, as for every other transaction type.
             s.serialize_field(
                 "frames",
-                &self.frames.iter().map(FrameEntry::from).collect::<Vec<_>>(),
+                &self
+                    .frames
+                    .iter()
+                    .enumerate()
+                    .map(|(index, frame)| FrameEntry {
+                        proof_length: self.stripped_proof_len(index),
+                        ..FrameEntry::from(frame)
+                    })
+                    .collect::<Vec<_>>(),
             )?;
             // EIP-8141 `fees`: one `max_fee` budget for all execution, state and
             // blob gas, and the priority fee per gas.
@@ -5968,6 +6261,7 @@ mod tests {
             blob_versioned_hashes: vec![],
             inner_hash: OnceCell::new(),
             cached_canonical: OnceCell::new(),
+            stripped_proofs: Default::default(),
         }
     }
 
@@ -6250,6 +6544,7 @@ mod tests {
             blob_versioned_hashes: vec![],
             inner_hash: OnceCell::new(),
             cached_canonical: OnceCell::new(),
+            stripped_proofs: Default::default(),
         }
     }
 
@@ -6333,6 +6628,7 @@ mod tests {
             blob_versioned_hashes: vec![],
             inner_hash: OnceCell::new(),
             cached_canonical: OnceCell::new(),
+            stripped_proofs: Default::default(),
         }
     }
 
@@ -6442,6 +6738,7 @@ mod tests {
             blob_versioned_hashes: vec![],
             inner_hash: OnceCell::new(),
             cached_canonical: OnceCell::new(),
+            stripped_proofs: Default::default(),
         };
         let err = verify_tx.validate_static_constraints().unwrap_err();
         assert!(
@@ -7029,6 +7326,7 @@ mod tests {
             blob_versioned_hashes: vec![],
             inner_hash: OnceCell::new(),
             cached_canonical: OnceCell::new(),
+            stripped_proofs: Default::default(),
         }
     }
 

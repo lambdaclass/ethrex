@@ -49,4 +49,18 @@ pub enum InvalidBlockError {
     UnsupportedTransactionType(u8),
     #[error("Transaction has invalid chain id: have {have}, want {want}")]
     InvalidTransactionChainId { have: u64, want: u64 },
+    #[error("Block carries an aggregate proof before its activation")]
+    AggregateProofPresent,
+    #[error("Block carries no aggregate proof")]
+    AggregateProofNotPresent,
+    #[error("Transaction {0} has a stripped proof frame before its activation")]
+    StrippedProofFramePresent(usize),
+    #[error("Transaction {0} has an invalid stripped proof frame: {1}")]
+    InvalidStrippedProofFrame(usize, String),
+    #[error("Block without stripped proof frames carries an aggregate proof of {0} bytes")]
+    AggregateProofNotEmpty(usize),
+    #[error("Aggregate proof does not hold for the block's {0} stripped proof frames")]
+    InvalidAggregateProof(usize),
+    #[error("Block relies on an aggregate proof, which stateless execution does not verify")]
+    AggregateProofNotVerified,
 }

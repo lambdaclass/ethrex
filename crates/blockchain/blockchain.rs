@@ -42,6 +42,7 @@
 //! blockchain.add_transaction_to_mempool(tx).await?;
 //! ```
 
+pub mod aggregate_proof;
 pub mod constants;
 pub mod error;
 pub mod fork_choice;
@@ -59,6 +60,7 @@ use ::tracing::{error, info, instrument, warn};
 // unused in any configuration that compiles that path out.
 #[cfg(feature = "rayon")]
 use ::tracing::debug;
+use aggregate_proof::validate_aggregate_proof;
 use constants::{AMSTERDAM_MAX_INITCODE_SIZE, MAX_INITCODE_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
@@ -780,6 +782,7 @@ impl Blockchain {
         // Validate the block pre-execution
         validate_block_pre_execution(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
         self.validate_l1_transaction_types(block)?;
+        validate_aggregate_proof(block, &chain_config)?;
 
         let parent_timestamp = parent_header.timestamp;
         let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header)?;
@@ -870,6 +873,11 @@ impl Blockchain {
         // Validate the block pre-execution
         validate_block_pre_execution(block, parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
         self.validate_l1_transaction_types(block)?;
+        // EIP-8141 §Aggregation: the claims of the block's stripped proof frames
+        // hold only if its aggregate proof covers them. The proof is checked here
+        // on every path, also for a block assembled from an engine payload, whose
+        // commitment to the proof is derived and so says nothing about the proof.
+        validate_aggregate_proof(block, &chain_config)?;
         match body_check {
             BodyCheck::Verify => validate_block_body(&block.header, &block.body, &NativeCrypto)
                 .map_err(|e| ChainError::InvalidBlock(InvalidBlockError::InvalidBody(e)))?,
@@ -3532,6 +3540,18 @@ impl Blockchain {
     pub fn remove_block_transactions_from_pool(&self, block: &Block) -> Result<(), StoreError> {
         for tx in &block.body.transactions {
             self.mempool.remove_transaction(&tx.hash(&NativeCrypto))?;
+            // EIP-8141 §Aggregation: a transaction the block stripped a proof from
+            // has another hash in the pool, where it still carries the proof.
+            // Stripping does not change the signature hash, so the pooled
+            // transaction is found by it.
+            if let Transaction::FrameTransaction(frame_tx) = tx
+                && frame_tx.has_stripped_proofs()
+            {
+                self.mempool.remove_frame_transaction_by_sig_hash(
+                    frame_tx.sender,
+                    frame_tx.compute_sig_hash(),
+                )?;
+            }
         }
         Ok(())
     }
@@ -3873,6 +3893,13 @@ impl Blockchain {
         let mut frame_reservation: Option<FramePaymasterReservation> = None;
 
         if let Transaction::FrameTransaction(frame_tx) = tx {
+            // EIP-8141 §Aggregation: a proof leaves its frame only when a block
+            // includes the transaction, and the block's aggregate proof then
+            // stands for it. A pending transaction carries every proof.
+            if frame_tx.has_stripped_proofs() {
+                return Err(MempoolError::FrameTxStrippedProof);
+            }
+
             // EIP-8141 static constraints at admission (mirrors the VM check)
             // so malformed frame txs never occupy pool slots.
             frame_tx

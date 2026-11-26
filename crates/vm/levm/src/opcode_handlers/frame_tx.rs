@@ -467,8 +467,9 @@ impl OpcodeHandler for OpFrameParamHandler {
                 U256::from(frame.flags)
             }
             0x04 => {
-                // len(data)
-                U256::from(frame.data.len())
+                // len(data). A stripped proof frame keeps the length it had with
+                // its proof (EIP-8141 §Aggregation).
+                U256::from(ctx.tx.frame_data_len(idx))
             }
             0x05 => {
                 // status -- exceptional halt if current/future frame.

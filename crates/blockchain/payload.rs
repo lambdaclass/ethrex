@@ -19,8 +19,8 @@ use ethrex_common::{
         ChainConfig, Fork, MempoolTransaction, Receipt, Transaction, TxType, Withdrawal,
         block_access_list::BlockAccessList,
         bloom_from_logs, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
-        calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
-        compute_withdrawals_root,
+        calculate_base_fee_per_gas, compute_aggregate_proof_hash, compute_receipts_root,
+        compute_transactions_root, compute_withdrawals_root,
         requests::{EncodedRequests, compute_requests_hash},
     },
 };
@@ -42,6 +42,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     Blockchain, BlockchainType, MAX_PAYLOADS,
+    aggregate_proof::{prepare_prover, strip_and_aggregate},
     constants::{GAS_LIMIT_BOUND_DIVISOR, MIN_GAS_LIMIT, TX_GAS_COST},
     error::{ChainError, InvalidBlockError},
     mempool::PendingTxFilter,
@@ -193,6 +194,12 @@ pub fn create_payload(
             .is_prague_activated(args.timestamp)
             .then_some(*DEFAULT_REQUESTS_HASH),
         slot_number: args.slot_number,
+        // EIP-8141 §Aggregation: from LStar, the commitment to the block's
+        // aggregate proof. The proof is empty until the payload is handed out,
+        // when the proofs of its transactions are stripped and aggregated.
+        aggregate_proof_hash: chain_config
+            .is_lstar_activated(args.timestamp)
+            .then(|| compute_aggregate_proof_hash(&[], &NativeCrypto)),
         ..Default::default()
     };
 
@@ -208,6 +215,9 @@ pub fn create_payload(
         withdrawals: chain_config
             .is_shanghai_activated(args.timestamp)
             .then(|| args.withdrawals.clone().unwrap_or_default()),
+        aggregate_proof: chain_config
+            .is_lstar_activated(args.timestamp)
+            .then(Bytes::new),
     };
 
     // Delay applying withdrawals until the payload is requested and built
@@ -318,7 +328,8 @@ impl PayloadBuildContext {
         } else {
             0
         };
-        let payload_size = payload.length() as u64;
+        // The aggregate proof is not part of the RLP block whose size is limited.
+        let payload_size = payload.length_without_aggregate_proof() as u64;
         Ok(PayloadBuildContext {
             remaining_gas: payload.header.gas_limit,
             cumulative_gas_spent: 0,
@@ -420,6 +431,56 @@ impl From<PayloadBuildContext> for PayloadBuildResult {
     }
 }
 
+impl PayloadBuildResult {
+    /// EIP-8141 §Aggregation: strips every proof the protocol may strip from the
+    /// block's transactions, aggregates the stripped signatures into the block's
+    /// aggregate proof, and commits to both in the header. Nothing changes before
+    /// LStar, for a block with no proof to strip, or for a block that already has
+    /// its aggregate proof.
+    ///
+    /// This runs after the block was executed, on the transactions as the pool
+    /// holds them, with every proof verified by its frame. Stripping a proof
+    /// changes the encoding of its transaction, so the transactions root, the
+    /// header and the block hash change here. It changes nothing a transaction
+    /// does, so the state root, the receipts, the gas used and the block access
+    /// list stay those of the execution.
+    ///
+    /// Proving takes from a tenth of a second to several seconds, so a payload is
+    /// proven once, when no transaction will be added to it any more, and not
+    /// each time it is rebuilt. Until then it is a valid block whose transactions
+    /// carry their proofs and whose aggregate proof is empty. A proof that cannot
+    /// be made fails the build.
+    pub fn with_aggregate_proof(mut self) -> Result<Self, ChainError> {
+        if self.payload.body.aggregate_proof.as_deref() != Some(&[]) {
+            return Ok(self);
+        }
+        let since = Instant::now();
+        let (transactions, proof) =
+            strip_and_aggregate(&self.payload.body.transactions).map_err(|error| {
+                ChainError::Custom(format!(
+                    "Failed to aggregate the proofs of the payload: {error}"
+                ))
+            })?;
+        if proof.is_empty() {
+            return Ok(self);
+        }
+        debug!(
+            "Aggregated the stripped proofs of the payload in {} ms, proof of {} bytes",
+            since.elapsed().as_millis(),
+            proof.len()
+        );
+        self.payload.header.transactions_root =
+            compute_transactions_root(&transactions, &NativeCrypto);
+        self.payload.header.aggregate_proof_hash =
+            Some(compute_aggregate_proof_hash(&proof, &NativeCrypto));
+        // The header changed: drop a block hash computed before.
+        let _ = self.payload.header.hash.take();
+        self.payload.body.transactions = transactions;
+        self.payload.body.aggregate_proof = Some(proof);
+        Ok(self)
+    }
+}
+
 impl Blockchain {
     /// Attempts to fetch a payload given it's id. If the payload is still being built, it will be finished.
     /// Fails if there is no payload or active payload build task for the given id.
@@ -451,6 +512,13 @@ impl Blockchain {
         // provider, so it holds complete blob data for every blob tx it may include.
         // Inert unless blob sampling is enabled.
         self.mempool.latch_eager_provider();
+        // EIP-8141 §Aggregation: the payload of an LStar block gets its aggregate
+        // proof when it is handed out. The prover is prepared now, off this
+        // thread, so that the proof does not wait for it. It is done once in the
+        // process.
+        if payload.body.aggregate_proof.is_some() {
+            tokio::task::spawn_blocking(prepare_prover);
+        }
         let self_clone = self.clone();
         let cancel_token = CancellationToken::new();
         let cancel_token_clone = cancel_token.clone();
@@ -543,6 +611,17 @@ impl Blockchain {
             }
         }
 
+        // EIP-8141 §Aggregation: the proofs are stripped and aggregated here, once,
+        // for the payload the loop ends with, and not for each rebuild. It runs on
+        // a blocking thread: proving is CPU-bound and takes up to several seconds.
+        if res.payload.body.aggregate_proof.is_some() {
+            res = tokio::task::spawn_blocking(move || res.with_aggregate_proof())
+                .await
+                .map_err(|_| {
+                    ChainError::Custom("Failed to join the aggregate proof task".to_string())
+                })??;
+        }
+
         self.log_glamsterdam_banner_if_first_amsterdam_block(&res.payload.header);
 
         Ok(res)
@@ -607,11 +686,15 @@ impl Blockchain {
     /// Completes the payload building process, return the block value.
     /// Transactions are pulled from the mempool.
     pub fn build_payload(&self, payload: Block) -> Result<PayloadBuildResult, ChainError> {
-        self.build_payload_inner(payload, None, None)
+        self.build_payload_inner(payload, None, None)?
+            .with_aggregate_proof()
     }
 
     /// Same as `build_payload`, but once `stop` is cancelled it stops adding
-    /// transactions and seals the block with the ones it already has.
+    /// transactions and seals the block with the ones it already has. The
+    /// transactions keep their proofs (EIP-8141 §Aggregation):
+    /// `build_payload_loop` calls this for every rebuild, and strips and
+    /// aggregates the proofs of the payload it ends with.
     fn build_payload_until(
         &self,
         payload: Block,
@@ -629,7 +712,8 @@ impl Blockchain {
         payload: Block,
         transactions: Vec<Transaction>,
     ) -> Result<PayloadBuildResult, ChainError> {
-        self.build_payload_inner(payload, Some(transactions), None)
+        self.build_payload_inner(payload, Some(transactions), None)?
+            .with_aggregate_proof()
     }
 
     /// Builds a payload for the t8n tool from an explicit, ordered list of
@@ -1142,6 +1226,19 @@ impl Blockchain {
         context: &mut PayloadBuildContext,
     ) -> Result<(), ChainError> {
         let tx_hash = head.tx.hash(&NativeCrypto);
+
+        // EIP-8141 §Aggregation: a block is built from transactions that carry
+        // their proofs, which executing them verifies. One that reaches the
+        // builder already stripped has no proof to verify or to aggregate.
+        if let Transaction::FrameTransaction(frame_tx) = &*head.tx
+            && frame_tx.has_stripped_proofs()
+        {
+            return Err(ChainError::InvalidBlock(
+                InvalidBlockError::InvalidTransaction(
+                    "a stripped proof frame is valid only in a block".to_string(),
+                ),
+            ));
+        }
 
         // EIP-8037 (Amsterdam+, PR #2703): per-tx 2D inclusion check against
         // running block totals. Run BEFORE we touch the BAL recorder so a

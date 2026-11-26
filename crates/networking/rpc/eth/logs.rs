@@ -596,6 +596,7 @@ mod tests {
                 )],
                 ommers: Default::default(),
                 withdrawals: Default::default(),
+                aggregate_proof: None,
             };
             Block::new(header, body)
         };

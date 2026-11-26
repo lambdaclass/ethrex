@@ -56,6 +56,7 @@ async fn rejects_block_with_mismatched_logs_bloom() {
         transactions: Vec::new(),
         ommers: Vec::new(),
         withdrawals: None,
+        aggregate_proof: None,
     };
     let receipts: [Receipt; 0] = [];
 

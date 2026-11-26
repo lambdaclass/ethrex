@@ -1885,6 +1885,17 @@ impl<'a> VM<'a> {
             _ => unreachable!(),
         };
 
+        // EIP-8141 §Aggregation: a proof leaves its frame only in a block from
+        // LStar, whose aggregate proof stands for it. Which proofs may leave is a
+        // static rule, checked with the others below.
+        if frame_tx.has_stripped_proofs() && self.env.config.fork < Fork::LStar {
+            return Err(VMError::TxValidation(
+                crate::errors::TxValidationError::InvalidFrameTransactionFormat(
+                    "a stripped proof frame is valid only in a block from LStar".to_string(),
+                ),
+            ));
+        }
+
         // Simplified validation (skip balance deduction, nonce increment, value transfer, EOA check)
         // Keep: gas limit checks, fee validation, nonce mismatch check.
         // The EOA-check skip is required by EIP-8141 §Transaction origination:
@@ -2097,7 +2108,8 @@ impl<'a> VM<'a> {
                 ))?;
                 ctx.current_frame_index = frame_idx;
                 ctx.approve_called_in_current_frame = false;
-                if !self.proof_frame_claim_holds(frame, sender, sig_hash)? {
+                let stripped = frame_tx.stripped_proof_len(frame_idx).is_some();
+                if !self.proof_frame_claim_holds(frame, stripped, sender, sig_hash)? {
                     // Same contract as every other invalid-transaction exit: the
                     // state is left as it was before the transaction.
                     tx_level_backup.absorb(&self.current_call_frame.call_frame_backup);
@@ -3257,7 +3269,8 @@ impl<'a> VM<'a> {
                 // Claims a precompile verifies were settled before any state was read.
                 let settled = self.validation_observer.precompile_claims_verified
                     && is_stateless_verifier(&frame.target.unwrap_or(sender), self.env.config.fork);
-                if !settled && !self.proof_frame_claim_holds(frame, sender, sig_hash)? {
+                let stripped = frame_tx.stripped_proof_len(frame_idx).is_some();
+                if !settled && !self.proof_frame_claim_holds(frame, stripped, sender, sig_hash)? {
                     return Err(VMError::TxValidation(
                         crate::errors::TxValidationError::InvalidFrameProof,
                     ));
@@ -3531,9 +3544,16 @@ impl<'a> VM<'a> {
     /// transaction touched before, and the frame warms nothing for later frames.
     /// The pure context changes no state, so nothing is left to roll back. The
     /// caller charges the frame its whole execution limit either way.
+    ///
+    /// A `stripped` frame carries no proof, so its verifier is not called
+    /// (EIP-8141 §Aggregation): its claim holds because the aggregate proof of the
+    /// block covers it, which is checked before the block executes. Everything
+    /// else is as for the proof that left, so that stripping a proof does not
+    /// change how its transaction executes.
     pub(crate) fn proof_frame_claim_holds(
         &mut self,
         frame: &Frame,
+        stripped: bool,
         sender: Address,
         sig_hash: H256,
     ) -> Result<bool, VMError> {
@@ -3553,6 +3573,13 @@ impl<'a> VM<'a> {
         // Entering a frame reads its target's account, which EIP-7928 records.
         if let Some(recorder) = self.db.bal_recorder.as_mut() {
             recorder.record_touched_address(verifier);
+        }
+
+        if stripped {
+            // The frame's limit has to cover its verifier's cost, as it did for
+            // the proof to verify inside the transaction. Static rules make
+            // `LEANSPHINCS_VERIFIER` the verifier of every stripped frame.
+            return Ok(gas_limit >= ethrex_common::types::LEANSPHINCS_VERIFIER_GAS);
         }
 
         let calldata = proof_frame_calldata(frame, sig_hash);

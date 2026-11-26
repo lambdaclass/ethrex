@@ -7656,6 +7656,7 @@ mod backfill_write_tests {
             transactions: vec![tx.clone()],
             ommers: vec![],
             withdrawals: Some(vec![]),
+            aggregate_proof: None,
         };
         // In production the header is already stored and canonical from snap
         // header backfill; mirror the canonical mapping so the tx-index lookup
@@ -7718,6 +7719,7 @@ mod backfill_write_tests {
             transactions: vec![tx.clone()],
             ommers: vec![],
             withdrawals: Some(vec![]),
+            aggregate_proof: None,
         };
         store.add_block_headers(vec![header.clone()]).await.unwrap();
         store
@@ -7773,6 +7775,7 @@ mod backfill_write_tests {
             transactions: vec![tx],
             ommers: vec![],
             withdrawals: Some(vec![]),
+            aggregate_proof: None,
         };
         // Post-snap state: header stored and canonical, but no body/receipts.
         store.add_block_headers(vec![header.clone()]).await.unwrap();
@@ -7847,6 +7850,7 @@ mod backfill_write_tests {
                         transactions: vec![],
                         ommers: vec![],
                         withdrawals: Some(vec![]),
+                        aggregate_proof: None,
                     },
                     receipts: vec![],
                     index_transactions: false,

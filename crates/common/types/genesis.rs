@@ -870,6 +870,10 @@ impl Genesis {
             transactions: vec![],
             ommers: vec![],
             withdrawals: Some(vec![]),
+            // A genesis block has no aggregate proof, even on a chain that starts
+            // in LStar: its header has no `burned_fees` either, and the first
+            // block after it is the first one with both.
+            aggregate_proof: None,
         }
     }
 
@@ -1651,5 +1655,32 @@ mod tests {
         };
         config.blob_schedule.amsterdam = Some(pinned);
         assert_eq!(config.get_fork_blob_schedule(100), Some(pinned));
+    }
+
+    #[test]
+    fn genesis_that_starts_in_lstar_has_no_aggregate_proof() {
+        let genesis = Genesis {
+            config: ChainConfig {
+                london_block: Some(0),
+                shanghai_time: Some(0),
+                cancun_time: Some(0),
+                prague_time: Some(0),
+                osaka_time: Some(0),
+                amsterdam_time: Some(0),
+                hegota_time: Some(0),
+                lstar_time: Some(0),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let block = genesis.get_block();
+        assert_eq!(genesis.config.fork(block.header.timestamp), Fork::LStar);
+        assert_eq!(block.body.aggregate_proof, None);
+        assert_eq!(block.header.aggregate_proof_hash, None);
+        assert_eq!(block.header.burned_fees, None);
+        // The header reads back as it was written.
+        use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+        let decoded = BlockHeader::decode(&block.header.encode_to_vec()).expect("it decodes");
+        assert_eq!(decoded, block.header);
     }
 }

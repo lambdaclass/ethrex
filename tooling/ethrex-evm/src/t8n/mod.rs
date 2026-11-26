@@ -233,6 +233,7 @@ pub fn run(args: T8nArgs) -> Result<(), T8nError> {
         transactions: Vec::new(),
         ommers: Vec::new(),
         withdrawals,
+        aggregate_proof: None,
     };
 
     let blockchain = Blockchain::new(

@@ -8,8 +8,8 @@ use ethrex_common::{
     serde_utils,
     types::{
         BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, Transaction, Withdrawal,
-        block_access_list::BlockAccessList, compute_transactions_root, compute_withdrawals_root,
-        requests::EncodedRequests,
+        block_access_list::BlockAccessList, compute_aggregate_proof_hash,
+        compute_transactions_root, compute_withdrawals_root, requests::EncodedRequests,
     },
 };
 
@@ -75,6 +75,16 @@ pub struct ExecutionPayload {
         default
     )]
     pub burned_fees: Option<u64>,
+    // aggregateProof (EIP-8141 §Aggregation, LStar+): the proof the block carries
+    // for the claims of its stripped proof frames; empty when it has none. The
+    // header commits to it, so it must survive the getPayload → newPayload
+    // round-trip. `None` for pre-LStar payloads (skipped in serialization).
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        with = "serde_utils::bytes::opt",
+        default
+    )]
+    pub aggregate_proof: Option<Bytes>,
 }
 
 #[derive(Clone, Debug)]
@@ -131,6 +141,7 @@ impl ExecutionPayload {
                 .collect::<Result<Vec<_>, RLPDecodeError>>()?,
             ommers: vec![],
             withdrawals: self.withdrawals,
+            aggregate_proof: self.aggregate_proof,
         };
         let header = BlockHeader {
             parent_hash: self.parent_hash,
@@ -164,6 +175,13 @@ impl ExecutionPayload {
             slot_number: self.slot_number,
             block_access_list_hash,
             burned_fees: self.burned_fees,
+            // The payload carries the aggregate proof alone. The header's
+            // commitment to it is computed here, so a payload whose block hash
+            // was made over another proof fails the block hash check.
+            aggregate_proof_hash: body
+                .aggregate_proof
+                .as_ref()
+                .map(|proof| compute_aggregate_proof_hash(proof, &ethrex_crypto::NativeCrypto)),
             ..Default::default()
         };
 
@@ -197,6 +215,7 @@ impl ExecutionPayload {
             slot_number: block.header.slot_number,
             block_access_list,
             burned_fees: block.header.burned_fees,
+            aggregate_proof: block.body.aggregate_proof,
         }
     }
 
@@ -225,6 +244,7 @@ impl ExecutionPayload {
             slot_number: self.slot_number,
             block_access_list: None,
             burned_fees: self.burned_fees,
+            aggregate_proof: self.aggregate_proof.clone(),
         }
     }
 }
@@ -361,6 +381,13 @@ mod optional_hex_bytes {
 pub struct ExecutionPayloadBody {
     pub transactions: Vec<EncodedTransaction>,
     pub withdrawals: Option<Vec<Withdrawal>>,
+    /// The block's aggregate proof (EIP-8141 §Aggregation), as in the payload.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        with = "serde_utils::bytes::opt",
+        default
+    )]
+    pub aggregate_proof: Option<Bytes>,
 }
 
 impl From<BlockBody> for ExecutionPayloadBody {
@@ -372,6 +399,7 @@ impl From<BlockBody> for ExecutionPayloadBody {
                 .map(EncodedTransaction::encode)
                 .collect(),
             withdrawals: body.withdrawals,
+            aggregate_proof: body.aggregate_proof,
         }
     }
 }
@@ -388,6 +416,13 @@ pub struct ExecutionPayloadBodyV2 {
         default
     )]
     pub block_access_list: Option<BlockAccessList>,
+    /// The block's aggregate proof (EIP-8141 §Aggregation), as in the payload.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        with = "serde_utils::bytes::opt",
+        default
+    )]
+    pub aggregate_proof: Option<Bytes>,
 }
 
 impl ExecutionPayloadBodyV2 {
@@ -400,6 +435,7 @@ impl ExecutionPayloadBodyV2 {
                 .collect(),
             withdrawals: body.withdrawals,
             block_access_list: bal,
+            aggregate_proof: body.aggregate_proof,
         }
     }
 }
@@ -451,5 +487,75 @@ mod test {
         let json = serde_json::to_value(status).unwrap();
 
         assert_eq!(json["witness"], "0x1234");
+    }
+
+    // From LStar the payload carries the block's aggregate proof (EIP-8141
+    // §Aggregation).
+
+    fn payload_with_aggregate_proof(aggregate_proof: Option<Bytes>) -> ExecutionPayload {
+        let mut payload = ExecutionPayload::from_block(
+            Block::new(BlockHeader::default(), BlockBody::empty()),
+            None,
+        );
+        payload.aggregate_proof = aggregate_proof;
+        payload
+    }
+
+    #[test]
+    fn aggregate_proof_travels_as_a_hex_string() {
+        let proof = Bytes::from(vec![0x01, 0x02, 0xff]);
+        let json = serde_json::to_value(payload_with_aggregate_proof(Some(proof.clone()))).unwrap();
+        assert_eq!(json["aggregateProof"], serde_json::json!("0x0102ff"));
+        let parsed: ExecutionPayload = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed.aggregate_proof, Some(proof));
+
+        // The empty proof is sent as the empty byte string; no proof is no key.
+        let empty = serde_json::to_value(payload_with_aggregate_proof(Some(Bytes::new()))).unwrap();
+        assert_eq!(empty["aggregateProof"], serde_json::json!("0x"));
+        let parsed: ExecutionPayload = serde_json::from_value(empty).unwrap();
+        assert_eq!(parsed.aggregate_proof, Some(Bytes::new()));
+        let absent = serde_json::to_value(payload_with_aggregate_proof(None)).unwrap();
+        assert!(absent.get("aggregateProof").is_none());
+        let parsed: ExecutionPayload = serde_json::from_value(absent).unwrap();
+        assert_eq!(parsed.aggregate_proof, None);
+    }
+
+    #[test]
+    fn a_block_built_from_a_payload_commits_to_the_payloads_aggregate_proof() {
+        for proof in [Bytes::from(vec![0xEE; 300]), Bytes::new()] {
+            let block = payload_with_aggregate_proof(Some(proof.clone()))
+                .into_block(None, None, None)
+                .unwrap();
+            assert_eq!(block.body.aggregate_proof, Some(proof.clone()));
+            // The payload carries the proof alone: the header's commitment to it
+            // is derived.
+            assert_eq!(
+                block.header.aggregate_proof_hash,
+                Some(compute_aggregate_proof_hash(
+                    &proof,
+                    &ethrex_crypto::NativeCrypto
+                ))
+            );
+
+            // The block gives back the same payload field, and its body
+            // responses too.
+            let round_trip = ExecutionPayload::from_block(block.clone(), None);
+            assert_eq!(round_trip.aggregate_proof, Some(proof.clone()));
+            assert_eq!(
+                round_trip.clone_without_block_access_list().aggregate_proof,
+                Some(proof.clone())
+            );
+            let body: ExecutionPayloadBody = block.body.clone().into();
+            assert_eq!(body.aggregate_proof, Some(proof.clone()));
+            let body = ExecutionPayloadBodyV2::from_body_with_bal(block.body, None);
+            assert_eq!(body.aggregate_proof, Some(proof));
+        }
+
+        // Without the field the block has neither the proof nor the commitment.
+        let block = payload_with_aggregate_proof(None)
+            .into_block(None, None, None)
+            .unwrap();
+        assert_eq!(block.body.aggregate_proof, None);
+        assert_eq!(block.header.aggregate_proof_hash, None);
     }
 }
