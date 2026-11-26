@@ -1079,7 +1079,7 @@ pub fn amsterdam_chain_config(chain_id: u64) -> ChainConfig {
         // filled against. BPO3-5 have no default `blob_schedule` entry, and a BPO
         // time set without one is rejected as invalid genesis config
         // (`genesis.rs`), so activating them would be both wrong and unresolvable.
-        // `hegota`/`lstar` stay unset: they are later than Amsterdam.
+        // `hegota`/`istar`/`lstar` stay unset: they are later than Amsterdam.
         bpo1_time: Some(0),
         bpo2_time: Some(0),
         amsterdam_time: Some(0),
@@ -1125,6 +1125,7 @@ mod amsterdam_chain_config_tests {
     fn leaves_post_amsterdam_forks_unscheduled() {
         let cfg = amsterdam_chain_config(1);
         assert_eq!(cfg.hegota_time, None);
+        assert_eq!(cfg.istar_time, None);
         assert_eq!(cfg.lstar_time, None);
     }
 
