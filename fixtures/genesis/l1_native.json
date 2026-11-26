@@ -44,6 +44,7 @@
     "mergeNetsplitBlock": 0,
     "amsterdamTime": 0,
     "hegotaTime": 0,
+    "istarTime": 0,
     "lstarTime": 0
   },
   "nonce": "0x1234",
