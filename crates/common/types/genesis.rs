@@ -273,6 +273,7 @@ pub struct ChainConfig {
         alias = "bogota_time"
     )]
     pub hegota_time: Option<u64>,
+    pub istar_time: Option<u64>,
     pub lstar_time: Option<u64>,
 
     /// Amount of total difficulty reached by the network that triggers the consensus upgrade.
@@ -342,7 +343,8 @@ pub enum Fork {
     BPO5 = 24,
     Amsterdam = 25,
     Hegota = 26,
-    LStar = 27,
+    IStar = 27,
+    LStar = 28,
 }
 
 impl Fork {
@@ -390,6 +392,7 @@ impl From<Fork> for &str {
             Fork::BPO5 => "BPO5",
             Fork::Amsterdam => "Amsterdam",
             Fork::Hegota => "Hegota",
+            Fork::IStar => "IStar",
             Fork::LStar => "LStar",
         }
     }
@@ -404,6 +407,10 @@ impl ChainConfig {
     /// first Hegota block. A chain that starts in Hegota has no such block.
     pub fn is_hegota_fork_block(&self, parent_timestamp: u64, block_timestamp: u64) -> bool {
         self.is_hegota_activated(block_timestamp) && !self.is_hegota_activated(parent_timestamp)
+    }
+
+    pub fn is_istar_activated(&self, block_timestamp: u64) -> bool {
+        self.istar_time.is_some_and(|time| time <= block_timestamp)
     }
 
     pub fn is_lstar_activated(&self, block_timestamp: u64) -> bool {
@@ -466,7 +473,7 @@ impl ChainConfig {
 
     /// The post-merge forks in activation order, paired with their configured
     /// activation timestamps.
-    fn post_merge_schedule(&self) -> [(&'static str, Option<u64>); 7] {
+    fn post_merge_schedule(&self) -> [(&'static str, Option<u64>); 8] {
         [
             ("Shanghai", self.shanghai_time),
             ("Cancun", self.cancun_time),
@@ -475,6 +482,7 @@ impl ChainConfig {
             ("Osaka", self.osaka_time),
             ("Amsterdam", self.amsterdam_time),
             ("Hegota", self.hegota_time),
+            ("IStar", self.istar_time),
         ]
     }
 
@@ -542,6 +550,8 @@ impl ChainConfig {
     pub fn get_fork(&self, block_timestamp: u64) -> Fork {
         if self.is_lstar_activated(block_timestamp) {
             Fork::LStar
+        } else if self.is_istar_activated(block_timestamp) {
+            Fork::IStar
         } else if self.is_hegota_activated(block_timestamp) {
             Fork::Hegota
         } else if self.is_amsterdam_activated(block_timestamp) {
@@ -571,10 +581,11 @@ impl ChainConfig {
 
     pub fn get_fork_blob_schedule(&self, block_timestamp: u64) -> Option<ForkBlobSchedule> {
         // EIP-7892: from Prague onward the blob schedule only changes at BPO forks.
-        // Named forks (Osaka, Amsterdam, Hegotá, LStar) carry no blob params of their own
+        // Named forks (Osaka, Amsterdam, Hegotá, IStar, LStar) carry no blob params of their own
         // and inherit the highest activated BPO entry, so resolution falls through the BPO
         // chain. A genesis that pins an entry for the named fork anyway takes precedence.
         if (self.is_lstar_activated(block_timestamp)
+            || self.is_istar_activated(block_timestamp)
             || self.is_hegota_activated(block_timestamp)
             || self.is_amsterdam_activated(block_timestamp))
             && let Some(schedule) = self.blob_schedule.amsterdam
@@ -601,6 +612,7 @@ impl ChainConfig {
         } else if self.is_bpo1_activated(block_timestamp) {
             Some(self.blob_schedule.bpo1)
         } else if self.is_lstar_activated(block_timestamp)
+            || self.is_istar_activated(block_timestamp)
             || self.is_hegota_activated(block_timestamp)
             || self.is_amsterdam_activated(block_timestamp)
         {
@@ -647,6 +659,7 @@ impl ChainConfig {
             Fork::BPO5,
             Fork::Amsterdam,
             Fork::Hegota,
+            Fork::IStar,
             Fork::LStar,
         ]
         .into_iter()
@@ -663,6 +676,8 @@ impl ChainConfig {
     pub fn get_last_scheduled_fork(&self) -> Fork {
         if self.lstar_time.is_some() {
             Fork::LStar
+        } else if self.istar_time.is_some() {
+            Fork::IStar
         } else if self.hegota_time.is_some() {
             Fork::Hegota
         } else if self.amsterdam_time.is_some() {
@@ -700,6 +715,7 @@ impl ChainConfig {
             Fork::BPO5 => self.bpo5_time,
             Fork::Amsterdam => self.amsterdam_time,
             Fork::Hegota => self.hegota_time,
+            Fork::IStar => self.istar_time,
             Fork::LStar => self.lstar_time,
             Fork::Homestead => self.homestead_block,
             Fork::DaoFork => self.dao_fork_block,
@@ -773,6 +789,7 @@ impl ChainConfig {
             self.bpo5_time,
             self.amsterdam_time,
             self.hegota_time,
+            self.istar_time,
             self.verkle_time,
         ]
         .into_iter()
@@ -925,7 +942,7 @@ mod tests {
 
     use ethereum_types::H160;
 
-    use crate::types::INITIAL_BASE_FEE;
+    use crate::types::{ForkId, INITIAL_BASE_FEE};
 
     use super::*;
 
@@ -1491,6 +1508,165 @@ mod tests {
             .get_fork_blob_schedule(999)
             .expect("amsterdam blob schedule");
         assert_eq!(sched_lstar.max, sched_amsterdam.max);
+    }
+
+    #[test]
+    fn istar_fork_ordering_and_activation() {
+        // IStar follows Hegota and precedes LStar.
+        assert!(Fork::IStar > Fork::Hegota);
+        assert!(Fork::IStar < Fork::LStar);
+        assert_eq!(Fork::IStar as u8, 27);
+        assert_eq!(<&str>::from(Fork::IStar), "IStar");
+
+        let mut cfg = ChainConfig {
+            istar_time: Some(100),
+            ..Default::default()
+        };
+        assert!(!cfg.is_istar_activated(99));
+        assert!(cfg.is_istar_activated(100));
+        assert!(cfg.is_istar_activated(101));
+
+        cfg.istar_time = None;
+        assert!(!cfg.is_istar_activated(u64::MAX));
+
+        // The chain config names it `istarTime`.
+        let cfg: ChainConfig = serde_json::from_str(
+            r#"{
+                "chainId": 1,
+                "depositContractAddress": "0x0000000000000000000000000000000000000000",
+                "istarTime": 1700000000
+            }"#,
+        )
+        .expect("istarTime must deserialize");
+        assert_eq!(cfg.istar_time, Some(1_700_000_000));
+        let json = serde_json::to_value(&cfg).expect("the chain config serializes");
+        assert_eq!(json["istarTime"], serde_json::json!(1_700_000_000u64));
+    }
+
+    #[test]
+    fn istar_fork_resolution() {
+        // Hegota at genesis and IStar at a later time; LStar is not scheduled.
+        let mut cfg = ChainConfig {
+            shanghai_time: Some(0),
+            cancun_time: Some(0),
+            prague_time: Some(0),
+            osaka_time: Some(0),
+            amsterdam_time: Some(0),
+            hegota_time: Some(0),
+            istar_time: Some(1000),
+            ..Default::default()
+        };
+
+        // Before IStar the highest active fork is Hegota; at and after it, IStar.
+        assert_eq!(cfg.get_fork(999), Fork::Hegota);
+        assert_eq!(cfg.get_fork(1000), Fork::IStar);
+        assert_eq!(cfg.get_fork(1001), Fork::IStar);
+        assert_eq!(cfg.get_fork(u64::MAX), Fork::IStar);
+
+        // next_fork: IStar is the next scheduled fork until it activates.
+        assert_eq!(cfg.next_fork(999), Some(Fork::IStar));
+        assert_eq!(cfg.next_fork(1000), None);
+
+        assert_eq!(cfg.get_last_scheduled_fork(), Fork::IStar);
+        assert_eq!(
+            cfg.get_activation_timestamp_for_fork(Fork::IStar),
+            Some(1000)
+        );
+        assert!(cfg.unscheduled_predecessor_forks().is_empty());
+        assert!(cfg.display_config().contains("- IStar: @1000"));
+
+        // IStar has no blob params of its own: it inherits the schedule in force.
+        let sched_hegota = cfg.get_fork_blob_schedule(999).expect("blob schedule");
+        let sched_istar = cfg.get_fork_blob_schedule(1000).expect("blob schedule");
+        assert_eq!(sched_istar, sched_hegota);
+        assert_eq!(
+            cfg.get_blob_schedule_for_fork(Fork::IStar),
+            Some(sched_istar)
+        );
+
+        // With LStar scheduled after it, IStar is the fork between Hegota and LStar.
+        cfg.lstar_time = Some(2000);
+        assert_eq!(cfg.get_fork(999), Fork::Hegota);
+        assert_eq!(cfg.get_fork(1000), Fork::IStar);
+        assert_eq!(cfg.get_fork(1999), Fork::IStar);
+        assert_eq!(cfg.get_fork(2000), Fork::LStar);
+        assert_eq!(cfg.get_fork(2001), Fork::LStar);
+        assert_eq!(cfg.next_fork(999), Some(Fork::IStar));
+        assert_eq!(cfg.next_fork(1000), Some(Fork::LStar));
+        assert_eq!(cfg.next_fork(2000), None);
+        assert_eq!(cfg.get_last_scheduled_fork(), Fork::LStar);
+        assert_eq!(
+            cfg.get_activation_timestamp_for_fork(Fork::IStar),
+            Some(1000)
+        );
+        assert_eq!(
+            cfg.get_fork_blob_schedule(2000),
+            cfg.get_fork_blob_schedule(1000)
+        );
+
+        // The two forks at the same time: the later one is the fork of the block.
+        cfg.lstar_time = Some(1000);
+        assert_eq!(cfg.get_fork(999), Fork::Hegota);
+        assert_eq!(cfg.get_fork(1000), Fork::LStar);
+        assert_eq!(cfg.next_fork(999), Some(Fork::IStar));
+
+        // A chain that schedules IStar without Hegota is reported as a gap.
+        cfg.hegota_time = None;
+        assert_eq!(cfg.unscheduled_predecessor_forks(), vec!["Hegota"]);
+    }
+
+    #[test]
+    fn istar_is_part_of_the_fork_id() {
+        let without_istar = ChainConfig {
+            shanghai_time: Some(0),
+            cancun_time: Some(0),
+            prague_time: Some(0),
+            amsterdam_time: Some(0),
+            hegota_time: Some(0),
+            ..Default::default()
+        };
+        let with_istar = ChainConfig {
+            istar_time: Some(1000),
+            ..without_istar.clone()
+        };
+        let genesis_header = Genesis {
+            config: without_istar.clone(),
+            ..Default::default()
+        }
+        .get_block()
+        .header;
+
+        // The forks active at genesis are not part of the fork id; IStar's
+        // activation is, like every scheduled fork's.
+        assert_eq!(
+            without_istar.gather_forks(genesis_header.clone()).1,
+            Vec::<u64>::new()
+        );
+        assert_eq!(
+            with_istar.gather_forks(genesis_header.clone()).1,
+            vec![1000]
+        );
+
+        // Before IStar the fork id announces it as the next fork, over the same
+        // hash a chain without it has.
+        let unscheduled = ForkId::new(without_istar, genesis_header.clone(), 999, 1);
+        let before = ForkId::new(with_istar.clone(), genesis_header.clone(), 999, 1);
+        assert_eq!(unscheduled.fork_next, 0);
+        assert_eq!(before.fork_next, 1000);
+        assert_eq!(before.fork_hash, unscheduled.fork_hash);
+
+        // From IStar the hash covers its activation and no fork follows.
+        let after = ForkId::new(with_istar.clone(), genesis_header.clone(), 1000, 2);
+        assert_ne!(after.fork_hash, before.fork_hash);
+        assert_eq!(after.fork_next, 0);
+        assert!(before.is_valid(
+            after.clone(),
+            1,
+            999,
+            with_istar.clone(),
+            genesis_header.clone()
+        ));
+        assert!(after.is_valid(before, 2, 1000, with_istar, genesis_header));
     }
 
     #[test]
