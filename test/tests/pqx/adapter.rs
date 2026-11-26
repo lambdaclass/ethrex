@@ -1,32 +1,38 @@
-//! Adapter of the measurement harness for the signature-list proposal.
+//! Adapter of the measurement harness for the signature-list proposal from
+//! IStar, where the block carries the dependency proof of EIP-8288: milestone 2.
 //!
 //! The dependency is declared in the EIP-8141 signature list, as the entry
 //! `[LEANSPHINCS, public_key, msg, ""]`, with no frame of its own. The
-//! leanSPHINCS signature that satisfies it travels beside the transaction
-//! exactly as in EIP-8504: the proposal assumes an aggregate proof that does
-//! not exist yet, so this branch keeps EIP-8504's witness list, its wrapper and
-//! its block field in the meantime.
+//! leanSPHINCS signature that satisfies it travels beside the transaction, in
+//! the wrapper of EIP-8504, and the pool verifies it. None of that changes at
+//! IStar. The block does: it has no list of witnesses. Its builder aggregates
+//! the witnesses of the block's dependencies into one proof, the aggregate
+//! proof the proposal assumes, which the block carries as the last item of its
+//! body, and the header commits to the proof and to the dependencies it proves.
 //!
-//! Transactions here are `[VERIFY, SENDER]`. The account's code reads its
-//! declarations at fixed positions: entry `i` of the signature list is the one
-//! of key `i`. The validation frame therefore carries no data, as in the other
-//! alternatives.
+//! Transactions here are `[VERIFY, SENDER]`, byte for byte those of the
+//! milestone-1 adapter. The account's code reads its declarations at fixed
+//! positions: entry `i` of the signature list is the one of key `i`. The
+//! validation frame therefore carries no data, as in the other alternatives.
 
 use bytes::Bytes;
-use ethrex_blockchain::Blockchain;
+use ethrex_blockchain::{Blockchain, dependency_proof::prove_dependencies};
 use ethrex_common::{
     Address, H256, U256,
     constants::{MAX_RLP_BLOCK_SIZE, TX_MAX_GAS_LIMIT_AMSTERDAM},
     types::{
-        Block, DEPENDENCY_TRIPLE_BYTES, FRAME_SIG_SCHEME_LEANSPHINCS, FRAME_TX_MAX_VERIFY_GAS,
-        Frame, FrameMode, FrameSignature, FrameTransaction, Genesis, LEANSPHINCS_SIGNATURE_SIZE,
-        LEANSPHINCS_VERIFICATION_GAS, LEANSPHINCS_WITNESS_GAS, MAX_SIGS_PER_TX, MAX_TX_SIZE,
-        ProofWrapper, Transaction, block_dependencies, compute_dependency_witnesses_hash,
-        proof_wrapper_overhead,
+        Block, DEPENDENCY_TRIPLE_BYTES, Dependency, FRAME_SIG_SCHEME_LEANSPHINCS,
+        FRAME_TX_MAX_VERIFY_GAS, Fork, Frame, FrameMode, FrameSignature, FrameTransaction, Genesis,
+        LEANSPHINCS_SIGNATURE_SIZE, LEANSPHINCS_VERIFICATION_GAS, LEANSTARK_VERIFICATION_GAS,
+        MAX_DEPENDENCY_PROOF_BYTES, MAX_SIGS_PER_TX, MAX_TX_SIZE, ProofWrapper, Transaction,
+        block_dependencies, compute_dependency_proof_hash, proof_wrapper_overhead,
     },
 };
 use ethrex_crypto::NativeCrypto;
-use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+use ethrex_rlp::{
+    decode::RLPDecode,
+    encode::{RLPEncode, list_length},
+};
 
 use super::lifecycle::{
     AccountKind, BlockExtras, Fault, FaultCase, FaultyBlock, FaultySubmission, GasProfile,
@@ -36,32 +42,45 @@ use super::lifecycle::{
 pub const ALTERNATIVE: &str = "Alternative 3";
 pub const ALTERNATIVE_ID: &str = "a3";
 pub const PROPOSAL: &str = "Signature list, not proof frames";
-pub const MILESTONE: u8 = 1;
+pub const MILESTONE: u8 = 2;
 pub const SIGNATURE_SCHEME: &str = "leanSPHINCS";
 pub const KEY_CACHE_NAMESPACE: &str = "leansphincs";
 pub const VERIFIER_PACKAGE: &str = "lean_sphincs";
 
-/// Where this implementation verifies signatures, stage by stage.
+/// Where this implementation verifies signatures from IStar, stage by stage.
 pub const VERIFICATION: &[(&str, &str)] = &[
     (
         "pool admission",
-        "each witness is verified once on the calling thread, before the validation \
-         prefix is simulated; the revalidation after a block does not repeat it",
+        "as before IStar: each witness is verified once, natively, on the calling thread, \
+         before the validation prefix is simulated; the revalidation after a block does \
+         not repeat it",
     ),
     (
         "block construction",
-        "none: the builder takes the witnesses the pool already verified",
+        "no signature is verified: the builder takes the witnesses the pool already \
+         verified and proves them. Blockchain::build_payload ends with \
+         PayloadBuildResult::with_dependency_proof, which makes one proof for the block's \
+         dependencies: leaves of at most 512 signatures and nodes of at most 16 proofs, \
+         one after another, each on the prover's own thread pool, which is sized from \
+         the machine's cores unless LEANVM_NUM_THREADS sets it, and never by \
+         RAYON_NUM_THREADS; one proof at a time in the process",
     ),
     (
         "block import, add_block",
-        "one loop over the block's witnesses on the calling thread, before execution",
+        "no signature is verified individually: validate_dependency_proof verifies the \
+         block's one proof against the dependencies of its transactions, on the calling \
+         thread, before execution; the verifier is single-threaded",
     ),
     (
         "block import, add_block_pipeline",
-        "the same loop on the calling thread, before execution starts; only the \
-         execution of the transactions uses the thread pool",
+        "the same single verification on the calling thread, before execution starts; \
+         only the execution of the transactions uses the thread pool",
     ),
 ];
+
+/// The fork this milestone measures. A frame transaction has no gas limit field,
+/// so what it is charged and reserves is a quantity of the fork of its block.
+const FORK: Fork = Fork::IStar;
 
 // ---------------------------------------------------------------------------
 // The signature scheme
@@ -95,8 +114,13 @@ fn public_key(key: &KeyPair) -> H256 {
 // The chain and its accounts
 // ---------------------------------------------------------------------------
 
-/// The proposal needs nothing in the genesis beyond its fork being active.
-pub fn prepare_genesis(_genesis: &mut Genesis) {}
+/// The block of this milestone exists from IStar, so IStar is active at genesis
+/// whatever `PQX_FORK` selected: a run of this adapter never measures blocks
+/// that carry individual witnesses. LStar is left as the run has it: a run
+/// that does not select it measures IStar blocks, which have no `burned_fees`.
+pub fn prepare_genesis(genesis: &mut Genesis) {
+    genesis.config.istar_time = Some(0);
+}
 
 pub fn supports(_kind: AccountKind) -> Result<(), &'static str> {
     Ok(())
@@ -227,6 +251,9 @@ fn transaction(request: &TxRequest, declared: &[H256]) -> FrameTransaction {
         blob_versioned_hashes: Vec::new(),
         ..Default::default()
     };
+    // The fee budget of the milestone-1 adapter, over the `max_gas` of Hegota:
+    // the transaction, its signature hash and so its signature are the same at
+    // both milestones. The budget covers the smaller `max_gas` of IStar.
     tx.max_fee = U256::from(request.max_fee_per_gas) * U256::from(tx.max_gas());
     tx
 }
@@ -259,14 +286,14 @@ fn gas_profile(tx: &FrameTransaction) -> GasProfile {
         signatures: dependencies,
         signature_bytes_in_transaction: 0,
         signature_bytes_beside_transaction: dependencies * LEANSPHINCS_SIGNATURE_SIZE as u64,
-        mandatory_gas: tx.mandatory_gas(),
+        mandatory_gas: tx.mandatory_gas_at(FORK),
         calldata_gas: tx.data_cost(),
         calldata_floor_gas: tx.calldata_floor_gas(),
         execution_gas_limits: tx.total_frame_execution_gas(),
         state_gas_limits: tx.total_frame_state_gas(),
-        standard_gas_limit: tx.standard_gas_limit(),
-        calldata_floor_total: tx.calldata_floor_total(),
-        max_gas: tx.max_gas(),
+        standard_gas_limit: tx.standard_gas_limit_at(FORK),
+        calldata_floor_total: tx.calldata_floor_total_at(FORK),
+        max_gas: tx.max_gas_at(FORK),
     }
 }
 
@@ -311,6 +338,7 @@ pub async fn admit_from_peer(blockchain: &Blockchain, peer: &[u8]) -> Result<H25
 // ---------------------------------------------------------------------------
 
 pub fn block_extras(block: &Block) -> BlockExtras {
+    // An IStar block has no witness list: these stay at zero.
     let witnesses = block
         .body
         .dependency_witnesses
@@ -319,8 +347,11 @@ pub fn block_extras(block: &Block) -> BlockExtras {
     BlockExtras {
         witnesses: witnesses.len(),
         witness_bytes: witnesses.iter().map(Bytes::len).sum(),
-        aggregate_proof_bytes: 0,
-        // The witness list is part of the block's RLP encoding.
+        aggregate_proof_bytes: block.body.dependency_proof.as_ref().map_or(0, Bytes::len),
+        // The proof is the last item of the block's RLP encoding and of its
+        // body's, so the sizes the harness takes from those encodings already
+        // count it. Only the size EIP-7934 limits leaves it out
+        // (`Block::length_without_dependency_proof`).
         outside_block_rlp_bytes: 0,
     }
 }
@@ -339,12 +370,14 @@ pub fn limits(facts: &TxFacts) -> Vec<Limit> {
             per_transaction: Some(facts.signatures),
         },
         Limit {
-            name: "dependencies one transaction can pay for under the EIP-7825 gas cap",
+            name: "LEANSPHINCS entries one transaction can pay for under the EIP-7825 gas cap",
             value: TX_MAX_GAS_LIMIT_AMSTERDAM
-                / (LEANSPHINCS_WITNESS_GAS + LEANSPHINCS_VERIFICATION_GAS),
+                / (LEANSTARK_VERIFICATION_GAS + LEANSPHINCS_VERIFICATION_GAS),
             unit: "signatures",
             scope: "transaction",
-            source: "derived from the gas this branch charges; the proposal sets no gas",
+            source: "derived from the gas this branch charges for each entry, the 30,000 of \
+                     EIP-8288's dependency_proof_gas beside the entry's own 3,000; the \
+                     proposal sets no gas",
             layer: "consensus",
             enforced: true,
             enforced_at: "transaction validation, through the gas cap",
@@ -375,39 +408,50 @@ pub fn limits(facts: &TxFacts) -> Vec<Limit> {
             per_transaction: Some(facts.peer_bytes),
         },
         Limit {
-            name: "witnesses in a block: block gas limit / LEANSPHINCS_WITNESS_GAS",
-            value: facts.block_gas_limit / LEANSPHINCS_WITNESS_GAS,
+            name: "dependencies in a block: block gas limit / \
+                   (LEANSTARK_VERIFICATION_GAS + LEANSPHINCS_VERIFICATION_GAS)",
+            value: facts.block_gas_limit
+                / (LEANSTARK_VERIFICATION_GAS + LEANSPHINCS_VERIFICATION_GAS),
             unit: "signatures",
             scope: "block",
-            source: "EIP-8504, limits on dependency_witnesses, kept by this branch",
+            source: "derived from the gas this branch charges for each LEANSPHINCS entry, the \
+                     30,000 of EIP-8288's dependency_proof_gas beside the entry's own 3,000",
             layer: "consensus",
             enforced: false,
-            enforced_at: "no check of its own: it follows from the block gas limit and from \
-                          the rule that a block carries exactly one witness per dependency",
+            enforced_at: "no check of its own: nothing bounds the dependencies of an IStar \
+                          block but the block gas limit, through the gas each declaration \
+                          pays, and the size bound of the proof. The builder reserves \
+                          nothing for the proof, neither a number of dependencies nor a \
+                          time: proving time grows with the block and is inside block \
+                          construction",
             per_transaction: Some(facts.signatures),
         },
         Limit {
-            name: "EIP-8288 MAX_DEPENDENCY_PROOF_BYTES, for the aggregate proof the proposal assumes",
-            value: 1_048_576,
+            name: "MAX_DEPENDENCY_PROOF_BYTES",
+            value: MAX_DEPENDENCY_PROOF_BYTES as u64,
             unit: "bytes",
             scope: "block",
             source: "EIP-8288, Block Validity; the proposal keeps EIP-8288's proof",
             layer: "consensus",
-            enforced: false,
-            enforced_at: "not applicable at this milestone: the block carries individual \
-                          witnesses, not the proof this limit is for",
-            per_transaction: Some(facts.witness_bytes),
+            enforced: true,
+            enforced_at: "block import on both paths and the Engine API, before the proof is \
+                          hashed. The builder does not select transactions against it: a \
+                          proof over the bound fails the build",
+            // One proof for the block: its size is not a sum over transactions.
+            per_transaction: None,
         },
         Limit {
-            name: "witnesses in a block under EIP-7934, counting only signature bytes",
-            value: MAX_RLP_BLOCK_SIZE / LEANSPHINCS_SIGNATURE_SIZE as u64,
-            unit: "signatures",
+            name: "EIP-7934 block size, measured without the dependency proof",
+            value: MAX_RLP_BLOCK_SIZE,
+            unit: "bytes",
             scope: "block",
-            source: "EIP-8504, limits on dependency_witnesses, kept by this branch",
+            source: "EIP-7934; EIP-8288 keeps the proof out of the RLP block",
             layer: "consensus",
             enforced: true,
-            enforced_at: "the EIP-7934 check, which measures the block with its witnesses",
-            per_transaction: Some(facts.signatures),
+            enforced_at: "payload builder and block import, on \
+                          Block::length_without_dependency_proof",
+            // The transaction as an item of the block's transaction list.
+            per_transaction: Some(list_length(facts.canonical_bytes as usize) as u64),
         },
     ]
 }
@@ -416,28 +460,53 @@ pub fn limits(facts: &TxFacts) -> Vec<Limit> {
 // Faults
 // ---------------------------------------------------------------------------
 
-/// The block with its witness list replaced and the header committing to the
-/// new list, so that only the witnesses can make it invalid.
-fn with_witnesses(block: &Block, witnesses: Vec<Bytes>) -> Block {
+/// The block with `change` applied to it and without the block hash computed
+/// for the valid block, which the change makes stale.
+fn altered(block: &Block, change: impl FnOnce(&mut Block)) -> Block {
     let mut block = block.clone();
-    block.header.dependency_witnesses_hash =
-        Some(compute_dependency_witnesses_hash(&witnesses, &NativeCrypto));
-    block.body.dependency_witnesses = Some(witnesses);
+    change(&mut block);
+    block.header.hash = Default::default();
     block
 }
 
-fn flipped(witness: &Bytes) -> Bytes {
-    let mut altered = witness.to_vec();
-    altered[100] ^= 0x01;
+/// The block with its dependency proof replaced and the header committing to
+/// the new proof, so that only the proof itself can make it invalid.
+fn with_proof(block: &Block, proof: Bytes) -> Block {
+    altered(block, |block| {
+        block.header.dependency_proof_hash =
+            Some(compute_dependency_proof_hash(&proof, &NativeCrypto));
+        block.body.dependency_proof = Some(proof);
+    })
+}
+
+/// The signature of `dependency`'s message by `signer`.
+fn witness(dependency: &Dependency, signer: &KeyPair) -> Bytes {
+    Bytes::from(signature(signer, dependency.data_hash))
+}
+
+/// The proof the builder would make for `claims`: each dependency with the key
+/// that signs its message.
+fn proof_of(claims: &[(Dependency, &KeyPair)]) -> Bytes {
+    let signed: Vec<(Dependency, Bytes)> = claims
+        .iter()
+        .map(|(dependency, signer)| (*dependency, witness(dependency, signer)))
+        .collect();
+    prove_dependencies(&signed).expect("valid signatures aggregate into a proof")
+}
+
+/// `bytes`, a witness or a proof, with one bit changed at `index`.
+fn flipped(bytes: &Bytes, index: usize) -> Bytes {
+    let mut altered = bytes.to_vec();
+    altered[index] ^= 0x01;
     Bytes::from(altered)
 }
 
-fn truncated(witness: &Bytes) -> Bytes {
-    witness.slice(..witness.len() - 1)
+fn truncated(bytes: &Bytes) -> Bytes {
+    bytes.slice(..bytes.len() - 1)
 }
 
-fn extended(witness: &Bytes) -> Bytes {
-    let mut longer = witness.to_vec();
+fn extended(bytes: &Bytes) -> Bytes {
+    let mut longer = bytes.to_vec();
     longer.push(0);
     Bytes::from(longer)
 }
@@ -468,7 +537,7 @@ pub fn faulty_submissions(
     match fault {
         Fault::InvalidSignature => vec![case(
             "one bit of the witness flipped",
-            rpc(vec![flipped(&valid[0])]),
+            rpc(vec![flipped(&valid[0], 100)]),
             NOT_SATISFIED,
         )],
         Fault::WrongKey => {
@@ -541,76 +610,112 @@ pub fn faulty_submissions(
     }
 }
 
+/// From IStar a block has no individual signature to alter: each fault is stated
+/// against the proof that stands for the signatures, or against the header's
+/// commitments to it and to the dependencies it proves. `block` has one
+/// transaction with one dependency.
 pub fn faulty_blocks(
     fault: Fault,
     block: &Block,
-    _request: &TxRequest,
+    request: &TxRequest,
     other: &KeyPair,
 ) -> Vec<FaultCase<FaultyBlock>> {
-    const NOT_SATISFIED: &str = "DependencyNotSatisfied";
-    const COUNT: &str = "DependencyWitnessesCountMismatch";
+    // The verifier answers yes or no, so every proof that does not prove exactly
+    // the block's dependencies is refused with the same error.
+    const NOT_PROVEN: &str = "InvalidDependencyProof";
     let valid = block
         .body
-        .dependency_witnesses
+        .dependency_proof
         .clone()
-        .expect("a block of this fork has a witness list");
+        .expect("a block of this fork has a dependency proof");
     let dependency = block_dependencies(&block.body.transactions)[0];
-    // The block with another witness list, refused on both import paths.
-    let listed = |variant, witnesses: Vec<Bytes>, expected_error| {
+    let signer = request
+        .keys
+        .iter()
+        .find(|key| public_key(key) == dependency.verification_key_hash)
+        .expect("the request holds the key the block's dependency names");
+    // The same message under the key that does not control the account.
+    let foreign = Dependency {
+        verification_key_hash: public_key(other),
+        ..dependency
+    };
+    // A block refused on both import paths.
+    let refused = |variant, block: Block, expected_error| {
         case(
             variant,
             FaultyBlock {
-                block: with_witnesses(block, witnesses),
+                block,
                 paths: &ImportPath::ALL,
             },
             expected_error,
         )
     };
+    // The block with another proof, which its header commits to.
+    let proven = |variant, proof: Bytes| refused(variant, with_proof(block, proof), NOT_PROVEN);
     match fault {
-        Fault::InvalidSignature => vec![listed(
-            "one bit of the witness flipped",
-            vec![flipped(&valid[0])],
-            NOT_SATISFIED,
+        Fault::InvalidSignature => vec![proven(
+            "one bit of the proof flipped",
+            flipped(&valid, valid.len() / 2),
         )],
-        Fault::WrongKey => vec![listed(
-            "witness signed with another key",
-            vec![Bytes::from(signature(other, dependency.data_hash))],
-            NOT_SATISFIED,
+        Fault::WrongKey => vec![proven(
+            "proof of a signature by another key",
+            proof_of(&[(foreign, other)]),
         )],
-        Fault::MalformedSignature => vec![
-            listed(
-                "witness one byte short",
-                vec![truncated(&valid[0])],
-                NOT_SATISFIED,
-            ),
-            listed(
-                "witness one byte long",
-                vec![extended(&valid[0])],
-                NOT_SATISFIED,
-            ),
-            listed("empty witness", vec![Bytes::new()], NOT_SATISFIED),
-        ],
-        Fault::MissingSignature => vec![listed("empty witness list", Vec::new(), COUNT)],
-        Fault::DeclaredSuppliedMismatch => {
-            // The valid witness list under a header that commits to another.
-            // Only the pipeline compares a body with its header.
-            let mut other_commitment = block.clone();
-            other_commitment.header.dependency_witnesses_hash = Some(H256::repeat_byte(0x11));
+        Fault::MalformedSignature => {
+            let mut oversized = valid.to_vec();
+            oversized.resize(MAX_DEPENDENCY_PROOF_BYTES + 1, 0);
             vec![
-                listed(
-                    "two witnesses for one dependency",
-                    vec![valid[0].clone(), valid[0].clone()],
-                    COUNT,
+                proven("proof one byte short", truncated(&valid)),
+                proven("proof one byte long", extended(&valid)),
+                proven(
+                    "the signature itself in place of the proof",
+                    witness(&dependency, signer),
                 ),
-                case(
-                    "header commitment that is not the witness list's",
-                    FaultyBlock {
-                        block: other_commitment,
-                        paths: &[ImportPath::Pipeline],
-                    },
-                    "DependencyWitnessesHashNotMatch",
+                refused(
+                    "proof padded to one byte over MAX_DEPENDENCY_PROOF_BYTES",
+                    with_proof(block, Bytes::from(oversized)),
+                    "DependencyProofTooLarge",
                 ),
             ]
         }
+        Fault::MissingSignature => vec![
+            // One claim fewer than the block's single dependency is no claim.
+            proven(
+                "empty proof, the proof of a block without dependencies",
+                Bytes::new(),
+            ),
+            refused(
+                "no proof in the body",
+                altered(block, |block| block.body.dependency_proof = None),
+                "DependencyProofNotPresent",
+            ),
+        ],
+        Fault::DeclaredSuppliedMismatch => vec![
+            proven(
+                "proof of the block's dependency and of one more",
+                proof_of(&[(dependency, signer), (foreign, other)]),
+            ),
+            refused(
+                "header commitment that is not the proof's",
+                altered(block, |block| {
+                    block.header.dependency_proof_hash = Some(H256::repeat_byte(0x11));
+                }),
+                "DependencyProofHashNotMatch",
+            ),
+            refused(
+                "header commitment that is not the dependencies'",
+                altered(block, |block| {
+                    block.header.block_deps_hash = Some(H256::repeat_byte(0x11));
+                }),
+                "BlockDepsHashNotMatch",
+            ),
+            refused(
+                "the witness list of a Hegota block beside the proof",
+                altered(block, |block| {
+                    block.body.dependency_witnesses = Some(vec![witness(&dependency, signer)]);
+                }),
+                "DependencyWitnessesPresent",
+            ),
+        ],
     }
 }
