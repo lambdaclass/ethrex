@@ -14,7 +14,7 @@ use crate::{
             NodesMessage, Ordinary, Packet, PacketTrait as _, PingMessage, PongMessage,
             TalkResMessage, WhoAreYou, decrypt_message,
         },
-        server::{Discv5Message, SessionSource},
+        server::{Discv5Message, MAX_NODES_RESPONSES, SessionSource},
         session::{
             build_challenge_data, create_id_signature, derive_session_keys, verify_id_signature,
         },
@@ -683,18 +683,21 @@ impl DiscoveryServer {
             }
         };
 
-        let mut nodes = self
-            .contacts
-            .nodes_at_distances(&find_node_message.distances);
+        // Our own record first: `split_answer` may leave out the tail.
+        let mut nodes = Vec::new();
         if find_node_message.distances.contains(&0) {
             nodes.push(self.local_node.load().record.clone());
         }
+        nodes.extend(
+            self.contacts
+                .nodes_at_distances(&find_node_message.distances),
+        );
 
         let key = self
             .discv5_resolve_outbound_key(&sender_id, outbound_key)
             .await?;
 
-        let chunks: Vec<_> = nodes.chunks(MAX_ENRS_PER_MESSAGE).collect();
+        let chunks = split_answer(&nodes);
         if chunks.is_empty() {
             let nodes_message = Message::Nodes(NodesMessage {
                 req_id: find_node_message.req_id,
@@ -734,40 +737,33 @@ impl DiscoveryServer {
         sender_id: H256,
     ) -> Result<(), DiscoveryServerError> {
         // Only accept a NODES that answers a FINDNODE we actually sent to this
-        // peer. Without the check, any peer that has completed a handshake can
-        // push ENRs of its choosing into our contact table with an unsolicited
-        // NODES, and we then hand them back out in our own FINDNODE responses.
-        let solicited = self.discv5.as_ref().is_some_and(|discv5| {
-            discv5
-                .pending_findnodes
-                .contains_key(&(sender_id, nodes_message.req_id.clone()))
+        // peer, and only as many packets as that answer may span. Without the
+        // first check, any peer that has completed a handshake can push ENRs of
+        // its choosing into our contact table with an unsolicited NODES, and we
+        // then hand them back out in our own FINDNODE responses. Without the
+        // second, it can do the same by answering one FINDNODE forever.
+        let accepted = self.discv5.as_mut().and_then(|discv5| {
+            discv5.accept_nodes_packet(sender_id, &nodes_message.req_id, nodes_message.total)
         });
-        if !solicited {
+        let Some(accepted) = accepted else {
             trace!(
                 protocol = "discv5",
                 from = %sender_id,
                 "Dropping unsolicited NODES response"
             );
             return Ok(());
-        }
+        };
 
-        // How many packets make up the answer, which a predicate query waits
-        // out before giving the request's slot away.
-        let total = nodes_message.total;
         let req_id = nodes_message.req_id;
         let records = self.contacts.new_contact_records(nodes_message.nodes).await;
 
         // Only the lookup that sent the FINDNODE hears the answer. One with no
         // owner, such as an ENR refresh, or whose lookup is gone, feeds only
         // the contact table above.
-        let Some(discv5) = self.discv5.as_mut() else {
+        let Some(owner) = accepted.owner else {
             return Ok(());
         };
-        let Some(owner) = discv5
-            .findnode_owners
-            .get(&(sender_id, req_id.clone()))
-            .copied()
-        else {
+        let Some(discv5) = self.discv5.as_mut() else {
             return Ok(());
         };
 
@@ -791,7 +787,7 @@ impl DiscoveryServer {
         // A predicate query is: waiting for the next tick would cost it a slot.
         let contacts = &self.contacts;
         if let Some(query) = discv5.active_queries.iter_mut().find(|q| q.id == owner) {
-            query.on_nodes(sender_id, &req_id, total, &records, |node_id| {
+            query.on_nodes(sender_id, &req_id, accepted.last, &records, |node_id| {
                 contacts.could_dial(node_id)
             });
             self.discv5_drive_query(owner).await;
@@ -844,9 +840,7 @@ impl DiscoveryServer {
         // Remember the request id so the matching NODES response is accepted.
         // Done in every send path so none can issue a FINDNODE unregistered.
         if let Message::FindNode(find_node) = &message {
-            discv5
-                .pending_findnodes
-                .insert((node.node_id(), find_node.req_id.clone()), Instant::now());
+            discv5.record_findnode_sent(node.node_id(), find_node.req_id.clone(), Instant::now());
         }
         let mut rng = OsRng;
         let masking_iv: u128 = rng.r#gen();
@@ -900,9 +894,7 @@ impl DiscoveryServer {
         // Remember the request id so the matching NODES response is accepted.
         // Done in every send path so none can issue a FINDNODE unregistered.
         if let Message::FindNode(find_node) = &message {
-            discv5
-                .pending_findnodes
-                .insert((*dest_id, find_node.req_id.clone()), Instant::now());
+            discv5.record_findnode_sent(*dest_id, find_node.req_id.clone(), Instant::now());
         }
         let ordinary = Ordinary {
             src_id: self.local_node_id,
@@ -955,9 +947,7 @@ impl DiscoveryServer {
         // Remember the request id so the matching NODES response is accepted.
         // Done in every send path so none can issue a FINDNODE unregistered.
         if let Message::FindNode(find_node) = &message {
-            discv5
-                .pending_findnodes
-                .insert((node.node_id(), find_node.req_id.clone()), Instant::now());
+            discv5.record_findnode_sent(node.node_id(), find_node.req_id.clone(), Instant::now());
         }
         let mut rng = OsRng;
         let masking_iv: u128 = rng.r#gen();
@@ -1176,6 +1166,20 @@ fn find_node_distances(target: &H256, node_id: &H256) -> Vec<u32> {
     distances
 }
 
+/// The NODES packets that carry `records` in answer to a FINDNODE:
+/// [`MAX_ENRS_PER_MESSAGE`] records each, and no more than
+/// [`MAX_NODES_RESPONSES`] packets.
+///
+/// geth, and ethrex itself, take no more packets than that from one answer, so
+/// a record placed past them would never arrive. A full answer is 16 records,
+/// which at three a packet needs six, so its last record is the one left out.
+fn split_answer(records: &[NodeRecord]) -> Vec<&[NodeRecord]> {
+    records
+        .chunks(MAX_ENRS_PER_MESSAGE)
+        .take(MAX_NODES_RESPONSES as usize)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1347,9 +1351,7 @@ mod tests {
             .active_lookups
             .push((other, IterativeLookup::new(H256::zero(), seed(2))));
         let req_id = Bytes::from_static(&[9]);
-        discv5
-            .pending_findnodes
-            .insert((peer_id, req_id.clone()), Instant::now());
+        discv5.record_findnode_sent(peer_id, req_id.clone(), Instant::now());
         discv5
             .findnode_owners
             .insert((peer_id, req_id.clone()), asked);
@@ -1397,9 +1399,7 @@ mod tests {
         let mut query = NodeQuery::new(id, request, Instant::now());
         query.record_sent(peer_id, req_id.clone(), Instant::now());
         discv5.active_queries.push(query);
-        discv5
-            .pending_findnodes
-            .insert((peer_id, req_id.clone()), Instant::now());
+        discv5.record_findnode_sent(peer_id, req_id.clone(), Instant::now());
         discv5.findnode_owners.insert((peer_id, req_id.clone()), id);
         let packet = || NodesMessage {
             req_id: req_id.clone(),
@@ -1427,6 +1427,124 @@ mod tests {
             .expect("the query must answer once its request is answered in full")
             .expect("the query must have run");
         assert_eq!(result.outcome, QueryOutcome::Exhausted);
+    }
+
+    #[tokio::test]
+    async fn a_query_stops_waiting_at_the_packet_limit() {
+        // An answer that claims more packets than the limit must not hold the
+        // query's slot for packets that would be dropped on arrival.
+        let (mut server, peer_id) = server_with_session(SESSION_IP.parse().unwrap()).await;
+        let (request, mut answer) = query_request();
+        let discv5 = server.discv5.as_mut().expect("discv5 state must exist");
+        let id = discv5.next_lookup_id();
+        let req_id = Bytes::from_static(&[9]);
+        let mut query = NodeQuery::new(id, request, Instant::now());
+        query.record_sent(peer_id, req_id.clone(), Instant::now());
+        discv5.active_queries.push(query);
+        discv5.record_findnode_sent(peer_id, req_id.clone(), Instant::now());
+        discv5.findnode_owners.insert((peer_id, req_id.clone()), id);
+        let packet = || NodesMessage {
+            req_id: req_id.clone(),
+            total: 200,
+            nodes: vec![],
+        };
+
+        for _ in 1..MAX_NODES_RESPONSES {
+            server
+                .discv5_handle_nodes_message(packet(), peer_id)
+                .await
+                .unwrap();
+            assert!(answer.try_recv().is_err(), "the answer is not complete yet");
+        }
+        server
+            .discv5_handle_nodes_message(packet(), peer_id)
+            .await
+            .unwrap();
+        let result = answer
+            .try_recv()
+            .expect("the query must answer once the limit's packets are in")
+            .expect("the query must have run");
+        assert_eq!(result.outcome, QueryOutcome::Exhausted);
+    }
+
+    #[tokio::test]
+    async fn a_packet_past_its_answer_reaches_no_lookup() {
+        // The answer claims one packet. A second under the same request id is
+        // what a peer stuffing a query with made-up records sends.
+        let (mut server, peer_id) = server_with_session(SESSION_IP.parse().unwrap()).await;
+        let discv5 = server.discv5.as_mut().expect("discv5 state must exist");
+        let asked = discv5.next_lookup_id();
+        let seed = Node::new(
+            SESSION_IP.parse().unwrap(),
+            30303,
+            30303,
+            H512::repeat_byte(1),
+        );
+        let lookup = IterativeLookup::new(H256::zero(), vec![(seed.node_id(), seed)]);
+        discv5.active_lookups.push((asked, lookup));
+        let req_id = Bytes::from_static(&[9]);
+        discv5.record_findnode_sent(peer_id, req_id.clone(), Instant::now());
+        discv5
+            .findnode_owners
+            .insert((peer_id, req_id.clone()), asked);
+
+        let found = |port| {
+            let signer = SecretKey::new(&mut OsRng);
+            let pubkey = crate::utils::public_key_from_signing_key(&signer);
+            let node = Node::new(SESSION_IP.parse().unwrap(), port, port, pubkey);
+            let record = NodeRecord::from_node(&node, 1, &signer).unwrap();
+            (node.node_id(), record)
+        };
+        let (answered, answered_record) = found(30305);
+        let (surplus, surplus_record) = found(30306);
+        for record in [answered_record, surplus_record] {
+            let packet = NodesMessage {
+                req_id: req_id.clone(),
+                total: 1,
+                nodes: vec![record],
+            };
+            server
+                .discv5_handle_nodes_message(packet, peer_id)
+                .await
+                .unwrap();
+        }
+
+        let discv5 = server.discv5.as_mut().expect("discv5 state must exist");
+        let (_, lookup) = discv5.active_lookups.first_mut().unwrap();
+        let next: Vec<_> = lookup
+            .next_to_query(LOOKUP_BUCKET_SIZE)
+            .into_iter()
+            .map(|(node_id, _)| node_id)
+            .collect();
+        assert!(next.contains(&answered));
+        assert!(!next.contains(&surplus), "a surplus packet must be dropped");
+    }
+
+    #[test]
+    fn our_answers_fit_the_packet_limit() {
+        let signer = SecretKey::new(&mut OsRng);
+        let pubkey = crate::utils::public_key_from_signing_key(&signer);
+        let records: Vec<_> = (0..17)
+            .map(|offset| {
+                let port = 30303 + offset;
+                let node = Node::new(SESSION_IP.parse().unwrap(), port, port, pubkey);
+                NodeRecord::from_node(&node, 1, &signer).unwrap()
+            })
+            .collect();
+
+        let packets = split_answer(&records);
+
+        assert_eq!(packets.len(), MAX_NODES_RESPONSES as usize);
+        assert!(
+            packets
+                .iter()
+                .all(|packet| packet.len() <= MAX_ENRS_PER_MESSAGE)
+        );
+        // The records left out are the last ones, so our own record, which the
+        // handler puts first, always goes out.
+        let kept = MAX_NODES_RESPONSES as usize * MAX_ENRS_PER_MESSAGE;
+        assert_eq!(packets.concat(), records[..kept]);
+        assert!(split_answer(&[]).is_empty());
     }
 
     #[tokio::test]
