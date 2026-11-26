@@ -932,14 +932,14 @@ mod tests {
 
         let mut runs = 0;
         consumer
-            .edit_record(&signer, |pairs| {
+            .edit_record(&signer, |entries| {
                 runs += 1;
                 // IP voting swaps a record in after the consumer read the slot
                 // and before its own swap, so that swap must fail and retry.
                 if runs == 1 {
                     server.apply_predicted_ip(public_ip, "test");
                 }
-                pairs.set_extra(b"eth2", vec![0xab; 16]);
+                entries.set_extra(b"eth2", vec![0xab; 16]);
             })
             .unwrap();
 
