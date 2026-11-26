@@ -62,7 +62,7 @@ pub fn verify_dependency(
 ///    in the same order, and each witness satisfies its dependency against the
 ///    block's pre-state, which `store` exposes.
 ///
-/// From LStar the byte string has the form the EIP reserves for aggregation
+/// From IStar the byte string has the form the EIP reserves for aggregation
 /// (§Block Witnesses, §Aggregation and EIP-8288 compatibility), and rule 3 reads:
 /// one aggregate proof satisfies every dependency of `LEANSPHINCS_VERIFIER`, and
 /// the byte string holds exactly one raw witness for each of the other entries
@@ -111,7 +111,7 @@ pub fn verify_claim_witnesses(
         return Err(InvalidBlockError::ClaimWitnessesHashMismatch.into());
     }
     // Rule 3. The dependencies the aggregate proof stands for carry no witness
-    // of their own; before LStar there are none, and every dependency has one.
+    // of their own; before IStar there are none, and every dependency has one.
     // A dependency keeps its index in `block_dependencies`, which is what an
     // unsatisfied claim is reported by.
     let dependencies =

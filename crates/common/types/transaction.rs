@@ -2487,7 +2487,7 @@ pub const WITNESS_BYTE_GAS: u64 = 4;
 /// EIP-8141 `CLAIM_WITNESSES_VERSION_RAW`: the version byte that opens a block's
 /// `claim_witnesses` when it lists raw witnesses.
 pub const CLAIM_WITNESSES_VERSION_RAW: u8 = 0x00;
-/// The version byte that opens a block's `claim_witnesses` from LStar on, when
+/// The version byte that opens a block's `claim_witnesses` from IStar on, when
 /// one aggregate proof stands for the witnesses of the block's
 /// `LEANSPHINCS_VERIFIER` dependencies and the other witnesses stay raw. EIP-8141
 /// §Block Witnesses leaves the byte to the aggregation upgrade and gives `0x01`
@@ -2756,13 +2756,13 @@ impl Dependency {
     }
 
     /// Whether a block at `fork` carries the witness of this dependency inside
-    /// the aggregate proof of its `claim_witnesses` instead of raw. From LStar
+    /// the aggregate proof of its `claim_witnesses` instead of raw. From IStar
     /// that is every `LEANSPHINCS_VERIFIER` dependency, the aggregatable protocol
     /// verifier of EIP-8141 §Aggregation and EIP-8288 compatibility; the
-    /// dependencies of every other verifier keep a raw witness. Before LStar no
+    /// dependencies of every other verifier keep a raw witness. Before IStar no
     /// dependency is aggregated.
     pub fn is_aggregated(&self, fork: super::Fork) -> bool {
-        fork >= super::Fork::LStar && self.verifier == LEANSPHINCS_VERIFIER
+        fork >= super::Fork::IStar && self.verifier == LEANSPHINCS_VERIFIER
     }
 
     /// The input a verifier receives: `key || msg || witness`.
@@ -2833,7 +2833,7 @@ pub const fn claim_witnesses_len_for_payload(payload_len: usize) -> usize {
     1 + ethrex_rlp::encode::list_length(payload_len)
 }
 
-/// The byte string a block carries as `claim_witnesses` from LStar on, for the
+/// The byte string a block carries as `claim_witnesses` from IStar on, for the
 /// aggregate proof of its aggregated dependencies and one raw witness for each
 /// of the others, in the order of `block_dependencies`
 /// ([`Dependency::is_aggregated`]): empty when there is neither a proof nor a
@@ -2885,7 +2885,7 @@ pub enum ClaimWitnessesDecodeError {
     #[error("claim witnesses are {0} bytes, more than MAX_BLOCK_WITNESS_BYTES")]
     TooLong(usize),
     /// The version byte is not the one the block's fork defines: `0x00` before
-    /// LStar and `0x01` from LStar on.
+    /// IStar and `0x01` from IStar on.
     #[error("claim witnesses version {0:#04x} is not the one the block's fork defines")]
     UnknownVersion(u8),
     #[error("claim witnesses are not a list of byte strings: {0}")]
@@ -2905,7 +2905,7 @@ pub enum ClaimWitnessesDecodeError {
 pub struct ClaimWitnesses {
     /// One proof for all the dependencies of the block that are aggregated
     /// ([`Dependency::is_aggregated`]). Empty when the block has none, which is
-    /// always the case before LStar.
+    /// always the case before IStar.
     pub aggregate_proof: Bytes,
     /// One raw witness for each of the block's other dependencies, in the order
     /// of `block_dependencies`.
@@ -2913,7 +2913,7 @@ pub struct ClaimWitnesses {
 }
 
 /// Decodes a block's `claim_witnesses` byte string into its witnesses under the
-/// rules that hold before LStar ([`decode_claim_witnesses_at`]). The empty byte
+/// rules that hold before IStar ([`decode_claim_witnesses_at`]). The empty byte
 /// string holds none. Anything else is the raw version byte followed by the RLP
 /// list of at least one witness, with nothing after it; an empty list has the
 /// empty byte string as its only encoding.
@@ -2931,9 +2931,9 @@ pub fn decode_claim_witnesses(
 /// of a block without dependencies. Anything else opens with the version byte
 /// its fork defines, and with no other:
 ///
-/// - before LStar, [`CLAIM_WITNESSES_VERSION_RAW`] followed by the RLP list of
+/// - before IStar, [`CLAIM_WITNESSES_VERSION_RAW`] followed by the RLP list of
 ///   at least one witness (EIP-8141 §Block Witnesses);
-/// - from LStar, [`CLAIM_WITNESSES_VERSION_AGGREGATED`] followed by
+/// - from IStar, [`CLAIM_WITNESSES_VERSION_AGGREGATED`] followed by
 ///   `rlp([aggregate_proof, [witness, ...]])`, where the proof is at most
 ///   [`MAX_AGGREGATE_PROOF_BYTES`] long and the proof and the list are not both
 ///   empty.
@@ -2950,7 +2950,7 @@ pub fn decode_claim_witnesses_at(
         return Ok(ClaimWitnesses::default());
     };
     let malformed = |error: RLPDecodeError| ClaimWitnessesDecodeError::Malformed(error.to_string());
-    match (*version, fork >= super::Fork::LStar) {
+    match (*version, fork >= super::Fork::IStar) {
         (CLAIM_WITNESSES_VERSION_RAW, false) => {
             let witnesses = Vec::<Bytes>::decode(encoded).map_err(malformed)?;
             if witnesses.is_empty() {
@@ -8381,11 +8381,12 @@ mod tests {
         assert_eq!(decode_claim_witnesses(&at_limit), Ok(vec![witness]));
     }
 
-    // From LStar one aggregate proof stands for the witnesses of the leanSPHINCS
+    // From IStar one aggregate proof stands for the witnesses of the leanSPHINCS
     // dependencies (EIP-8141 §Aggregation and EIP-8288 compatibility): only
-    // those are aggregated, and only from that fork.
+    // those are aggregated, and only from that fork. LStar, the fork after it,
+    // keeps the rule.
     #[test]
-    fn leansphincs_dependencies_are_aggregated_from_lstar() {
+    fn leansphincs_dependencies_are_aggregated_from_istar() {
         use crate::types::Fork;
         let dependency = |verifier: Address| Dependency {
             verifier,
@@ -8399,13 +8400,15 @@ mod tests {
                 assert!(!dependency(verifier).is_aggregated(fork));
             }
         }
-        assert!(dependency(LEANSPHINCS_VERIFIER).is_aggregated(Fork::LStar));
-        for verifier in [
-            SECP256K1_VERIFIER,
-            P256_VERIFIER,
-            Address::repeat_byte(0x7E),
-        ] {
-            assert!(!dependency(verifier).is_aggregated(Fork::LStar));
+        for fork in [Fork::IStar, Fork::LStar] {
+            assert!(dependency(LEANSPHINCS_VERIFIER).is_aggregated(fork));
+            for verifier in [
+                SECP256K1_VERIFIER,
+                P256_VERIFIER,
+                Address::repeat_byte(0x7E),
+            ] {
+                assert!(!dependency(verifier).is_aggregated(fork));
+            }
         }
     }
 
@@ -8415,7 +8418,7 @@ mod tests {
         // A block without dependencies has neither a proof nor a witness.
         assert_eq!(encode_aggregated_claim_witnesses(&[], &[]), Bytes::new());
         assert_eq!(
-            decode_claim_witnesses_at(Fork::LStar, &[]),
+            decode_claim_witnesses_at(Fork::IStar, &[]),
             Ok(ClaimWitnesses::default())
         );
         assert_eq!(aggregated_claim_witnesses_len(0, 0), 0);
@@ -8441,7 +8444,7 @@ mod tests {
                     .as_slice()
             );
             assert_eq!(
-                decode_claim_witnesses_at(Fork::LStar, &encoded),
+                decode_claim_witnesses_at(Fork::IStar, &encoded),
                 Ok(ClaimWitnesses {
                     aggregate_proof: proof.clone(),
                     witnesses: witnesses.clone(),
@@ -8467,8 +8470,9 @@ mod tests {
         );
     }
 
-    // Each fork defines one version byte: raw witnesses before LStar, and the
-    // aggregate proof with the remaining raw witnesses from LStar.
+    // Each fork defines one version byte: raw witnesses before IStar, and the
+    // aggregate proof with the remaining raw witnesses from IStar on, at LStar
+    // as at IStar.
     #[test]
     fn claim_witnesses_decode_only_under_the_version_of_their_fork() {
         use crate::types::Fork;
@@ -8480,15 +8484,18 @@ mod tests {
             decode_claim_witnesses_at(Fork::Hegota, &raw).map(|decoded| decoded.witnesses),
             Ok(witnesses.clone())
         );
-        assert_eq!(
-            decode_claim_witnesses_at(Fork::LStar, &aggregated).map(|decoded| decoded.witnesses),
-            Ok(witnesses)
-        );
-        // The raw form in an LStar block, and the aggregated form before LStar.
-        assert_eq!(
-            decode_claim_witnesses_at(Fork::LStar, &raw),
-            Err(ClaimWitnessesDecodeError::UnknownVersion(0x00))
-        );
+        for fork in [Fork::IStar, Fork::LStar] {
+            assert_eq!(
+                decode_claim_witnesses_at(fork, &aggregated).map(|decoded| decoded.witnesses),
+                Ok(witnesses.clone())
+            );
+            // The raw form in a block from IStar on.
+            assert_eq!(
+                decode_claim_witnesses_at(fork, &raw),
+                Err(ClaimWitnessesDecodeError::UnknownVersion(0x00))
+            );
+        }
+        // The aggregated form before IStar.
         assert_eq!(
             decode_claim_witnesses_at(Fork::Hegota, &aggregated),
             Err(ClaimWitnessesDecodeError::UnknownVersion(0x01))
@@ -8496,7 +8503,7 @@ mod tests {
         // A version byte no fork defines.
         let mut unknown = aggregated.to_vec();
         unknown[0] = 0x02;
-        for fork in [Fork::Hegota, Fork::LStar] {
+        for fork in [Fork::Hegota, Fork::IStar, Fork::LStar] {
             assert_eq!(
                 decode_claim_witnesses_at(fork, &unknown),
                 Err(ClaimWitnessesDecodeError::UnknownVersion(0x02))
@@ -8507,7 +8514,7 @@ mod tests {
     #[test]
     fn malformed_aggregated_claim_witnesses_do_not_decode() {
         use crate::types::Fork;
-        let decode = |bytes: &[u8]| decode_claim_witnesses_at(Fork::LStar, bytes);
+        let decode = |bytes: &[u8]| decode_claim_witnesses_at(Fork::IStar, bytes);
         let encoded =
             encode_aggregated_claim_witnesses(&[0x5A; 300], &[Bytes::from(vec![0xAB; 65])])
                 .to_vec();
@@ -8568,14 +8575,14 @@ mod tests {
         let proof_at_limit = vec![0x5A; MAX_AGGREGATE_PROOF_BYTES];
         let encoded = encode_aggregated_claim_witnesses(&proof_at_limit, &[]);
         assert_eq!(
-            decode_claim_witnesses_at(Fork::LStar, &encoded).map(|decoded| decoded.aggregate_proof),
+            decode_claim_witnesses_at(Fork::IStar, &encoded).map(|decoded| decoded.aggregate_proof),
             Ok(Bytes::from(proof_at_limit))
         );
         let encoded =
             encode_aggregated_claim_witnesses(&[0x5A; MAX_AGGREGATE_PROOF_BYTES + 1], &[]);
         assert!(encoded.len() <= MAX_BLOCK_WITNESS_BYTES);
         assert_eq!(
-            decode_claim_witnesses_at(Fork::LStar, &encoded),
+            decode_claim_witnesses_at(Fork::IStar, &encoded),
             Err(ClaimWitnessesDecodeError::AggregateProofTooLong(
                 MAX_AGGREGATE_PROOF_BYTES + 1
             ))
@@ -8587,7 +8594,7 @@ mod tests {
         let over = encode_aggregated_claim_witnesses(&[0x5A; 300], &[witness.clone(), witness]);
         assert!(over.len() > MAX_BLOCK_WITNESS_BYTES);
         assert_eq!(
-            decode_claim_witnesses_at(Fork::LStar, &over),
+            decode_claim_witnesses_at(Fork::IStar, &over),
             Err(ClaimWitnessesDecodeError::TooLong(over.len()))
         );
     }

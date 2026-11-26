@@ -41,7 +41,7 @@ rayon = ["dep:rayon"]
 secp256k1 = []
 # Links the native leanSPHINCS verifiers behind EIP-8141's `LEANSPHINCS_VERIFIER`
 # claims: the signature verifier, and the verifier of the aggregate proof that
-# stands for those signatures in a block from LStar. Without it every such claim
+# stands for those signatures in a block from IStar. Without it every such claim
 # is treated as unsatisfied.
 leansphincs = ["ethrex-crypto/leansphincs", "ethrex-crypto/leansphincs-aggregation"]
 

@@ -8,7 +8,7 @@
 //! `ethrex-vm`, which stateless execution shares; this module runs them on a
 //! block about to be imported and reports what it saw.
 //!
-//! From LStar a block carries one aggregate proof in place of the witnesses of
+//! From IStar a block carries one aggregate proof in place of the witnesses of
 //! its leanSPHINCS dependencies (EIP-8141 §Aggregation and EIP-8288
 //! compatibility). A pending transaction is unchanged: it travels with its
 //! witnesses and the pool verifies each one. The builder of a block makes the
@@ -31,7 +31,7 @@ use ethrex_metrics::claims::METRICS_CLAIMS;
 /// Witnesses): the block's `claim_witnesses` holds exactly one witness for each
 /// entry of `block_dependencies`, in the same order, and each witness satisfies
 /// its dependency against the block's pre-state, the state `vm` was created over.
-/// From LStar one aggregate proof satisfies the leanSPHINCS dependencies, and the
+/// From IStar one aggregate proof satisfies the leanSPHINCS dependencies, and the
 /// block holds a witness for each of the others.
 ///
 /// It runs on every import path, including blocks assembled from an engine
@@ -48,7 +48,7 @@ pub fn validate_claim_witnesses(block: &Block, vm: &Evm) -> Result<(), ChainErro
     metrics!({
         // The check passed, so the byte string decodes under the block's fork.
         // The witnesses counted are the raw ones; the bytes also count the
-        // aggregate proof that stands for the others from LStar on.
+        // aggregate proof that stands for the others from IStar on.
         let claim_witnesses = block
             .body
             .claim_witnesses
@@ -94,13 +94,13 @@ pub enum ClaimAggregationError {
 }
 
 /// Builds the prover's program and starts its threads, which the first proof
-/// does otherwise. A node calls this when it starts to build an LStar payload,
-/// so the first payload it has to prove does not wait for it.
+/// does otherwise. A node calls this when it starts to build a payload of IStar
+/// or a later fork, so the first payload it has to prove does not wait for it.
 pub fn prepare_claim_aggregation() {
     leansphincs_aggregation_setup();
 }
 
-/// Builds the aggregate proof a block carries from LStar for its leanSPHINCS
+/// Builds the aggregate proof a block carries from IStar for its leanSPHINCS
 /// dependencies, from each of them with the witness that satisfies it. Without
 /// dependencies the proof is empty.
 ///

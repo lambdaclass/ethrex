@@ -1,7 +1,7 @@
-//! EIP-8141 claims across LStar, in the VM and in the verification of the
+//! EIP-8141 claims across IStar, in the VM and in the verification of the
 //! aggregate proof.
 //!
-//! From LStar a block carries one aggregate proof in place of the witnesses of
+//! From IStar a block carries one aggregate proof in place of the witnesses of
 //! its leanSPHINCS dependencies (EIP-8141 §Aggregation and EIP-8288
 //! compatibility). The transaction does not change, so neither does what it is
 //! charged: every charge of a claim follows from the transaction body. The
@@ -123,11 +123,12 @@ fn gas_used(fork: Fork, claims: Vec<Claim>) -> u64 {
 
 // EIP-8141 derives every charge of a claim from the transaction body, and names
 // a later discount for aggregated witnesses without defining it. So a
-// leanSPHINCS claim pays in an LStar block, where one proof stands for its
+// leanSPHINCS claim pays in an IStar block, where one proof stands for its
 // witness, what it pays in a Hegota block, which carries the witness: its
-// verification, its witness bytes and its metadata.
+// verification, its witness bytes and its metadata. LStar, the fork after
+// IStar, charges the same.
 #[test]
-fn a_leansphincs_claim_is_charged_the_same_gas_before_and_after_lstar() {
+fn a_leansphincs_claim_is_charged_the_same_gas_before_and_after_istar() {
     let leansphincs = Claim {
         verifier: LEANSPHINCS_VERIFIER,
         key: Bytes::from(vec![0x06; 32]),
@@ -141,8 +142,9 @@ fn a_leansphincs_claim_is_charged_the_same_gas_before_and_after_lstar() {
     assert_eq!(claim_gas + metadata, 44_764);
 
     let with_claim = |fork: Fork| gas_used(fork, vec![leansphincs.clone()]);
-    assert_eq!(with_claim(Fork::Hegota), with_claim(Fork::LStar));
-    for fork in [Fork::Hegota, Fork::LStar] {
+    assert_eq!(with_claim(Fork::Hegota), with_claim(Fork::IStar));
+    assert_eq!(with_claim(Fork::IStar), with_claim(Fork::LStar));
+    for fork in [Fork::Hegota, Fork::IStar, Fork::LStar] {
         assert_eq!(
             with_claim(fork) - gas_used(fork, Vec::new()),
             claim_gas + metadata

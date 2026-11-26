@@ -176,7 +176,7 @@ pub fn leansphincs_verifier(input: &[u8]) -> bool {
 
 /// Whether `aggregate_proof` proves that every dependency of `dependencies`,
 /// all of `LEANSPHINCS_VERIFIER`, has a valid signature: that the key of each
-/// signed its message. It is how a block satisfies those dependencies from LStar
+/// signed its message. It is how a block satisfies those dependencies from IStar
 /// on, with one proof in place of their witnesses (EIP-8141 §Aggregation and
 /// EIP-8288 compatibility).
 ///

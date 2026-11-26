@@ -346,7 +346,7 @@ pub struct BlockBody {
     /// empty when the block's transactions have no dependencies; otherwise it is
     /// a version byte followed by the RLP list of one witness for each entry of
     /// `block_dependencies` over the transactions, in the same order (see
-    /// [`encode_claim_witnesses`](super::encode_claim_witnesses)). From LStar the
+    /// [`encode_claim_witnesses`](super::encode_claim_witnesses)). From IStar the
     /// version byte is followed by one aggregate proof for the leanSPHINCS
     /// dependencies and by the list of the witnesses of the others (see
     /// [`encode_aggregated_claim_witnesses`](super::encode_aggregated_claim_witnesses)).
@@ -1577,6 +1577,86 @@ mod test {
             }
         }
         assert_eq!(seen.len(), 4);
+    }
+
+    // The trailing fields of the header at the three forks that have claim
+    // witnesses. A Hegota header ends with the commitment to them. IStar changes
+    // what the commitment covers, one aggregate proof in place of the leanSPHINCS
+    // witnesses, and adds no field, so an IStar header has the same fields. An
+    // LStar header carries `burned_fees` (EIP-8079) after the commitment.
+    #[test]
+    fn hegota_istar_and_lstar_headers_roundtrip_and_pass_the_header_rules() {
+        let chain_config = ChainConfig {
+            shanghai_time: Some(0),
+            cancun_time: Some(0),
+            prague_time: Some(0),
+            osaka_time: Some(0),
+            amsterdam_time: Some(0),
+            hegota_time: Some(0),
+            istar_time: Some(1_000),
+            lstar_time: Some(2_000),
+            ..Default::default()
+        };
+        let parent = BlockHeader {
+            blob_gas_used: Some(0),
+            excess_blob_gas: Some(0),
+            ..Default::default()
+        };
+        let commitment = H256::repeat_byte(0x5A);
+        let header_at = |timestamp: u64, burned_fees: Option<u64>| BlockHeader {
+            timestamp,
+            base_fee_per_gas: Some(1),
+            withdrawals_root: Some(H256::zero()),
+            blob_gas_used: Some(0),
+            excess_blob_gas: Some(0),
+            parent_beacon_block_root: Some(H256::zero()),
+            requests_hash: Some(H256::zero()),
+            block_access_list_hash: Some(H256::zero()),
+            slot_number: Some(7),
+            claim_witnesses_hash: Some(commitment),
+            burned_fees,
+            ..Default::default()
+        };
+        // The encoded commitment, a 32-byte string, and after it the burned fees.
+        let mut commitment_last = vec![0xa0];
+        commitment_last.extend_from_slice(commitment.as_bytes());
+        let mut burned_fees_last = commitment_last.clone();
+        burned_fees_last.push(11);
+
+        let mut encodings = Vec::new();
+        for (fork, timestamp, burned_fees, last_fields) in [
+            (Fork::Hegota, 500, None, &commitment_last),
+            (Fork::IStar, 1_500, None, &commitment_last),
+            (Fork::LStar, 2_500, Some(11u64), &burned_fees_last),
+        ] {
+            assert_eq!(chain_config.fork(timestamp), fork);
+            let header = header_at(timestamp, burned_fees);
+            let encoded = header.encode_to_vec();
+            assert!(encoded.ends_with(last_fields), "{fork:?}");
+            let decoded = BlockHeader::decode(&encoded).expect("the header decodes");
+            assert_eq!(decoded, header, "{fork:?}");
+            assert_eq!(decoded.slot_number, Some(7));
+            assert_eq!(decoded.claim_witnesses_hash, Some(commitment));
+            assert_eq!(decoded.burned_fees, burned_fees);
+            validate_prague_header_fields(&header, &parent, &chain_config)
+                .unwrap_or_else(|error| panic!("{fork:?}: {error}"));
+
+            // The commitment is required at each of the three forks.
+            let mut uncommitted = header.clone();
+            uncommitted.claim_witnesses_hash = None;
+            assert!(
+                matches!(
+                    validate_prague_header_fields(&uncommitted, &parent, &chain_config),
+                    Err(InvalidBlockHeaderError::ClaimWitnessesHashNotPresent)
+                ),
+                "{fork:?}"
+            );
+            encodings.push(encoded);
+        }
+        // The Hegota and the IStar header have the same fields: their encodings
+        // differ in the timestamp alone. The LStar header is one field longer.
+        assert_eq!(encodings[0].len(), encodings[1].len());
+        assert_eq!(encodings[2].len(), encodings[1].len() + 1);
     }
 
     #[test]

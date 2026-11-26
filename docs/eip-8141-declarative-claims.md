@@ -11,8 +11,8 @@ transactions described in [EIP-8141](./eip-8141.md) and is part of `Fork::Hegota
 with it. This branch started from an implementation of [EIP-8504](./eip-8504.md) and reuses its
 block field, its Engine API field and its pool storage for a different design.
 
-From `Fork::LStar` a block carries one aggregate proof in place of its leanSPHINCS witnesses.
-Everything up to [LStar](#lstar-one-proof-for-the-leansphincs-claims) describes the Hegotá
+From `Fork::IStar` a block carries one aggregate proof in place of its leanSPHINCS witnesses.
+Everything up to [IStar](#istar-one-proof-for-the-leansphincs-claims) describes the Hegotá
 block, and that section says what changes.
 
 ## Overview
@@ -292,7 +292,7 @@ Before the verifiers of rule 3 run, the gas of the block's claims is compared wi
 gas limit, which bounds the work of the check by one block's gas.
 
 The form of the byte string for a given version byte is decided in one function,
-`decode_claim_witnesses_at`, which before LStar rejects any version other than `0x00`.
+`decode_claim_witnesses_at`, which before IStar rejects any version other than `0x00`.
 
 The Engine API carries the field as `claimWitnesses`, one hex string, in the execution payload
 of `engine_newPayloadV5` and `engine_getPayloadV6` and in the payload bodies responses. The node
@@ -403,19 +403,19 @@ All under the `eip8141_claims_` prefix:
 | `eip8141_claims_admission_witness_verification_seconds` | Time verifying one transaction's protocol claims on admission |
 | `eip8141_claims_admitted_total`, `eip8141_claims_rejected_total{reason}` | Admissions, and rejections by the check that failed |
 
-## LStar: one proof for the leanSPHINCS claims
+## IStar: one proof for the leanSPHINCS claims
 
 The proposal leaves room for aggregation without defining it: "a future aggregation upgrade
 (such as EIP-8288) can introduce a new version byte (for example, `0x01`) for `claim_witnesses`
 to replace the raw witnesses of aggregatable protocol verifiers (such as `LEANSPHINCS_VERIFIER`)
 with a single recursive STARK while keeping unaggregated verifiers [...] as raw witnesses".
-ethrex does that from `Fork::LStar`, with leanVM's recursive aggregation as the proof system.
-Every choice the proposal leaves open is listed under
-[Decisions beyond the proposal](#the-lstar-block).
+ethrex does that from `Fork::IStar`, the fork right after Hegotá, with leanVM's recursive
+aggregation as the proof system. Every choice the proposal leaves open is listed under
+[Decisions beyond the proposal](#the-istar-block).
 
 Only the block changes:
 
-| | Hegotá | LStar |
+| | Hegotá | IStar |
 |---|---|---|
 | `tx_body`, `tx_hash`, signature hash, `HASCLAIM`, account code | | the same |
 | Pooled representation, RPC submission, gossip, what the pool verifies | | the same |
@@ -428,7 +428,7 @@ Only the block changes:
 To use it, schedule the fork. Nothing else changes for a node, for an account or for a sender:
 
 ```json
-"config": { "hegotaTime": 0, "lstarTime": 1798761600 }
+"config": { "hegotaTime": 0, "istarTime": 1798761600 }
 ```
 
 ### The block
@@ -440,12 +440,12 @@ To use it, schedule the fork. Nothing else changes for a node, for an account or
   at most `MAX_AGGREGATE_PROOF_BYTES` (1 MiB) long.
 - The list holds one raw witness for each of the other entries, in the order of
   `block_dependencies(block)`: secp256k1, P-256 and custom verifiers.
-- Each fork has one version byte. `0x00` is not valid from LStar, and `0x01` is not valid before.
+- Each fork has one version byte. `0x00` is not valid from IStar, and `0x01` is not valid before.
 - The header still commits to the whole byte string, `claim_witnesses_hash =
   keccak256(claim_witnesses)`, and the Engine API still carries it as `claimWitnesses`. No header
   field, payload field, storage table or peer-to-peer message is added.
 
-`verify_claim_witnesses` rejects an LStar block unless:
+`verify_claim_witnesses` rejects an IStar block unless:
 
 1. `claim_witnesses` is at most `MAX_BLOCK_WITNESS_BYTES` (2 MiB) long;
 2. the header's `claim_witnesses_hash` is its Keccak-256 hash;
@@ -463,11 +463,42 @@ block is invalid. The claims come from the block's transactions, never from the 
 The gas of the block's claims is still compared with the block's gas limit before a verifier
 runs or the proof is read.
 
+### The header, and LStar after IStar
+
+IStar adds no field to the header: `claim_witnesses_hash`, which Hegotá added, commits to the
+byte string in its new form. LStar is the fork after IStar. It keeps the block of IStar and
+adds what is its own, EIP-8079: the `burned_fees` header field and the EXECUTE precompile.
+
+| Fork | Trailing fields of the header | `claim_witnesses` of a block with dependencies |
+|---|---|---|
+| Hegotá | `..., slot_number, claim_witnesses_hash` | `0x00 \|\| rlp([witness, ...])` |
+| IStar | `..., slot_number, claim_witnesses_hash` | `0x01 \|\| rlp([aggregate_proof, [witness, ...]])` |
+| LStar | `..., slot_number, claim_witnesses_hash, burned_fees` | `0x01 \|\| rlp([aggregate_proof, [witness, ...]])` |
+
+- **Layout.** A Hegotá header and an IStar header have the same fields, so they decode alike.
+  An LStar header has one more: `burned_fees` stays the last field of the header, after
+  `claim_witnesses_hash`. Trailing fields decode by position and by type, and the two cannot be
+  taken for each other: the commitment is a 32-byte string and `burned_fees` an integer of at
+  most 8 bytes.
+- **`burned_fees`.** The builder sets it from LStar only, so an IStar block has none and an
+  LStar block has it beside the proof. A node that imports a block does not compare the field
+  with what it recomputes, at any fork: the block hash covers it, and the stateless
+  verification of a payload recomputes it.
+- **Genesis.** A block without dependencies has the empty byte string as its `claim_witnesses`
+  at every fork, with no version byte. A chain that starts in Hegotá, in IStar or in LStar
+  therefore has the same claim witnesses in its genesis block: the empty byte string in the
+  body and `claim_witnesses_hash = keccak256("")` in the header. The genesis header has no
+  `burned_fees` at any of the three.
+- **LStar without IStar.** A block's rules follow from the position of its fork in the fork
+  list, here as for every other fork of ethrex. A chain that schedules `lstarTime` and not
+  `istarTime` goes from Hegotá blocks to LStar blocks, and its LStar blocks carry the aggregate
+  proof.
+
 ### Gas
 
 Nothing changes. The proposal derives every charge from `tx_body` and says that a protocol
 witness "can later be discounted when replaced by an aggregate proof" without giving the
-discount. A leanSPHINCS claim therefore pays 13,200 + 4 × 7,740 gas and its metadata in an LStar
+discount. A leanSPHINCS claim therefore pays 13,200 + 4 × 7,740 gas and its metadata in an IStar
 block as in a Hegotá one, although the block does not carry its witness. A transaction signed
 before the fork costs the same when it is included after it.
 
@@ -476,15 +507,15 @@ before the fork costs the same when it is included after it.
 A proof is about 200 KB for one signature and grows slowly: about 325 KB for 320. Measured by
 the tests, in bytes:
 
-| Block | `claim_witnesses` at Hegotá | `claim_witnesses` at LStar | of which proof |
+| Block | `claim_witnesses` at Hegotá | `claim_witnesses` at IStar | of which proof |
 |---|---|---|---|
 | 1 transaction, 1 leanSPHINCS dependency | 7,747 | 202,626 | 202,616 |
 | 5 transactions, 4 leanSPHINCS dependencies and 2 others | 31,076 | 232,247 | 232,136 |
 | 5 transactions, 320 leanSPHINCS dependencies | 2,476,800 of witnesses: does not fit | 324,066 | 324,056 |
 
-With few leanSPHINCS dependencies the LStar block is the larger one: the proof of one signature
+With few leanSPHINCS dependencies the IStar block is the larger one: the proof of one signature
 takes the room of 26 raw witnesses. Above 270 of them, the most a Hegotá block holds, only an
-LStar block exists.
+IStar block exists.
 
 ### Mempool and block building
 
@@ -492,7 +523,7 @@ The pool is the Hegotá pool: a transaction is submitted with the raw witness of
 the pool verifies each one natively and keeps them, and peers exchange the pooled
 representation.
 
-The builder takes the witnesses from the pool as before. From LStar:
+The builder takes the witnesses from the pool as before. From IStar:
 
 - it sets the leanSPHINCS witnesses aside and writes the raw witnesses of the other
   dependencies;
@@ -510,7 +541,7 @@ The builder takes the witnesses from the pool as before. From LStar:
 ### Stateless execution
 
 The verifier of the aggregate proof is linked with the leanSPHINCS verifier, by the same
-`leansphincs` feature. A build without it refuses an LStar block that has a
+`leansphincs` feature. A build without it refuses an IStar block that has a
 `LEANSPHINCS_VERIFIER` claim, as it refuses a Hegotá one, and verifies every other block.
 
 ### Files
@@ -609,7 +640,7 @@ Each entry gives what the proposal says or leaves open, and then what ethrex doe
     and `claimWitnesses` when it returns full transactions.
 21. **Genesis.** A genesis at Hegotá commits to `keccak256("")` and has empty claim witnesses.
 22. **Version byte.** One function, `decode_claim_witnesses_at`, decides what the byte string
-    means for each version byte, and before LStar it accepts only `0x00`.
+    means for each version byte, and before IStar it accepts only `0x00`.
 
 ### Mempool and block building
 
@@ -694,18 +725,22 @@ Each entry gives what the proposal says or leaves open, and then what ethrex doe
 42. **Devnet network file.** `fixtures/networks/pq-el-devnet-0.yaml` is removed: it described a
     network for the design this branch started from.
 
-### The LStar block
+### The IStar block
 
 43. **Activation.** The proposal speaks of "a future aggregation upgrade" and names no fork.
-    ethrex activates it with `Fork::LStar` (`lstarTime`), the fork it lists after Hegotá, and
-    adds no switch of its own. LStar also activates EIP-8079 in ethrex, which is independent.
+    ethrex activates it with `Fork::IStar` (`istarTime`), the fork right after Hegotá, and adds
+    no switch of its own. LStar, the fork after IStar, keeps the block of IStar and activates
+    EIP-8079, which is independent: an IStar block has no `burned_fees`, and an LStar block has
+    the proof and `burned_fees`. See
+    [The header, and LStar after IStar](#the-header-and-lstar-after-istar) for the header at
+    each fork, the genesis block and a chain that schedules LStar without IStar.
 44. **Encoding of version `0x01`.** The proposal names the version byte and what the byte
     string carries, not how. ethrex encodes `0x01 || rlp([aggregate_proof, [witness, ...]])`:
     the proof first, as one byte string, then the list of raw witnesses. A block without
     dependencies keeps the empty byte string as its only form, as in decision 15: `0x01 ||
     rlp(["", []])`, a list with any other number of items and bytes after the list are invalid.
 45. **One version byte per fork.** The proposal says an upgrade can introduce a version byte
-    and does not say what becomes of `0x00`. ethrex accepts `0x00` only before LStar and `0x01`
+    and does not say what becomes of `0x00`. ethrex accepts `0x00` only before IStar and `0x01`
     only from it, so a block has one valid form and no builder can leave leanSPHINCS witnesses
     raw.
 46. **Which dependencies the proof covers.** The proposal says "aggregatable protocol verifiers
@@ -757,7 +792,7 @@ Each entry gives what the proposal says or leaves open, and then what ethrex doe
 55. **One feature for both verifiers.** The `leansphincs` feature of `ethrex-levm` links the
     signature verifier and the proof verifier, so `LEANSPHINCS_VERIFIER_LINKED` answers for
     both and stateless execution refuses what it cannot check at either fork (decision 38).
-56. **Metrics.** The same metrics. From LStar the witnesses counted are the raw ones, and the
+56. **Metrics.** The same metrics. From IStar the witnesses counted are the raw ones, and the
     bytes include the proof. The builder logs the proving time and the proof's size at debug
     level.
 57. **Test-suite exception names.** The two errors of the proof are mapped to
@@ -831,7 +866,7 @@ Each entry gives what the proposal says or leaves open, and then what ethrex doe
 ## Not implemented
 
 - **Aggregation beyond the block.** The block's leanSPHINCS witnesses are aggregated from
-  LStar, by its builder. There is no aggregation in the pool or between peers, no discount on a
+  IStar, by its builder. There is no aggregation in the pool or between peers, no discount on a
   claim's gas, no other aggregatable verifier and no proof of a custom verifier's execution.
 - **Verifying the aggregate proof in a zkVM guest.** A guest build links neither leanSPHINCS
   verifier and refuses a block with such a claim.

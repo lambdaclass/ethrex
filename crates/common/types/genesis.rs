@@ -857,8 +857,11 @@ impl Genesis {
             .is_amsterdam_activated(self.timestamp)
             .then_some(self.slot_number.unwrap_or(0));
 
-        // EIP-8141, part of Hegota: a chain that starts in Hegota commits, at
-        // genesis, to empty claim witnesses.
+        // EIP-8141, part of Hegota: a chain that starts in Hegota or in a later
+        // fork commits, at genesis, to empty claim witnesses. The empty byte
+        // string is their only form without dependencies at every fork, so the
+        // commitment is the same whether the blocks of the chain carry raw
+        // witnesses or, from IStar, an aggregate proof.
         let claim_witnesses_hash = (self.config.fork(self.timestamp) >= Fork::Hegota)
             .then(|| compute_claim_witnesses_hash(&[], &NativeCrypto));
 
@@ -1895,5 +1898,36 @@ mod tests {
             block.header.claim_witnesses_hash,
             Some(compute_claim_witnesses_hash(&[], &NativeCrypto))
         );
+    }
+
+    // From IStar a block carries one aggregate proof in place of its leanSPHINCS
+    // witnesses, under the same header field. A block without dependencies has
+    // neither, so a chain that starts in IStar, or in LStar after it, commits at
+    // genesis to the same empty byte string as one that starts in Hegota.
+    #[test]
+    fn genesis_commits_to_empty_claim_witnesses_when_it_starts_in_istar_or_lstar() {
+        for (istar_time, lstar_time, fork) in [
+            (Some(0), None, Fork::IStar),
+            (Some(0), Some(0), Fork::LStar),
+            (None, Some(0), Fork::LStar),
+        ] {
+            let genesis = Genesis {
+                config: ChainConfig {
+                    hegota_time: Some(0),
+                    istar_time,
+                    lstar_time,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            assert_eq!(genesis.config.fork(genesis.timestamp), fork);
+            let block = genesis.get_block();
+            assert_eq!(block.body.claim_witnesses, Some(Bytes::new()), "{fork:?}");
+            assert_eq!(
+                block.header.claim_witnesses_hash,
+                Some(compute_claim_witnesses_hash(&[], &NativeCrypto)),
+                "{fork:?}"
+            );
+        }
     }
 }

@@ -154,7 +154,7 @@ const PATTERNS: &[Entry] = &[
     Entry { canonical: "BlockException.INVALID_BAL_HASH", kind: Kind::Re,
         text: r"BAL validation failed" },
     // EIP-8141 §Block Witnesses: claim witnesses that are not one valid witness
-    // per dependency, or from LStar one valid aggregate proof and one valid
+    // per dependency, or from IStar one valid aggregate proof and one valid
     // witness per dependency it does not cover, and a header commitment that
     // does not match them.
     Entry { canonical: "BlockException.INVALID_CLAIM_WITNESSES", kind: Kind::Re,
