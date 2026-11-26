@@ -914,6 +914,11 @@ pub async fn init_l1(
         Err(error) => return Err(eyre::eyre!("Failed to create Store: {error}")),
     };
 
+    // Read from the store: getting it from the genesis file hashes every account in it.
+    if let Some(genesis_hash) = store.get_canonical_block_hash_sync(0)? {
+        info!("Genesis Block Hash: {genesis_hash:x}");
+    }
+
     if opts.syncmode == SyncMode::Full {
         store.generate_flatkeyvalue()?;
     }

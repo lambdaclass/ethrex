@@ -14,6 +14,8 @@ pub enum ChainDataIndex {
     // `EarliestBlockNumber` first, so it already stood for both bounds and the value
     // is kept.
     HistoryBoundsReconciled = 7,
+    // Fingerprint of the genesis that was last checked against the stored genesis block.
+    GenesisFingerprint = 8,
 }
 
 /// Represents the key for each unique value of the snap state stored in the db
