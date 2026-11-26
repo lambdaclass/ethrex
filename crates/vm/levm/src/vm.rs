@@ -2031,7 +2031,7 @@ impl<'a> VM<'a> {
         // because it also declared state gas.
         //
         // The intrinsic gas is that of this block's fork: what the transaction's
-        // dependencies cost changes at LStar (EIP-8288).
+        // dependencies cost changes at IStar (EIP-8288).
         let fork = self.env.config.fork;
         let capped_gas = frame_tx
             .mandatory_gas_at(fork)

@@ -1,7 +1,7 @@
 //! EIP-8288 dependency proof: one proof, carried by a block, that every
 //! dependency its transactions declare has a valid signature.
 //!
-//! From LStar a block does not carry the witnesses of its dependencies, the list
+//! From IStar a block does not carry the witnesses of its dependencies, the list
 //! EIP-8504 gives it. Its builder aggregates them into one proof, and the header
 //! commits to that proof and to the dependencies it proves. A pending transaction
 //! is unchanged: it travels with its witnesses, the pool verifies each one, and
@@ -41,8 +41,8 @@ pub enum DependencyProofError {
 }
 
 /// Builds the prover's program and starts its threads, which the first proof
-/// does otherwise. A node calls this when it starts to build an LStar payload,
-/// so the first payload it has to prove does not wait for it.
+/// does otherwise. A node calls this when it starts to build a payload from
+/// IStar on, so the first payload it has to prove does not wait for it.
 pub fn prepare_prover() {
     leansphincs_aggregation_setup();
 }
@@ -77,7 +77,7 @@ pub fn prove_dependencies(
 }
 
 /// EIP-8288 block validity, checked before the block executes, where the
-/// witnesses of EIP-8504 are checked before LStar:
+/// witnesses of EIP-8504 are checked before IStar:
 ///
 /// 1. the header's `block_deps_hash` is the digest of `block_dependencies`;
 /// 2. the dependency proof has at most `MAX_DEPENDENCY_PROOF_BYTES` bytes;
@@ -85,9 +85,11 @@ pub fn prove_dependencies(
 /// 4. the proof is empty when the block has no dependencies, and otherwise it
 ///    proves exactly the block's dependencies.
 ///
-/// From LStar the proof takes the place of the witness list, so a block that
+/// From IStar the proof takes the place of the witness list, so a block that
 /// still carries the list is invalid, as is a block that carries a proof before
-/// LStar. LStar is resolved through the fork ordinal, as execution resolves it.
+/// IStar. IStar is resolved through the fork ordinal, as execution resolves it,
+/// so a chain that schedules a later fork without naming IStar has these rules
+/// from that fork's activation.
 pub fn validate_dependency_proof(
     block: &Block,
     chain_config: &ChainConfig,
@@ -144,11 +146,13 @@ mod tests {
     };
 
     const HEGOTA: u64 = 1_000;
-    const LSTAR: u64 = 2_000;
+    const ISTAR: u64 = 2_000;
+    const LSTAR: u64 = 3_000;
 
     fn config() -> ChainConfig {
         ChainConfig {
             hegota_time: Some(HEGOTA),
+            istar_time: Some(ISTAR),
             lstar_time: Some(LSTAR),
             ..Default::default()
         }
@@ -201,12 +205,12 @@ mod tests {
     }
 
     #[test]
-    fn a_block_carries_a_dependency_proof_from_lstar_and_never_before() {
+    fn a_block_carries_a_dependency_proof_from_istar_and_never_before() {
         let config = config();
 
-        // Before LStar there is no proof to check, and a block that carries one
+        // Before IStar there is no proof to check, and a block that carries one
         // is invalid.
-        for timestamp in [HEGOTA - 1, HEGOTA, LSTAR - 1] {
+        for timestamp in [HEGOTA - 1, HEGOTA, ISTAR - 1] {
             validate_dependency_proof(&block(timestamp, None), &config).expect("no proof");
             let mut with_proof = block(timestamp, None);
             with_proof.body.dependency_proof = Some(Bytes::new());
@@ -217,8 +221,9 @@ mod tests {
             );
         }
 
-        // From LStar the block has a proof, empty when it has no dependencies.
-        for timestamp in [LSTAR, LSTAR + 1] {
+        // From IStar the block has a proof, empty when it has no dependencies,
+        // and LStar changes nothing of it.
+        for timestamp in [ISTAR, ISTAR + 1, LSTAR - 1, LSTAR, LSTAR + 1] {
             validate_dependency_proof(&block(timestamp, Some(Bytes::new())), &config)
                 .expect("the empty proof of a block without dependencies");
 
@@ -249,15 +254,21 @@ mod tests {
     }
 
     #[test]
-    fn a_chain_that_schedules_lstar_without_hegota_still_requires_the_proof() {
-        // Execution resolves the fork by its ordinal, so on this chain it accepts
-        // proof frames from LStar's activation. The proof must be required by the
-        // same test, or those frames would execute with no signature behind them.
-        let lstar_only = ChainConfig {
-            lstar_time: Some(LSTAR),
+    fn a_chain_that_schedules_istar_or_lstar_alone_still_requires_the_proof() {
+        // Execution resolves the fork by its ordinal, so a chain that schedules
+        // IStar without Hegota, or LStar without IStar, accepts proof frames from
+        // that fork's activation. The proof must be required by the same test, or
+        // those frames would execute with no signature behind them.
+        let istar_only = ChainConfig {
+            istar_time: Some(ISTAR),
             ..Default::default()
         };
-        assert!(lstar_only.hegota_time.is_none());
+        assert!(istar_only.hegota_time.is_none());
+        let lstar_only = ChainConfig {
+            lstar_time: Some(ISTAR),
+            ..Default::default()
+        };
+        assert!(lstar_only.hegota_time.is_none() && lstar_only.istar_time.is_none());
 
         // One transaction that depends on a signature of its own signature hash.
         let mut triple = vec![0u8; 31];
@@ -277,23 +288,25 @@ mod tests {
         });
 
         // The block commits to its dependency and to an empty proof.
-        let mut unproven = block(LSTAR, Some(Bytes::new()));
+        let mut unproven = block(ISTAR, Some(Bytes::new()));
         unproven.body.transactions = vec![transaction];
         let dependencies = block_dependencies(&unproven.body.transactions);
         assert_eq!(dependencies.len(), 1);
         unproven.header.block_deps_hash = Some(compute_deps_hash(&dependencies, &NativeCrypto));
-        let result = validate_dependency_proof(&unproven, &lstar_only);
-        assert!(
-            matches!(result, Err(InvalidBlockError::InvalidDependencyProof(1))),
-            "got {result:?}"
-        );
+        for config in [istar_only, lstar_only] {
+            let result = validate_dependency_proof(&unproven, &config);
+            assert!(
+                matches!(result, Err(InvalidBlockError::InvalidDependencyProof(1))),
+                "got {result:?}"
+            );
+        }
     }
 
     #[test]
     fn the_header_commitments_are_checked_before_the_proof() {
         let config = config();
 
-        let mut wrong_deps_hash = block(LSTAR, Some(Bytes::new()));
+        let mut wrong_deps_hash = block(ISTAR, Some(Bytes::new()));
         wrong_deps_hash.header.block_deps_hash = Some(H256::repeat_byte(0x01));
         let result = validate_dependency_proof(&wrong_deps_hash, &config);
         assert!(
@@ -306,7 +319,7 @@ mod tests {
             "got {result:?}"
         );
 
-        let mut wrong_proof_hash = block(LSTAR, Some(Bytes::new()));
+        let mut wrong_proof_hash = block(ISTAR, Some(Bytes::new()));
         wrong_proof_hash.header.dependency_proof_hash = Some(H256::repeat_byte(0x01));
         let result = validate_dependency_proof(&wrong_proof_hash, &config);
         assert!(
@@ -322,7 +335,7 @@ mod tests {
         // The size bound comes before the proof is hashed: a proof over it is
         // rejected for its size whatever the header commits to.
         let oversized = Bytes::from(vec![0u8; MAX_DEPENDENCY_PROOF_BYTES + 1]);
-        let mut too_large = block(LSTAR, Some(Bytes::new()));
+        let mut too_large = block(ISTAR, Some(Bytes::new()));
         too_large.body.dependency_proof = Some(oversized);
         let result = validate_dependency_proof(&too_large, &config);
         assert!(

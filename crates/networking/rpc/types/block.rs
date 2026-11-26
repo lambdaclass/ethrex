@@ -44,9 +44,9 @@ pub struct FullBlockBody {
         with = "serde_utils::bytes::vec_opt"
     )]
     pub dependency_witnesses: Option<Vec<Bytes>>,
-    /// EIP-8288: the block's dependency proof, the one proof an LStar block
-    /// carries for its dependencies in place of their witnesses. Present from
-    /// LStar. The form with transaction hashes only leaves it out; the header's
+    /// EIP-8288: the block's dependency proof, the one proof a block carries
+    /// for its dependencies in place of their witnesses. Present from IStar.
+    /// The form with transaction hashes only leaves it out; the header's
     /// `dependencyProofHash` commits to it either way.
     #[serde(
         rename = "dependencyProof",

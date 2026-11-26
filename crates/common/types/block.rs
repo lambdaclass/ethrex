@@ -196,14 +196,14 @@ pub struct BlockHeader {
     pub burned_fees: Option<u64>,
     /// EIP-8288: `keccak256(dependency_proof)`, the commitment to the proof the
     /// block carries for its dependencies in place of their witnesses. Present
-    /// from LStar, even when the block has no dependencies and the proof is
+    /// from IStar, even when the block has no dependencies and the proof is
     /// empty.
     #[serde(skip_serializing_if = "Option::is_none", default = "Option::default")]
     #[rkyv(with=crate::rkyv_utils::OptionH256Wrapper)]
     pub dependency_proof_hash: Option<H256>,
     /// EIP-8288: the digest of the block's dependencies (see
     /// [`compute_deps_hash`]), the statement the dependency proof is verified
-    /// against. Present from LStar.
+    /// against. Present from IStar.
     #[serde(skip_serializing_if = "Option::is_none", default = "Option::default")]
     #[rkyv(with=crate::rkyv_utils::OptionH256Wrapper)]
     pub block_deps_hash: Option<H256>,
@@ -303,9 +303,11 @@ impl RLPEncode for BlockHeader {
             // type, and this hash must not be taken for a later field.
             .encode_optional_field(&self.dependency_witnesses_hash)
             .encode_optional_field(&self.burned_fees)
-            // EIP-8288 appends its two hashes. A header never has them together
-            // with `dependency_witnesses_hash`, and `burned_fees`, an integer that
-            // is present whenever they are, keeps them apart from that hash.
+            // EIP-8288 appends its two hashes, after `burned_fees` in a header
+            // that has it. A header never has them together with
+            // `dependency_witnesses_hash`, so after `slot_number` a header has
+            // one hash (Hegota), two hashes (IStar) or an integer and two hashes
+            // (LStar), and the decoder tells the three apart.
             .encode_optional_field(&self.dependency_proof_hash)
             .encode_optional_field(&self.block_deps_hash)
             .finish();
@@ -343,6 +345,23 @@ impl RLPDecode for BlockHeader {
         let (burned_fees, decoder) = decoder.decode_optional_field();
         let (dependency_proof_hash, decoder) = decoder.decode_optional_field();
         let (block_deps_hash, decoder) = decoder.decode_optional_field();
+        // An IStar header ends with the two hashes of EIP-8288 and has no
+        // `burned_fees` before them, so the reads above took its first hash for
+        // `dependency_witnesses_hash` and its second for `dependency_proof_hash`.
+        // Two hashes with no integer between them are those two and nothing
+        // else: no header has the commitment to the witnesses together with a
+        // commitment of the proof.
+        let (dependency_witnesses_hash, dependency_proof_hash, block_deps_hash) = match (
+            dependency_witnesses_hash,
+            burned_fees,
+            dependency_proof_hash,
+            block_deps_hash,
+        ) {
+            (Some(proof_hash), None, Some(deps_hash), None) => {
+                (None, Some(proof_hash), Some(deps_hash))
+            }
+            (witnesses_hash, _, proof_hash, deps_hash) => (witnesses_hash, proof_hash, deps_hash),
+        };
 
         Ok((
             BlockHeader {
@@ -403,8 +422,8 @@ pub struct BlockBody {
     pub dependency_witnesses: Option<Vec<Bytes>>,
     /// EIP-8288: the block's dependency proof, one proof that every entry of
     /// `block_dependencies` over its transactions has a valid signature. From
-    /// LStar it takes the place of `dependency_witnesses`: `Some`, empty when the
-    /// block has no dependencies, from LStar; `None` before. No root of the body
+    /// IStar it takes the place of `dependency_witnesses`: `Some`, empty when the
+    /// block has no dependencies, from IStar; `None` before. No root of the body
     /// covers it; the header commits to it with `dependency_proof_hash`. It
     /// follows the body's other items in storage and on the network.
     #[serde(
@@ -933,7 +952,7 @@ pub fn validate_block_body(
         _ => return Err(InvalidBlockBodyError::DependencyWitnessesHashNotMatch),
     }
 
-    // EIP-8288: from LStar the header commits to the dependency proof the body
+    // EIP-8288: from IStar the header commits to the dependency proof the body
     // carries and to the dependencies of its transactions. The proof and the two
     // commitments are present together or not at all; whether they are required
     // is a header rule.
@@ -1080,7 +1099,7 @@ pub fn validate_prague_header_fields(
         }
     }
     // EIP-8504: the commitment to the dependency witnesses is a header field
-    // exactly while blocks carry them, from Hegota until LStar.
+    // exactly while blocks carry them, from Hegota until IStar.
     let fork = chain_config.fork(header.timestamp);
     if fork.has_dependency_witnesses() {
         if header.dependency_witnesses_hash.is_none() {
@@ -1089,7 +1108,7 @@ pub fn validate_prague_header_fields(
     } else if header.dependency_witnesses_hash.is_some() {
         return Err(InvalidBlockHeaderError::DependencyWitnessesHashPresent);
     }
-    // EIP-8288: from LStar the header commits to the dependency proof and to the
+    // EIP-8288: from IStar the header commits to the dependency proof and to the
     // dependencies it proves, and never before.
     if fork.has_dependency_proof() {
         if header.dependency_proof_hash.is_none() {
@@ -1830,23 +1849,27 @@ mod test {
         ));
     }
 
-    // EIP-8288: from LStar the block carries one proof for its dependencies, and
+    // EIP-8288: from IStar the block carries one proof for its dependencies, and
     // the header commits to the proof and to the dependencies it proves.
 
     #[test]
     fn dependency_proof_header_fields_roundtrip_in_the_shape_of_every_fork() {
         // The trailing fields a header has by fork: before Hegota none of the
-        // three hashes; from Hegota the commitment to the witnesses; from LStar
-        // `burned_fees` followed by the two hashes of EIP-8288, and no commitment
-        // to witnesses. `burned_fees` is an integer, so a decoder that reads the
-        // trailing fields by position and type attributes each hash to its field.
+        // three hashes; in Hegota the commitment to the witnesses; from IStar
+        // the two hashes of EIP-8288 and no commitment to witnesses; from LStar
+        // `burned_fees` before those two. One hash, two hashes, and an integer
+        // followed by two hashes: a decoder that reads the trailing fields by
+        // position and type attributes each hash to its field.
         let witnesses_hash = Some(H256::repeat_byte(0x5A));
         let proof_hash = Some(H256::repeat_byte(0x6B));
         let deps_hash = Some(H256::repeat_byte(0x7C));
         let shapes = [
             (None, None, None, None),
             (witnesses_hash, None, None, None),
+            (None, None, proof_hash, deps_hash),
             (None, Some(11u64), proof_hash, deps_hash),
+            // `burned_fees` of zero is the empty byte string, and still an integer.
+            (None, Some(0u64), proof_hash, deps_hash),
         ];
         let mut seen = std::collections::HashSet::new();
         for (dependency_witnesses_hash, burned_fees, dependency_proof_hash, block_deps_hash) in
@@ -1876,29 +1899,32 @@ mod test {
             assert!(seen.insert(header.compute_block_hash(&NativeCrypto)));
         }
 
-        // Each of the two hashes is part of the block hash.
-        let header = BlockHeader {
-            slot_number: Some(7),
-            burned_fees: Some(11),
-            dependency_proof_hash: proof_hash,
-            block_deps_hash: deps_hash,
-            ..Default::default()
-        };
-        let other_proof = BlockHeader {
-            dependency_proof_hash: deps_hash,
-            ..header.clone()
-        };
-        let other_deps = BlockHeader {
-            block_deps_hash: proof_hash,
-            ..header.clone()
-        };
-        assert_ne!(header.hash(), other_proof.compute_block_hash(&NativeCrypto));
-        assert_ne!(header.hash(), other_deps.compute_block_hash(&NativeCrypto));
+        // Each of the two hashes is part of the block hash, with and without
+        // `burned_fees` before them.
+        for burned_fees in [None, Some(11)] {
+            let header = BlockHeader {
+                slot_number: Some(7),
+                burned_fees,
+                dependency_proof_hash: proof_hash,
+                block_deps_hash: deps_hash,
+                ..Default::default()
+            };
+            let other_proof = BlockHeader {
+                dependency_proof_hash: deps_hash,
+                ..header.clone()
+            };
+            let other_deps = BlockHeader {
+                block_deps_hash: proof_hash,
+                ..header.clone()
+            };
+            assert_ne!(header.hash(), other_proof.compute_block_hash(&NativeCrypto));
+            assert_ne!(header.hash(), other_deps.compute_block_hash(&NativeCrypto));
+        }
     }
 
     #[test]
     fn dependency_proof_body_and_block_roundtrip() {
-        // A body has the witness list (Hegota), the proof (LStar) or neither. The
+        // A body has the witness list (Hegota), the proof (IStar) or neither. The
         // list is an RLP list and the proof a byte string, so each one reads back
         // as the item it was written as, the empty ones included.
         let witnesses = vec![Bytes::from(vec![0xAB; 7740])];

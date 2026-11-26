@@ -202,7 +202,7 @@ pub fn create_payload(
         dependency_witnesses_hash: fork
             .has_dependency_witnesses()
             .then(|| compute_dependency_witnesses_hash(&[], &NativeCrypto)),
-        // EIP-8288: from LStar, the commitments to the dependency proof and to
+        // EIP-8288: from IStar, the commitments to the dependency proof and to
         // the dependencies it proves. They are set again as the payload is
         // finalized and as its proof is made.
         dependency_proof_hash: fork
@@ -226,10 +226,10 @@ pub fn create_payload(
         withdrawals: chain_config
             .is_shanghai_activated(args.timestamp)
             .then(|| args.withdrawals.clone().unwrap_or_default()),
-        // EIP-8504: the list is part of the body from activation until LStar,
+        // EIP-8504: the list is part of the body from activation until IStar,
         // empty until a transaction with dependencies is included.
         dependency_witnesses: fork.has_dependency_witnesses().then(Vec::new),
-        // EIP-8288: from LStar the block carries one proof in its place, empty
+        // EIP-8288: from IStar the block carries one proof in its place, empty
         // while the block has no dependencies.
         dependency_proof: fork.has_dependency_proof().then(Bytes::new),
     };
@@ -294,7 +294,7 @@ pub struct PayloadBuildContext {
     /// EIP-8288: the dependencies of the finalized block, each with its witness,
     /// in the order of `block_dependencies`. The dependency proof is made from
     /// them (see [`PayloadBuildResult::with_dependency_proof`]). Empty before
-    /// LStar.
+    /// IStar.
     pub unproven_dependencies: Vec<(Dependency, Bytes)>,
 }
 
@@ -437,7 +437,7 @@ pub struct PayloadBuildResult {
     /// EIP-8288: the block's dependencies, each with its witness, that the
     /// dependency proof is still to be made from. While it is not empty the
     /// block has an empty proof in place of the real one and is not valid.
-    /// Empty before LStar, for a block without dependencies, and once
+    /// Empty before IStar, for a block without dependencies, and once
     /// [`Self::with_dependency_proof`] has put the proof in the block.
     pub unproven_dependencies: Vec<(Dependency, Bytes)>,
 }
@@ -536,8 +536,8 @@ impl Blockchain {
         // provider, so it holds complete blob data for every blob tx it may include.
         // Inert unless blob sampling is enabled.
         self.mempool.latch_eager_provider();
-        // EIP-8288: the payload of an LStar block is proven when it is handed
-        // out. The prover is prepared now, off this thread, so that the proof
+        // EIP-8288: the payload of a block from IStar on is proven when it is
+        // handed out. The prover is prepared now, off this thread, so that the proof
         // does not wait for it. It is done once in the process.
         if self
             .storage
@@ -1132,7 +1132,7 @@ impl Blockchain {
                     continue;
                 }
             };
-            // From LStar the block carries one proof in place of the witnesses
+            // From IStar the block carries one proof in place of the witnesses
             // (EIP-8288), and the proof is not part of the RLP block that the size
             // limit covers.
             let new_witnesses_size = if fork.has_dependency_witnesses() {
@@ -1566,7 +1566,7 @@ impl Blockchain {
             .dependency_witnesses
             .as_ref()
             .map(|witnesses| compute_dependency_witnesses_hash(witnesses, &NativeCrypto));
-        // EIP-8288: from LStar the block carries one proof in place of that list,
+        // EIP-8288: from IStar the block carries one proof in place of that list,
         // and the header commits to the dependencies the proof is for. The proof
         // itself is made later, once, from the witnesses gathered here; until
         // then the block keeps the empty proof it was created with.

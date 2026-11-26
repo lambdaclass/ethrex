@@ -273,7 +273,7 @@ impl CompletedGas {
 /// sync with the aggregation loop in [`execute_block_parallel`].
 ///
 /// `fork` is the fork of the block. It matters to a frame transaction alone: its
-/// intrinsic gas includes what its dependencies cost, which changes at LStar
+/// intrinsic gas includes what its dependencies cost, which changes at IStar
 /// (EIP-8288).
 pub fn check_2d_gas_allowance_at(
     fork: Fork,

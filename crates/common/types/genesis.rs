@@ -14,8 +14,8 @@ use tracing::warn;
 
 use super::{
     AccountState, Block, BlockBody, BlockHeader, BlockNumber, INITIAL_BASE_FEE,
-    compute_dependency_witnesses_hash, compute_receipts_root, compute_transactions_root,
-    compute_withdrawals_root,
+    compute_dependency_proof_hash, compute_dependency_witnesses_hash, compute_deps_hash,
+    compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
 };
 use crate::{
     constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, EMPTY_BLOCK_ACCESS_LIST_HASH},
@@ -350,15 +350,15 @@ pub enum Fork {
 impl Fork {
     /// EIP-8504: whether a block of this fork carries a witness for each of its
     /// dependencies, in a body list the header commits to. From Hegota until
-    /// LStar, where the dependency proof of EIP-8288 takes the list's place.
+    /// IStar, where the dependency proof of EIP-8288 takes the list's place.
     pub fn has_dependency_witnesses(self) -> bool {
-        self >= Fork::Hegota && self < Fork::LStar
+        self >= Fork::Hegota && self < Fork::IStar
     }
 
     /// EIP-8288: whether a block of this fork carries one proof for all of its
-    /// dependencies, which the header commits to. From LStar.
+    /// dependencies, which the header commits to. From IStar.
     pub fn has_dependency_proof(self) -> bool {
-        self >= Fork::LStar
+        self >= Fork::IStar
     }
 }
 
@@ -871,16 +871,20 @@ impl Genesis {
             .then_some(self.slot_number.unwrap_or(0));
 
         // EIP-8504, part of Hegota: a chain that starts in Hegota commits, at
-        // genesis, to an empty list of dependency witnesses. A chain that starts in
-        // LStar has no such list, and its genesis block has no dependency proof
-        // either: the header fields of EIP-8288 follow `burned_fees`, which a
-        // genesis header does not have, and without it they could not be told
-        // apart from this hash when the header is decoded.
-        let dependency_witnesses_hash = self
-            .config
-            .fork(self.timestamp)
+        // genesis, to an empty list of dependency witnesses.
+        let fork = self.config.fork(self.timestamp);
+        let dependency_witnesses_hash = fork
             .has_dependency_witnesses()
             .then(|| compute_dependency_witnesses_hash(&[], &NativeCrypto));
+        // EIP-8288, from IStar: a chain that starts in IStar or later commits, at
+        // genesis, to the empty dependency proof and to the empty list of
+        // dependencies it proves, and has no witness list.
+        let dependency_proof_hash = fork
+            .has_dependency_proof()
+            .then(|| compute_dependency_proof_hash(&[], &NativeCrypto));
+        let block_deps_hash = fork
+            .has_dependency_proof()
+            .then(|| compute_deps_hash(&[], &NativeCrypto));
 
         BlockHeader {
             parent_hash: H256::zero(),
@@ -907,21 +911,20 @@ impl Genesis {
             block_access_list_hash,
             slot_number,
             dependency_witnesses_hash,
+            dependency_proof_hash,
+            block_deps_hash,
             ..Default::default()
         }
     }
 
     fn get_block_body(&self) -> BlockBody {
+        let fork = self.config.fork(self.timestamp);
         BlockBody {
             transactions: vec![],
             ommers: vec![],
             withdrawals: Some(vec![]),
-            dependency_witnesses: self
-                .config
-                .fork(self.timestamp)
-                .has_dependency_witnesses()
-                .then(Vec::new),
-            dependency_proof: None,
+            dependency_witnesses: fork.has_dependency_witnesses().then(Vec::new),
+            dependency_proof: fork.has_dependency_proof().then(Bytes::new),
         }
     }
 
@@ -1886,35 +1889,111 @@ mod tests {
     }
 
     #[test]
-    fn blocks_carry_witnesses_from_hegota_and_a_proof_in_their_place_from_lstar() {
+    fn blocks_carry_witnesses_from_hegota_and_a_proof_in_their_place_from_istar() {
         assert!(!Fork::Amsterdam.has_dependency_witnesses());
         assert!(Fork::Hegota.has_dependency_witnesses());
+        assert!(!Fork::IStar.has_dependency_witnesses());
         assert!(!Fork::LStar.has_dependency_witnesses());
 
         assert!(!Fork::Amsterdam.has_dependency_proof());
         assert!(!Fork::Hegota.has_dependency_proof());
+        assert!(Fork::IStar.has_dependency_proof());
         assert!(Fork::LStar.has_dependency_proof());
     }
 
-    #[test]
-    fn genesis_that_starts_in_lstar_has_neither_a_witness_list_nor_a_dependency_proof() {
-        let genesis = Genesis {
+    /// A genesis whose header has every optional field of its fork: London and
+    /// every later fork through Hegota at genesis, and the two forks after it as
+    /// given.
+    fn genesis_scheduling(istar_time: Option<u64>, lstar_time: Option<u64>) -> Genesis {
+        Genesis {
             config: ChainConfig {
+                london_block: Some(0),
+                shanghai_time: Some(0),
+                cancun_time: Some(0),
+                prague_time: Some(0),
+                osaka_time: Some(0),
+                amsterdam_time: Some(0),
                 hegota_time: Some(0),
+                istar_time,
+                lstar_time,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn genesis_that_starts_in_istar_commits_to_the_empty_dependency_proof() {
+        use ethrex_rlp::decode::RLPDecode;
+
+        // A chain that starts in IStar, with LStar unscheduled, later or at
+        // genesis too, and a chain that schedules LStar alone, which is past
+        // IStar by its ordinal.
+        let lstar_alone = Genesis {
+            config: ChainConfig {
                 lstar_time: Some(0),
                 ..Default::default()
             },
             ..Default::default()
         };
-        let block = genesis.get_block();
-        assert_eq!(block.body.dependency_witnesses, None);
-        assert_eq!(block.header.dependency_witnesses_hash, None);
+        for genesis in [
+            genesis_scheduling(Some(0), None),
+            genesis_scheduling(Some(0), Some(1000)),
+            genesis_scheduling(Some(0), Some(0)),
+            lstar_alone,
+        ] {
+            let block = genesis.get_block();
+            assert_eq!(block.body.dependency_witnesses, None);
+            assert_eq!(block.header.dependency_witnesses_hash, None);
+            assert_eq!(block.body.dependency_proof, Some(Bytes::new()));
+            assert_eq!(
+                block.header.dependency_proof_hash,
+                Some(compute_dependency_proof_hash(&[], &NativeCrypto))
+            );
+            assert_eq!(
+                block.header.block_deps_hash,
+                Some(compute_deps_hash(&[], &NativeCrypto))
+            );
+            // A genesis header has no `burned_fees`, whatever its fork.
+            assert_eq!(block.header.burned_fees, None);
+        }
+
+        // The header reads back as it was written, and so does the block.
+        for lstar_time in [None, Some(0)] {
+            let block = genesis_scheduling(Some(0), lstar_time).get_block();
+            let decoded = BlockHeader::decode(&block.header.encode_to_vec()).expect("it decodes");
+            assert_eq!(decoded, block.header);
+            assert_eq!(
+                decoded.compute_block_hash(&NativeCrypto),
+                block.header.compute_block_hash(&NativeCrypto)
+            );
+            let decoded = Block::decode(&block.encode_to_vec()).expect("it decodes");
+            assert_eq!(decoded.header, block.header);
+            assert_eq!(decoded.body, block.body);
+        }
+    }
+
+    #[test]
+    fn genesis_before_istar_has_no_dependency_proof() {
+        use ethrex_rlp::decode::RLPDecode;
+
+        // Hegota at genesis and IStar later: the genesis block is a Hegota block.
+        let block = genesis_scheduling(Some(1000), None).get_block();
+        assert_eq!(block.body.dependency_witnesses, Some(Vec::new()));
+        assert_eq!(
+            block.header.dependency_witnesses_hash,
+            Some(compute_dependency_witnesses_hash(&[], &NativeCrypto))
+        );
         assert_eq!(block.body.dependency_proof, None);
         assert_eq!(block.header.dependency_proof_hash, None);
         assert_eq!(block.header.block_deps_hash, None);
-        // The header reads back as it was written.
-        use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
         let decoded = BlockHeader::decode(&block.header.encode_to_vec()).expect("it decodes");
         assert_eq!(decoded, block.header);
+
+        // Before Hegota it has neither.
+        let plain = Genesis::default().get_block();
+        assert_eq!(plain.body.dependency_proof, None);
+        assert_eq!(plain.header.dependency_proof_hash, None);
+        assert_eq!(plain.header.block_deps_hash, None);
     }
 }

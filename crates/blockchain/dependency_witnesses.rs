@@ -49,7 +49,7 @@ pub fn satisfies(dependency: &Dependency, witness: &[u8]) -> bool {
 /// field alone, a chain that schedules a later fork without naming Hegota would
 /// execute proof frames with no signature behind them.
 ///
-/// From LStar a block carries one proof in place of the list (EIP-8288), and
+/// From IStar a block carries one proof in place of the list (EIP-8288), and
 /// `validate_dependency_proof` checks the proof. A block without a list has
 /// nothing to check here. One that still carries a list is invalid there
 /// whatever the list holds; the list is held to the block's dependencies all

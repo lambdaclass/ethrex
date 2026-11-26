@@ -909,7 +909,7 @@ impl Blockchain {
         // assembled from an engine payload, whose body commitments are derived and
         // so say nothing about whether the witnesses are valid.
         validate_dependency_witnesses(block, &chain_config)?;
-        // EIP-8288: from LStar one proof stands for those witnesses. It is checked
+        // EIP-8288: from IStar one proof stands for those witnesses. It is checked
         // against the block's dependencies on every path too, with the header's
         // commitments to the proof and to the dependencies.
         validate_dependency_proof(block, &chain_config)?;
