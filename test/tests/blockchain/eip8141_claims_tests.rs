@@ -22,9 +22,10 @@ use ethrex_common::{
     types::{
         Block, Claim, DEFAULT_BUILDER_GAS_CEIL, Dependency, ELASTICITY_MULTIPLIER, Frame,
         FrameMode, FrameTransaction, Genesis, GenesisAccount, LEANSPHINCS_SIGNATURE_SIZE,
-        LEANSPHINCS_VERIFIER, MAX_BLOCK_WITNESS_BYTES, P2PTransaction, PooledFrameTransaction,
-        SECP256K1_VERIFIER, Transaction, block_access_list::BlockAccessList, block_dependencies,
-        compute_claim_witnesses_hash, decode_claim_witnesses, encode_claim_witnesses,
+        LEANSPHINCS_VERIFIER, MAX_BLOCK_WITNESS_BYTES, MAX_CLAIM_WITNESS_BYTES, P2PTransaction,
+        PooledFrameTransaction, SECP256K1_VERIFIER, Transaction,
+        block_access_list::BlockAccessList, block_dependencies, compute_claim_witnesses_hash,
+        decode_claim_witnesses, encode_claim_witnesses,
     },
 };
 use ethrex_crypto::NativeCrypto;
@@ -805,6 +806,53 @@ async fn the_pool_counts_every_claim_toward_the_validation_gas_budget() {
         .expect("two claims are within the default budget");
 }
 
+// A block carries at most MAX_BLOCK_WITNESS_BYTES of claim witnesses, so the pool
+// does not take a transaction that needs more than that for itself: no block
+// could include it. Claims that resolve to one dependency need one witness.
+#[tokio::test]
+async fn the_pool_rejects_a_frame_transaction_whose_witnesses_cannot_fit_a_block() {
+    let verifier = H160([0x77; 20]);
+    let (store, chain_id) = setup_store_at(&[], &[], true).await;
+    let blockchain = blockchain(store);
+    let witness_len = MAX_CLAIM_WITNESS_BYTES;
+    let witness = Bytes::from(vec![0u8; usize::try_from(witness_len).unwrap()]);
+    let claim = |key: u8| Claim {
+        verifier,
+        key: Bytes::from(vec![key; 32]),
+        msg: Bytes::new(),
+        gas_limit: CUSTOM_CLAIM_GAS,
+        witness_len,
+    };
+    let pooled_with = |claims: Vec<Claim>| PooledFrameTransaction {
+        witnesses: vec![witness.clone(); claims.len()],
+        tx: frame_transaction(chain_id, CUSTOM_ACCOUNT, claims),
+        blobs_bundle: None,
+    };
+
+    // Three witnesses of the largest size a claim may declare are over the limit.
+    let result = blockchain
+        .add_frame_transaction_to_pool(pooled_with(vec![claim(1), claim(2), claim(3)]))
+        .await;
+    assert!(
+        matches!(
+            result,
+            Err(MempoolError::ClaimWitnessesTooLarge { actual, limit })
+                if limit == MAX_BLOCK_WITNESS_BYTES && actual > limit
+        ),
+        "got {result:?}"
+    );
+
+    // The same three claims on one dependency need one witness in a block, so
+    // this limit does not reject them. The transaction fails a later check.
+    let result = blockchain
+        .add_frame_transaction_to_pool(pooled_with(vec![claim(1), claim(1), claim(1)]))
+        .await;
+    assert!(
+        matches!(&result, Err(error) if !matches!(error, MempoolError::ClaimWitnessesTooLarge { .. })),
+        "got {result:?}"
+    );
+}
+
 #[tokio::test]
 async fn the_pool_rejects_a_frame_transaction_before_hegota() {
     let key = key(0x59);
@@ -1116,6 +1164,69 @@ async fn a_custom_verifier_must_be_deployed_before_the_block_that_relies_on_it()
     .await;
 }
 
+// The builder verifies a custom claim against the pre-state of the block it
+// builds, which need not be the state the pool admitted the transaction on. A
+// transaction whose claim does not hold there is left out and leaves the pool.
+#[tokio::test]
+async fn the_builder_leaves_out_a_transaction_whose_custom_claim_fails_in_the_pre_state() {
+    let deployer = key(0x62);
+    let verifier = calculate_create_address(FACTORY, 1);
+    let accounts = [
+        (
+            FACTORY,
+            GenesisAccount {
+                nonce: 1,
+                ..funded(FACTORY_CODE.to_vec())
+            },
+        ),
+        (
+            CUSTOM_ACCOUNT,
+            funded(claim_account_code(verifier, CUSTOM_KEY)),
+        ),
+    ];
+    let (store, chain_id) = setup_store_at(&[&deployer], &accounts, true).await;
+    let blockchain = blockchain(store.clone());
+
+    // Block 1 deploys the verifier and becomes the head.
+    let mut deploy = claim_transaction(chain_id, &deployer, Vec::new());
+    deploy.frames[1] = Frame {
+        mode: u8::from(FrameMode::Sender),
+        target: Some(FACTORY),
+        gas_limit: 200_000,
+        state_gas_limit: 1_000_000,
+        data: Bytes::from(init_code(&custom_verifier_code())),
+        ..Default::default()
+    };
+    deploy.max_fee = U256::from(10 * GWEI) * U256::from(deploy.max_gas());
+    let deploy = pooled(deploy, &[&deployer]);
+    blockchain
+        .add_frame_transaction_to_pool(deploy.clone())
+        .await
+        .expect("the deployment enters the pool");
+    let block_1 = build_block(&store, &blockchain).payload;
+    assert_eq!(block_1.body.transactions.len(), 1);
+    blockchain.add_block(block_1.clone()).expect("block 1");
+    make_head(&store, &block_1).await;
+    blockchain
+        .remove_transaction_from_pool(&tx_hash(&deploy.tx))
+        .unwrap();
+
+    // The pool admits the claim against the head, where the verifier exists.
+    let custom_tx = frame_transaction(chain_id, CUSTOM_ACCOUNT, vec![custom_claim(verifier)]);
+    let hash = blockchain
+        .add_frame_transaction_to_pool(custom_pooled(custom_tx, CUSTOM_WITNESS))
+        .await
+        .expect("the claim holds against the head");
+    assert!(blockchain.mempool.contains_tx(hash).unwrap());
+
+    // A block built on the genesis block has a pre-state without the verifier.
+    let sibling = build_block_on(&store, &blockchain, 0).payload;
+    assert!(sibling.body.transactions.is_empty());
+    assert_eq!(sibling.body.claim_witnesses, Some(Bytes::new()));
+    assert!(!blockchain.mempool.contains_tx(hash).unwrap());
+    assert_eq!(blockchain.mempool.get_claim_witnesses(hash).unwrap(), None);
+}
+
 // A claim's gas is part of its transaction's intrinsic gas, which the block's gas
 // limit bounds. A block's claims are verified before it executes, so that bound
 // is checked first: a block whose claims take more gas than its limit is
@@ -1203,6 +1314,50 @@ async fn a_block_whose_claims_take_more_gas_than_its_limit_is_rejected_before_th
         |error| matches!(error, InvalidBlockError::ClaimNotSatisfied(0)),
     )
     .await;
+}
+
+// A claim whose `key` or `msg` has a length the EIP does not define has no
+// dependency. Its transaction is invalid, so a block that includes it is
+// rejected by the claim check, before anything executes.
+#[tokio::test]
+async fn a_block_with_a_malformed_claim_is_rejected() {
+    let signer = key(0x71);
+    let fresh_store = || async { setup_store(&[&signer]).await.0 };
+    let (store, chain_id) = setup_store(&[&signer]).await;
+    let blockchain = blockchain(store.clone());
+    let built = build_block(&store, &blockchain);
+    let empty = built.payload;
+    let bal = Arc::new(built.block_access_list.expect("a Hegota block has a BAL"));
+
+    for (what, key, msg) in [
+        ("a 5-byte key", Bytes::from(vec![1u8; 5]), Bytes::new()),
+        ("a 31-byte msg", Bytes::new(), Bytes::from(vec![1u8; 31])),
+    ] {
+        let mut block = empty.clone();
+        let tx = frame_transaction(
+            chain_id,
+            signer.account,
+            vec![Claim {
+                verifier: LEANSPHINCS_VERIFIER,
+                key,
+                msg,
+                gas_limit: 0,
+                witness_len: 0,
+            }],
+        );
+        block
+            .body
+            .transactions
+            .push(Transaction::FrameTransaction(tx));
+        assert_rejected_on_both_paths(
+            with_witnesses(block, &[Bytes::from(vec![0u8; 32])]),
+            &bal,
+            fresh_store,
+            what,
+            |error| matches!(error, InvalidBlockError::MalformedClaim),
+        )
+        .await;
+    }
 }
 
 // A block carries at most MAX_BLOCK_WITNESS_BYTES of claim witnesses: the builder
