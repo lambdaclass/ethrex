@@ -17,8 +17,10 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     str::FromStr,
     sync::{Arc, OnceLock},
+    time::{SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error;
+use tracing::error;
 
 use crate::utils::node_id;
 
@@ -57,7 +59,8 @@ impl SharedLocalNode {
     ///
     /// Goes through [`NodeRecord::edit`], so the record is re-signed with
     /// `seq` bumped once, and discovery advertises the new `seq` on its next
-    /// PING or PONG; peers then fetch the record. `signer` must be the key the
+    /// PING or PONG; peers then fetch the record. A record whose `seq` is
+    /// exhausted is reset instead (see [`edit_local_record`]). `signer` must be the key the
     /// record is signed with. `id` and `secp256k1` are kept as they are, since
     /// they are fixed by that key. Leave the endpoint entries (`ip`, `ip6`,
     /// `tcp`, `udp`) to discovery: IP voting rewrites them, and
@@ -85,9 +88,9 @@ impl SharedLocalNode {
             }
             let id = pairs.id.clone();
             let mut next = current.clone();
-            next.record.edit(signer, |pairs| {
+            edit_local_record(&mut next.record, signer, |pairs| {
                 edit(pairs);
-                pairs.id = id;
+                pairs.id = id.clone();
                 pairs.secp256k1 = Some(signer_key);
             })?;
             Ok(next)
@@ -111,6 +114,53 @@ impl SharedLocalNode {
             current = Guard::into_inner(previous);
         }
     }
+}
+
+/// Apply `edit` to the live local record through [`NodeRecord::edit`], and
+/// reset the record if its `seq` is exhausted.
+///
+/// Every writer of the record discovery serves goes through here: a
+/// consumer's [`SharedLocalNode::edit_record`], IP voting and the fork id
+/// refresh. A `seq` at `u64::MAX` leaves no higher `seq` to sign an edit at,
+/// so the record is rebuilt with the edit applied and `seq` restarted from
+/// [`seq_from_clock`], rather than left unable to change. Peers that cached
+/// the record at the old `seq` never fetch the new one and keep the stale copy
+/// until they drop it; that is logged, since only a corrupted or hand-edited
+/// saved `seq` gets this far.
+pub(crate) fn edit_local_record<F>(
+    record: &mut NodeRecord,
+    signer: &SecretKey,
+    mut edit: F,
+) -> Result<(), NodeError>
+where
+    F: FnMut(&mut NodeRecordPairs),
+{
+    match record.edit(signer, &mut edit) {
+        Err(NodeError::SeqExhausted) => {
+            let restart_seq = seq_from_clock();
+            error!(
+                seq = record.seq,
+                restart_seq,
+                "The local ENR's seq is at its maximum; resetting the record at a seq from the clock. Peers that cached the old record keep it until they drop it"
+            );
+            let mut pairs = record.pairs.clone();
+            edit(&mut pairs);
+            *record = NodeRecord::from_pairs(restart_seq, signer, pairs)?;
+            Ok(())
+        }
+        result => result,
+    }
+}
+
+/// The current time in milliseconds since the Unix epoch, the `seq` a local
+/// record starts from, as geth does, so a restart serves a higher `seq` than
+/// the run before it without a saved one. Zero if the clock reads before the
+/// epoch.
+pub fn seq_from_clock() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or_default()
 }
 
 /// Holds the local node's network addressing configuration, separating the
@@ -160,6 +210,10 @@ pub enum NodeError {
     MissingField(String),
     #[error("Signature error: {0}")]
     SignatureError(String),
+    /// The record's `seq` is at `u64::MAX`, so an edit has no higher `seq` to
+    /// sign it at.
+    #[error("ENR seq is at its maximum and cannot be bumped")]
+    SeqExhausted,
 }
 
 const MAX_NODE_RECORD_ENCODED_SIZE: usize = 300;
@@ -704,13 +758,19 @@ impl NodeRecord {
     /// carries the entries [`Self::from_node`] knows how to derive, so anything
     /// the caller added separately is silently lost, and stitching the lost
     /// entries back on afterwards bumps `seq` a second time.
+    ///
+    /// Fails with [`NodeError::SeqExhausted`] when `seq` is already
+    /// `u64::MAX`, with the record unchanged. Deciding what to do then is the
+    /// caller's: the local record's writers reset it through
+    /// [`edit_local_record`].
     pub fn edit<F>(&mut self, signer: &SecretKey, apply_edit: F) -> Result<(), NodeError>
     where
         F: FnOnce(&mut NodeRecordPairs),
     {
+        let seq = self.seq.checked_add(1).ok_or(NodeError::SeqExhausted)?;
         let mut edited = self.clone();
         apply_edit(&mut edited.pairs);
-        edited.seq += 1;
+        edited.seq = seq;
         edited.signature = edited.sign_record(signer)?;
 
         *self = edited;
@@ -939,5 +999,75 @@ mod tests {
                 "expected ParseError for {enode:?}, got {result:?}"
             );
         }
+    }
+
+    const LOCAL_IP: Ipv4Addr = Ipv4Addr::new(203, 0, 113, 7);
+
+    /// A record at `u64::MAX`, carrying an entry no edit below mentions.
+    fn exhausted_record(signer: &SecretKey) -> NodeRecord {
+        let mut pairs = NodeRecordPairs {
+            ip: Some(LOCAL_IP),
+            udp_port: Some(30303),
+            ..Default::default()
+        };
+        assert!(pairs.set_extra(b"marker", vec![1u8]));
+        NodeRecord::from_pairs(u64::MAX, signer, pairs).unwrap()
+    }
+
+    /// `seq += 1` at `u64::MAX` panicked in a debug build and, in a release
+    /// build, signed the record at `seq` 0, below every copy peers hold. The
+    /// edit is refused instead, and the record stays as it was.
+    #[test]
+    fn an_edit_at_the_maximum_seq_is_refused() {
+        let signer = test_signer();
+        let mut record = exhausted_record(&signer);
+        let before = record.clone();
+
+        let result = record.edit(&signer, |pairs| pairs.tcp_port = Some(30303));
+
+        assert!(
+            matches!(result, Err(NodeError::SeqExhausted)),
+            "got {result:?}"
+        );
+        assert_eq!(record, before);
+    }
+
+    /// The live local record still takes an edit once its `seq` is exhausted:
+    /// it is reset at a `seq` from the clock, keeping every entry it had.
+    #[test]
+    fn an_exhausted_local_record_is_reset_from_the_clock() {
+        let signer = test_signer();
+        let node = Node::new(
+            IpAddr::V4(LOCAL_IP),
+            30303,
+            30303,
+            crate::utils::public_key_from_signing_key(&signer),
+        );
+        let local_node = SharedLocalNode::new(LocalNode {
+            node,
+            record: exhausted_record(&signer),
+        });
+        let before_ms = seq_from_clock();
+
+        let edited = local_node
+            .edit_record(&signer, |pairs| {
+                pairs.set_extra(b"eth2", vec![0xab; 16]);
+            })
+            .unwrap();
+
+        let reset = &edited.record;
+        assert!(
+            (before_ms..=seq_from_clock()).contains(&reset.seq),
+            "seq {} must restart from the clock",
+            reset.seq
+        );
+        assert_eq!(reset.pairs().extra(b"eth2"), Some(vec![0xab; 16].into()));
+        assert_eq!(reset.pairs().extra(b"marker"), Some(vec![1u8].into()));
+        assert_eq!(reset.pairs().ip, Some(LOCAL_IP));
+        assert!(reset.verify_signature());
+
+        // The slot holds the reset record, so the next edit is a plain bump.
+        local_node.edit_record(&signer, |_| {}).unwrap();
+        assert_eq!(local_node.load().record.seq, reset.seq + 1);
     }
 }

@@ -3,7 +3,7 @@ use crate::discovery::query::NodeQuery;
 use crate::discv5::messages::Message;
 use crate::{
     discv5::messages::Packet,
-    types::{Node, NodeRecord},
+    types::{Node, NodeRecord, edit_local_record},
 };
 use bytes::Bytes;
 use ethrex_common::H256;
@@ -190,21 +190,24 @@ impl Discv5State {
 /// Every other entry is left as it is.
 ///
 /// [`NodeRecord::edit`] commits only once the new signature is in hand, so a
-/// failed re-sign leaves both the node and the record untouched.
+/// failed re-sign leaves both the node and the record untouched. A record whose
+/// `seq` is exhausted is reset with the new address (see [`edit_local_record`]).
 pub(crate) fn update_local_ip(
     local_node: &mut Node,
     local_node_record: &mut NodeRecord,
     signer: &secp256k1::SecretKey,
     new_ip: IpAddr,
 ) {
-    let edited = local_node_record.edit(signer, |pairs| match new_ip.to_canonical() {
-        IpAddr::V4(ip) => {
-            pairs.ip = Some(ip);
-            pairs.ip6 = None;
-        }
-        IpAddr::V6(ip) => {
-            pairs.ip6 = Some(ip);
-            pairs.ip = None;
+    let edited = edit_local_record(local_node_record, signer, |pairs| {
+        match new_ip.to_canonical() {
+            IpAddr::V4(ip) => {
+                pairs.ip = Some(ip);
+                pairs.ip6 = None;
+            }
+            IpAddr::V6(ip) => {
+                pairs.ip6 = Some(ip);
+                pairs.ip = None;
+            }
         }
     });
     if let Err(err) = edited {
@@ -322,6 +325,23 @@ mod tests {
 
         assert_eq!(record.pairs().ip, Some(Ipv4Addr::new(203, 0, 113, 7)));
         assert_eq!(record.pairs().ip6, None, "the stale entry must be cleared");
+        assert!(record.verify_signature());
+    }
+
+    #[test]
+    fn update_local_ip_resets_an_exhausted_record() {
+        // With `seq` at `u64::MAX` the edit has no `seq` to land at. Refusing it
+        // would drop the address change and keep sending peers to the old
+        // address for good, so the record is reset with the change instead.
+        let (mut node, record, signer) = local_identity(None);
+        let mut record = NodeRecord::from_pairs(u64::MAX, &signer, record.pairs().clone()).unwrap();
+
+        update_local_ip(&mut node, &mut record, &signer, NEW_IP);
+
+        assert_eq!(node.ip, NEW_IP);
+        assert_eq!(record.pairs().ip, Some(Ipv4Addr::new(203, 0, 113, 7)));
+        assert_eq!(record.pairs().extra_int::<u16>(b"quic"), Some(QUIC_PORT));
+        assert!(record.seq < u64::MAX, "seq must restart below the maximum");
         assert!(record.verify_signature());
     }
 

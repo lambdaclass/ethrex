@@ -22,7 +22,7 @@ use ethrex_p2p::{
     peer_table::{PeerTable, PeerTableServer},
     sync::{BackfillConfig, HistoryChain, SyncMode},
     sync_manager::SyncManager,
-    types::{LocalNode, NetworkConfig, Node, NodeRecord, SharedLocalNode},
+    types::{LocalNode, NetworkConfig, Node, NodeRecord, SharedLocalNode, seq_from_clock},
     utils::public_key_from_signing_key,
 };
 use ethrex_storage::{
@@ -736,11 +736,8 @@ pub fn get_local_node_record(
             None
         }
     };
-    let now_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
-        .unwrap_or_default();
-    NodeRecord::from_node(local_p2p_node, starting_enr_seq(saved_seq, now_ms), signer)
+    let seq = starting_enr_seq(saved_seq, seq_from_clock());
+    NodeRecord::from_node(local_p2p_node, seq, signer)
         .expect("Node record could not be created from local node")
 }
 
@@ -757,6 +754,10 @@ pub fn get_local_node_record(
 /// `seq` because the clock was behind it, and then exited abruptly, can be
 /// followed by one serving a `seq` no higher than its last, since neither the
 /// disk nor the clock saw the edits it made.
+///
+/// A saved `seq` at `u64::MAX` (only a corrupted or hand-edited file holds
+/// one) starts there: the first edit, which adds the local entries, then finds
+/// it exhausted and resets the record at a `seq` from the clock, with an error.
 fn starting_enr_seq(saved_seq: Option<u64>, now_ms: u64) -> u64 {
     saved_seq.map_or(0, |seq| seq.saturating_add(1)).max(now_ms)
 }
