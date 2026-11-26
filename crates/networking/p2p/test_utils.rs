@@ -32,7 +32,7 @@ pub fn local_node_record(
 ) -> Result<NodeRecord, NodeError> {
     let mut record = NodeRecord::from_node(node, INITIAL_ENR_SEQ, signer)?;
     record.edit(signer, |pairs| {
-        crate::network::add_local_entries(pairs, fork_id)
+        crate::network::add_local_entries(&mut crate::types::LocalRecordEdit::new(pairs), fork_id)
     })?;
     Ok(record)
 }

@@ -14,7 +14,7 @@ use crate::{
         p2p::SUPPORTED_SNAP_CAPABILITIES,
     },
     tx_broadcaster::{TxBroadcaster, TxBroadcasterError},
-    types::{NetworkConfig, Node, NodeError, NodeRecordPairs, SharedLocalNode},
+    types::{LocalRecordEdit, NetworkConfig, Node, NodeError, SharedLocalNode},
 };
 use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
@@ -168,7 +168,9 @@ fn announce_entries(
     signer: &SecretKey,
     fork_id: Option<ForkId>,
 ) -> Result<(), NodeError> {
-    local_node.edit_record(signer, |pairs| add_local_entries(pairs, fork_id.clone()))?;
+    local_node.edit_record(signer, |entries| {
+        add_local_entries(entries, fork_id.clone())
+    })?;
     Ok(())
 }
 
@@ -177,9 +179,9 @@ fn announce_entries(
 /// so the record always carries the `snap` entry, listing the served versions
 /// (ethereum/devp2p#286). DNS discovery lists such as the EIP-1459 `snap.*` trees
 /// select snap servers by this entry.
-pub(crate) fn add_local_entries(pairs: &mut NodeRecordPairs, fork_id: Option<ForkId>) {
-    pairs.eth = fork_id;
-    pairs.snap = Some(vec![1, 2]);
+pub(crate) fn add_local_entries(entries: &mut LocalRecordEdit<'_>, fork_id: Option<ForkId>) {
+    entries.set_eth(fork_id);
+    entries.set_snap(Some(vec![1, 2]));
 }
 
 /// Starts discovery, the RLPx listener and the tasks around them.

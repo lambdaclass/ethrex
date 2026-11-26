@@ -40,6 +40,16 @@ pub const SESSION_TTL: Duration = Duration::from_secs(3600);
 /// enough for a multi-packet NODES response over a slow link, short enough that
 /// a request id cannot be replayed against us much later.
 const PENDING_FINDNODE_TIMEOUT: Duration = Duration::from_secs(10);
+/// The most NODES packets one FINDNODE's answer is taken from: the first
+/// packet's `total` is believed only up to here, and a packet past the answer
+/// is dropped as unsolicited. geth's limit (`totalNodesResponseLimit`).
+///
+/// Without one, a peer could answer a single FINDNODE with packet after packet
+/// until `PENDING_FINDNODE_TIMEOUT`, each full of records made up to match what
+/// a predicate query looks for, and the query would spend its slots asking
+/// those records' nodes. ethrex's own answers fit, see
+/// `discv5_handle_find_node`.
+pub(crate) const MAX_NODES_RESPONSES: u64 = 5;
 
 /// Source IP a discv5 session was established from, paired with when the session was last
 /// used so idle entries can be evicted (see `SESSION_TTL`).
@@ -50,6 +60,27 @@ const PENDING_FINDNODE_TIMEOUT: Duration = Duration::from_secs(10);
 pub struct SessionSource {
     pub ip: IpAddr,
     pub last_used: Instant,
+}
+
+/// A FINDNODE we sent whose NODES answer is not complete yet.
+#[derive(Debug, Clone, Copy)]
+pub struct PendingFindNode {
+    /// When it was sent, or last re-sent after a WHOAREYOU.
+    pub sent_at: Instant,
+    /// NODES packets still accepted: unknown until the first one arrives, then
+    /// that packet's `total`, capped at [`MAX_NODES_RESPONSES`], counting down.
+    packets_due: Option<u64>,
+}
+
+/// A NODES packet that answers a FINDNODE of ours, as
+/// [`Discv5State::accept_nodes_packet`] counted it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct AcceptedNodes {
+    /// The lookup that sent the FINDNODE, if any.
+    pub(crate) owner: Option<LookupId>,
+    /// Whether it completes the answer. The FINDNODE is then no longer
+    /// pending, so a later packet for it is dropped.
+    pub(crate) last: bool,
 }
 
 /// Discv5-specific state held within the unified DiscoveryServer.
@@ -79,21 +110,21 @@ pub struct Discv5State {
     pub(crate) active_queries: Vec<NodeQuery>,
     /// Which lookup sent each FINDNODE, keyed like `pending_findnodes`, so a
     /// NODES response reaches the lookup that asked and no other. A FINDNODE
-    /// sent outside any lookup, such as an ENR refresh, has no entry. Expires
+    /// sent outside any lookup, such as an ENR refresh, has no entry. Leaves
     /// with its `pending_findnodes` entry.
     pub(crate) findnode_owners: FxHashMap<(H256, Bytes), LookupId>,
     /// Whether a query tick is scheduled, so a second one is never armed.
     pub(crate) query_tick_armed: bool,
     next_lookup_id: u64,
-    /// FINDNODE requests we sent and have not yet timed out, keyed by
+    /// FINDNODE requests we sent whose answer is not complete yet, keyed by
     /// (peer node id, request id). A NODES response is only accepted if it
     /// matches one of these: without the check, any peer with a session can
     /// push arbitrary ENRs into the peer table by sending an unsolicited
     /// NODES, and we then serve them back from our own FINDNODE responses.
-    /// Entries are not removed on first use, because a single response may be
-    /// split across up to `total` packets sharing one request id; they expire
-    /// via `PENDING_FINDNODE_TIMEOUT` instead.
-    pub pending_findnodes: FxHashMap<(H256, Bytes), Instant>,
+    /// An answer may span several packets sharing one request id, so an entry
+    /// stays until the packets its answer is allowed are in (see
+    /// `accept_nodes_packet`), or until `PENDING_FINDNODE_TIMEOUT`.
+    pub pending_findnodes: FxHashMap<(H256, Bytes), PendingFindNode>,
 }
 
 impl Default for Discv5State {
@@ -140,6 +171,51 @@ impl Discv5State {
         id
     }
 
+    /// Note a FINDNODE sent to `node_id`, so its NODES answer is accepted.
+    ///
+    /// Every send path calls this, so none can issue a FINDNODE unregistered.
+    /// A resend of the same request after a WHOAREYOU restarts its timeout but
+    /// keeps the packets already counted against it.
+    pub(crate) fn record_findnode_sent(&mut self, node_id: H256, req_id: Bytes, now: Instant) {
+        self.pending_findnodes
+            .entry((node_id, req_id))
+            .and_modify(|pending| pending.sent_at = now)
+            .or_insert(PendingFindNode {
+                sent_at: now,
+                packets_due: None,
+            });
+    }
+
+    /// Count one NODES packet from `sender` answering our FINDNODE `req_id`,
+    /// one of `total`.
+    ///
+    /// `None` means drop it: it answers no FINDNODE of ours, or arrives after
+    /// the answer was complete. The first packet's `total` is the one believed,
+    /// as geth does: read as at least one, the packet itself, and at most
+    /// [`MAX_NODES_RESPONSES`]. The packet that completes the answer takes the
+    /// FINDNODE out of `pending_findnodes` and `findnode_owners`.
+    pub(crate) fn accept_nodes_packet(
+        &mut self,
+        sender: H256,
+        req_id: &Bytes,
+        total: u64,
+    ) -> Option<AcceptedNodes> {
+        let key = (sender, req_id.clone());
+        let pending = self.pending_findnodes.get_mut(&key)?;
+        let due = pending
+            .packets_due
+            .get_or_insert(total.clamp(1, MAX_NODES_RESPONSES));
+        *due -= 1;
+        let last = *due == 0;
+        let owner = if last {
+            self.pending_findnodes.remove(&key);
+            self.findnode_owners.remove(&key)
+        } else {
+            self.findnode_owners.get(&key).copied()
+        };
+        Some(AcceptedNodes { owner, last })
+    }
+
     /// Remove stale entries from pending caches.
     pub fn cleanup_stale_entries(&mut self) {
         let now = Instant::now();
@@ -152,7 +228,7 @@ impl Discv5State {
         let removed_messages = before_messages - self.pending_by_nonce.len();
 
         self.pending_findnodes
-            .retain(|_key, timestamp| now.duration_since(*timestamp) < PENDING_FINDNODE_TIMEOUT);
+            .retain(|_key, pending| now.duration_since(pending.sent_at) < PENDING_FINDNODE_TIMEOUT);
         self.findnode_owners
             .retain(|key, _| self.pending_findnodes.contains_key(key));
 
@@ -343,6 +419,96 @@ mod tests {
         assert_eq!(record.pairs().extra_int::<u16>(b"quic"), Some(QUIC_PORT));
         assert!(record.seq < u64::MAX, "seq must restart below the maximum");
         assert!(record.verify_signature());
+    }
+
+    const PEER: H256 = H256::repeat_byte(0xab);
+
+    /// What [`Discv5State::accept_nodes_packet`] makes of each of `totals`, one
+    /// packet each, answering one FINDNODE: `Some(last)` for a packet taken.
+    fn answer(state: &mut Discv5State, totals: &[u64]) -> Vec<Option<bool>> {
+        let req_id = Bytes::from_static(&[1]);
+        totals
+            .iter()
+            .map(|total| {
+                state
+                    .accept_nodes_packet(PEER, &req_id, *total)
+                    .map(|accepted| accepted.last)
+            })
+            .collect()
+    }
+
+    fn with_findnode_sent() -> Discv5State {
+        let mut state = Discv5State::default();
+        state.record_findnode_sent(PEER, Bytes::from_static(&[1]), Instant::now());
+        state
+    }
+
+    #[test]
+    fn a_nodes_packet_nobody_asked_for_is_dropped() {
+        assert_eq!(answer(&mut Discv5State::default(), &[1]), vec![None]);
+    }
+
+    #[test]
+    fn an_answer_ends_at_the_first_packets_total() {
+        // Later packets cannot stretch the answer by claiming a larger total.
+        let mut state = with_findnode_sent();
+        assert_eq!(
+            answer(&mut state, &[2, 5, 5]),
+            vec![Some(false), Some(true), None]
+        );
+        assert!(state.pending_findnodes.is_empty());
+    }
+
+    #[test]
+    fn an_answer_is_cut_off_at_geths_packet_limit() {
+        // A peer claiming more packets than the limit, so as to keep feeding
+        // records into a query, gets only the limit's worth taken.
+        let mut state = with_findnode_sent();
+        let taken = answer(&mut state, &[200; 7]);
+        let mut expected = vec![Some(false); MAX_NODES_RESPONSES as usize - 1];
+        expected.extend([Some(true), None, None]);
+        assert_eq!(taken, expected);
+    }
+
+    #[test]
+    fn a_total_of_zero_still_counts_its_own_packet() {
+        let mut state = with_findnode_sent();
+        assert_eq!(answer(&mut state, &[0, 0]), vec![Some(true), None]);
+    }
+
+    #[test]
+    fn a_findnode_resent_after_whoareyou_keeps_its_count() {
+        let mut state = with_findnode_sent();
+        assert_eq!(answer(&mut state, &[2]), vec![Some(false)]);
+        state.record_findnode_sent(PEER, Bytes::from_static(&[1]), Instant::now());
+        assert_eq!(answer(&mut state, &[2, 2]), vec![Some(true), None]);
+    }
+
+    #[test]
+    fn the_packet_that_completes_an_answer_releases_its_owner() {
+        let mut state = with_findnode_sent();
+        let owner = state.next_lookup_id();
+        let key = (PEER, Bytes::from_static(&[1]));
+        state.findnode_owners.insert(key.clone(), owner);
+
+        let req_id = &key.1;
+        let first = state.accept_nodes_packet(PEER, req_id, 2);
+        assert_eq!(
+            first,
+            Some(AcceptedNodes {
+                owner: Some(owner),
+                last: false
+            })
+        );
+        let second = state.accept_nodes_packet(PEER, req_id, 2);
+        assert_eq!(
+            second,
+            Some(AcceptedNodes {
+                owner: Some(owner),
+                last: true
+            })
+        );
+        assert!(!state.findnode_owners.contains_key(&key));
     }
 
     #[tokio::test]

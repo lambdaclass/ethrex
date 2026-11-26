@@ -550,8 +550,8 @@ async fn a_consumer_edit_is_what_peers_fetch() {
     let b = b.server.start_for_test();
 
     let edited = a_enr
-        .edit_record(&a_signer, |pairs| {
-            pairs.set_extra(MARKER, vec![1u8]);
+        .edit_record(&a_signer, |entries| {
+            entries.set_extra(MARKER, vec![1u8]);
         })
         .unwrap();
     b.refresh_enr(a_id);

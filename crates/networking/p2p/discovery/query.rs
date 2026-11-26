@@ -154,18 +154,10 @@ pub(crate) struct NodeQuery {
     /// Matching records whose node answered: the result.
     matched: Vec<NodeRecord>,
     matched_ids: FxHashSet<H256>,
-    /// Requests whose answer has not fully arrived yet.
-    in_flight: FxHashMap<(H256, Bytes), InFlight>,
+    /// Requests whose answer has not fully arrived yet, with when each was
+    /// sent.
+    in_flight: FxHashMap<(H256, Bytes), Instant>,
     findnodes_sent: usize,
-}
-
-/// A FINDNODE of the query's whose answer is not complete yet.
-#[derive(Debug, Clone, Copy)]
-struct InFlight {
-    sent_at: Instant,
-    /// NODES packets still due: unknown until the first one says how many
-    /// make up the answer.
-    packets_due: Option<u64>,
 }
 
 // Hand-written because the predicate and the reply channel are not `Debug`.
@@ -291,37 +283,31 @@ impl NodeQuery {
 
     /// Note a FINDNODE sent to `node_id` on this query's behalf.
     pub(crate) fn record_sent(&mut self, node_id: H256, req_id: Bytes, now: Instant) {
-        let request = InFlight {
-            sent_at: now,
-            packets_due: None,
-        };
-        self.in_flight.insert((node_id, req_id), request);
+        self.in_flight.insert((node_id, req_id), now);
         self.findnodes_sent += 1;
     }
 
     /// Take in one NODES packet answering this query's request `req_id` to
-    /// `sender`, one of `total` making up the answer. `records` are the ones
+    /// `sender`; `last` when it completes the answer. `records` are the ones
     /// that verified, as `(id, node, record)`.
     ///
     /// A request keeps its slot until the last packet of its answer arrives,
     /// so the walk is not judged spent while part of the answer is still on
-    /// its way; the first packet's `total` is the one believed. A node that
-    /// stops short gives the slot back at [`QUERY_REQUEST_TIMEOUT`], and a
-    /// packet arriving after that is still matched and fed to the walk.
+    /// its way. Which packet is the last is the server's call
+    /// ([`Discv5State::accept_nodes_packet`](crate::discv5::server::Discv5State::accept_nodes_packet)),
+    /// which also caps how many there can be. A node that stops short gives
+    /// the slot back at [`QUERY_REQUEST_TIMEOUT`], and a packet arriving after
+    /// that is still matched and fed to the walk.
     pub(crate) fn on_nodes(
         &mut self,
         sender: H256,
         req_id: &Bytes,
-        total: u64,
+        last: bool,
         records: &[(H256, Node, NodeRecord)],
         could_dial: impl Fn(&H256) -> bool,
     ) {
-        if let Entry::Occupied(mut entry) = self.in_flight.entry((sender, req_id.clone())) {
-            let due = entry.get_mut().packets_due.get_or_insert(total);
-            *due = due.saturating_sub(1);
-            if *due == 0 {
-                entry.remove();
-            }
+        if last {
+            self.in_flight.remove(&(sender, req_id.clone()));
         }
         self.answered.insert(sender);
         // Eligibility is checked again: the consumer may have connected to the
@@ -347,9 +333,8 @@ impl NodeQuery {
     /// Give up on requests that have not answered within
     /// [`QUERY_REQUEST_TIMEOUT`], freeing their slots for other nodes.
     pub(crate) fn expire_requests(&mut self, now: Instant) {
-        self.in_flight.retain(|_, request| {
-            now.saturating_duration_since(request.sent_at) < QUERY_REQUEST_TIMEOUT
-        });
+        self.in_flight
+            .retain(|_, sent_at| now.saturating_duration_since(*sent_at) < QUERY_REQUEST_TIMEOUT);
     }
 
     /// Answer the caller.
@@ -566,7 +551,7 @@ mod tests {
         assert_eq!(send_all(&mut query), vec![marked.0]);
         assert!(matches!(query.poll(Instant::now()), QueryStep::Wait));
 
-        query.on_nodes(marked.0, &req(0), 1, &[], anyone);
+        query.on_nodes(marked.0, &req(0), true, &[], anyone);
         let result = finish(query, rx);
         assert_eq!(result.outcome, QueryOutcome::Satisfied);
         assert_eq!(result.records, vec![marked.2]);
@@ -594,7 +579,7 @@ mod tests {
         assert_eq!(sorted, expected);
 
         // One answer frees one slot, and the match it brought takes it.
-        query.on_nodes(asked[0], &req(0), 1, &[extra, marked.clone()], anyone);
+        query.on_nodes(asked[0], &req(0), true, &[extra, marked.clone()], anyone);
         let QueryStep::Send { nodes, .. } = query.poll(Instant::now()) else {
             panic!("expected the query to send");
         };
@@ -623,7 +608,7 @@ mod tests {
         let _ = query.poll(Instant::now());
         query.start_walk(H256::zero(), &[with_record(&marked)], |_| false);
         send_all(&mut query);
-        query.on_nodes(marked.0, &req(0), 1, &[], |_| false);
+        query.on_nodes(marked.0, &req(0), true, &[], |_| false);
 
         assert!(query.matched.is_empty());
     }
@@ -638,7 +623,7 @@ mod tests {
         query.start_walk(H256::zero(), &[with_record(&marked)], anyone);
         assert_eq!(send_all(&mut query), vec![marked.0]);
 
-        query.on_nodes(marked.0, &req(0), 1, &[], |_| false);
+        query.on_nodes(marked.0, &req(0), true, &[], |_| false);
 
         assert!(query.matched.is_empty());
         assert!(
@@ -669,15 +654,15 @@ mod tests {
 
         // The relay's answer comes in two packets. The first carries an older
         // record, which says nothing about the newer one the candidate holds.
-        query.on_nodes(relay.0, &req(1), 2, &[older], anyone);
+        query.on_nodes(relay.0, &req(1), false, &[older], anyone);
         assert!(
             query.candidates.contains_key(&matching.0),
             "an older record must not retract the candidate"
         );
         // The second carries a newer record that no longer matches.
-        query.on_nodes(relay.0, &req(1), 2, &[newer], anyone);
+        query.on_nodes(relay.0, &req(1), true, &[newer], anyone);
         // The node then answers, with no match left for it to confirm.
-        query.on_nodes(matching.0, &req(0), 1, &[], anyone);
+        query.on_nodes(matching.0, &req(0), true, &[], anyone);
 
         assert!(
             query.matched.is_empty(),
@@ -691,7 +676,7 @@ mod tests {
         // Confirm one match by hand, then let the zero deadline end it.
         let marked = node(1, true);
         query.observe(marked.0, &marked.1, &marked.2, &anyone);
-        query.on_nodes(marked.0, &req(0), 1, &[], anyone);
+        query.on_nodes(marked.0, &req(0), true, &[], anyone);
 
         let result = finish(query, rx);
         assert_eq!(result.outcome, QueryOutcome::TimedOut);
@@ -729,13 +714,13 @@ mod tests {
         query.start_walk(H256::zero(), &[with_record(&seed)], anyone);
         assert_eq!(send_all(&mut query), vec![seed.0]);
 
-        query.on_nodes(seed.0, &req(0), 2, &[], anyone);
+        query.on_nodes(seed.0, &req(0), false, &[], anyone);
         assert!(
             matches!(query.poll(Instant::now()), QueryStep::Wait),
             "the walk must wait for the rest of the answer"
         );
 
-        query.on_nodes(seed.0, &req(0), 2, std::slice::from_ref(&later), anyone);
+        query.on_nodes(seed.0, &req(0), true, std::slice::from_ref(&later), anyone);
         let QueryStep::Send { nodes, .. } = query.poll(Instant::now()) else {
             panic!("the node the last packet brought must be asked");
         };
@@ -759,7 +744,7 @@ mod tests {
                 QueryStep::Send { nodes, .. } => {
                     for (node_id, _) in nodes {
                         query.record_sent(node_id, req(0), Instant::now());
-                        query.on_nodes(node_id, &req(0), 1, &[], anyone);
+                        query.on_nodes(node_id, &req(0), true, &[], anyone);
                     }
                 }
                 QueryStep::Finish(outcome) => {
