@@ -1,8 +1,8 @@
 //! EIP-8141 §Aggregation, from the pool to a block and its import.
 //!
 //! Accounts controlled by leanSPHINCS keys send frame transactions whose
-//! signatures are the proofs of their proof frames, as before LStar: each one is
-//! submitted, pooled and gossiped with its signature inside it. From LStar the
+//! signatures are the proofs of their proof frames, as before IStar: each one is
+//! submitted, pooled and gossiped with its signature inside it. From IStar the
 //! builder of a block strips every proof the protocol may strip from the
 //! transactions it includes and aggregates the stripped signatures into one
 //! proof. The block carries that proof, its header commits to it, and every node
@@ -24,7 +24,7 @@ use ethrex_common::{
     errors::InvalidBlockError,
     types::{
         Block, BlockHeader, DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER,
-        FRAME_TX_SECP256K1_VERIFIER, FrameTransaction, Genesis, GenesisAccount,
+        FRAME_TX_SECP256K1_VERIFIER, Fork, FrameTransaction, Genesis, GenesisAccount,
         InvalidBlockBodyError, InvalidBlockHeaderError, LEANSPHINCS_VERIFIER_PROOF_LENGTH,
         MAX_AGGREGATE_PROOF_BYTES, PROOF_COMMIT_FLAG, PROOF_READ_FLAG, Transaction,
         block_access_list::BlockAccessList, compute_aggregate_proof_hash,
@@ -36,7 +36,7 @@ use ethrex_p2p::rlpx::{
     eth::blocks::{BlockBodies, GetBlockBodies},
     message::RLPxMessage,
 };
-use ethrex_rlp::encode::RLPEncode;
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_rpc::{
     engine::payload::{GetPayloadV6Request, NewPayloadV5Request},
     rpc::RpcHandler,
@@ -54,21 +54,32 @@ use crate::levm::eip8141_stripped_proof_tests::{
 
 /// Seconds between a block and its parent on the chains of these tests.
 const BLOCK_TIME: u64 = 12;
-/// LStar from the first block on: the genesis block is the only Hegota block.
-const LSTAR_AT_FIRST_BLOCK: Option<u64> = Some(BLOCK_TIME);
+/// IStar from the first block on: the genesis block is the only Hegota block.
+const ISTAR_AT_FIRST_BLOCK: Option<u64> = Some(BLOCK_TIME);
 
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
 }
 
 /// `l1-hegota.json` (every fork through Hegota active at genesis) with each
-/// key's account funded and running the validation code for that key. LStar
-/// activates `lstar_after` seconds after genesis, or never when it is `None`.
-async fn setup_store(keys: &[&Key], lstar_after: Option<u64>) -> (Store, u64) {
+/// key's account funded and running the validation code for that key. IStar
+/// activates `istar_after` seconds after genesis, or never when it is `None`.
+async fn setup_store(keys: &[&Key], istar_after: Option<u64>) -> (Store, u64) {
+    setup_store_with_lstar(keys, istar_after, None).await
+}
+
+/// The store of `setup_store` for a chain that also schedules LStar,
+/// `lstar_after` seconds after genesis.
+async fn setup_store_with_lstar(
+    keys: &[&Key],
+    istar_after: Option<u64>,
+    lstar_after: Option<u64>,
+) -> (Store, u64) {
     let file = File::open(workspace_root().join("fixtures/genesis/l1-hegota.json"))
         .expect("open l1-hegota genesis");
     let mut genesis: Genesis =
         serde_json::from_reader(BufReader::new(file)).expect("parse l1-hegota genesis");
+    genesis.config.istar_time = istar_after.map(|seconds| genesis.timestamp + seconds);
     genesis.config.lstar_time = lstar_after.map(|seconds| genesis.timestamp + seconds);
     for key in keys {
         genesis.alloc.insert(
@@ -209,14 +220,45 @@ async fn import(
     block: &Block,
     bal: &BlockAccessList,
     keys: &[&Key],
+    istar_after: Option<u64>,
+) -> [Result<(), ChainError>; 3] {
+    import_after(None, block, bal, keys, istar_after, None).await
+}
+
+/// `import` on a chain that also schedules LStar, `lstar_after` seconds after
+/// genesis, and into nodes that first import `parent`, a valid block with its
+/// access list, when one is given.
+async fn import_after(
+    parent: Option<(&Block, &BlockAccessList)>,
+    block: &Block,
+    bal: &BlockAccessList,
+    keys: &[&Key],
+    istar_after: Option<u64>,
     lstar_after: Option<u64>,
 ) -> [Result<(), ChainError>; 3] {
-    let (store, _) = setup_store(keys, lstar_after).await;
-    let plain = blockchain(store).add_block(block.clone());
-    let (store, _) = setup_store(keys, lstar_after).await;
-    let pipeline = blockchain(store).add_block_pipeline(block.clone(), Some(Arc::new(bal.clone())));
-    let (store, _) = setup_store(keys, lstar_after).await;
-    let pipeline_without_bal = blockchain(store).add_block_pipeline(block.clone(), None);
+    let (store, _) = setup_store_with_lstar(keys, istar_after, lstar_after).await;
+    let node = blockchain(store);
+    if let Some((parent, _)) = parent {
+        node.add_block(parent.clone())
+            .expect("plain import of the parent");
+    }
+    let plain = node.add_block(block.clone());
+
+    let (store, _) = setup_store_with_lstar(keys, istar_after, lstar_after).await;
+    let node = blockchain(store);
+    if let Some((parent, parent_bal)) = parent {
+        node.add_block_pipeline(parent.clone(), Some(Arc::new(parent_bal.clone())))
+            .expect("pipeline import of the parent");
+    }
+    let pipeline = node.add_block_pipeline(block.clone(), Some(Arc::new(bal.clone())));
+
+    let (store, _) = setup_store_with_lstar(keys, istar_after, lstar_after).await;
+    let node = blockchain(store);
+    if let Some((parent, _)) = parent {
+        node.add_block_pipeline(parent.clone(), None)
+            .expect("pipeline import of the parent, rebuilding its access list");
+    }
+    let pipeline_without_bal = node.add_block_pipeline(block.clone(), None);
     [plain, pipeline, pipeline_without_bal]
 }
 
@@ -233,9 +275,9 @@ macro_rules! assert_rejected {
     };
 }
 
-/// An LStar block built from two transactions in the pool, one from each key:
+/// An IStar block built from two transactions in the pool, one from each key:
 /// two stripped proof frames, one claim for each transaction's signature hash.
-struct LStarBlock {
+struct IStarBlock {
     block: Block,
     bal: BlockAccessList,
     /// The two transactions as the pool held them, in the order of the keys.
@@ -244,8 +286,8 @@ struct LStarBlock {
     sig_hashes: [H256; 2],
 }
 
-async fn lstar_block(first: &Key, second: &Key) -> LStarBlock {
-    let (store, chain_id) = setup_store(&[first, second], LSTAR_AT_FIRST_BLOCK).await;
+async fn istar_block(first: &Key, second: &Key) -> IStarBlock {
+    let (store, chain_id) = setup_store(&[first, second], ISTAR_AT_FIRST_BLOCK).await;
     let blockchain = blockchain(store.clone());
     let pooled = [first, second].map(|sender| proof_transaction(chain_id, sender, 0, 0));
     for tx in &pooled {
@@ -258,16 +300,16 @@ async fn lstar_block(first: &Key, second: &Key) -> LStarBlock {
     assert_eq!(built.payload.body.transactions.len(), 2);
     assert!(built.receipts.iter().all(|receipt| receipt.succeeded));
     let sig_hashes = [pooled[0].compute_sig_hash(), pooled[1].compute_sig_hash()];
-    LStarBlock {
+    IStarBlock {
         block: built.payload,
-        bal: built.block_access_list.expect("an LStar block has a BAL"),
+        bal: built.block_access_list.expect("an IStar block has a BAL"),
         pooled,
         sig_hashes,
     }
 }
 
 #[tokio::test]
-async fn lstar_block_strips_every_eligible_proof_and_carries_one_aggregate_proof() {
+async fn istar_block_strips_every_eligible_proof_and_carries_one_aggregate_proof() {
     let first = key(0x61);
     let second = key(0x62);
     let readable = key(0x63);
@@ -275,7 +317,7 @@ async fn lstar_block_strips_every_eligible_proof_and_carries_one_aggregate_proof
     // Signs an explicit message for the last transaction. It controls no account.
     let sponsor = key(0x65);
     let keys = [&first, &second, &readable, &sponsored];
-    let (store, chain_id) = setup_store(&keys, LSTAR_AT_FIRST_BLOCK).await;
+    let (store, chain_id) = setup_store(&keys, ISTAR_AT_FIRST_BLOCK).await;
     let blockchain = blockchain(store.clone());
 
     // Two transactions whose only proof is the account's signature.
@@ -355,7 +397,7 @@ async fn lstar_block_strips_every_eligible_proof_and_carries_one_aggregate_proof
         .body
         .aggregate_proof
         .clone()
-        .expect("an LStar block has an aggregate proof");
+        .expect("an IStar block has an aggregate proof");
     assert!(!proof.is_empty());
     assert!(proof.len() <= MAX_AGGREGATE_PROOF_BYTES);
     assert_eq!(
@@ -401,8 +443,8 @@ async fn lstar_block_strips_every_eligible_proof_and_carries_one_aggregate_proof
     }
 
     // It imports on every path.
-    let bal = built.block_access_list.expect("an LStar block has a BAL");
-    for result in import(&block, &bal, &keys, LSTAR_AT_FIRST_BLOCK).await {
+    let bal = built.block_access_list.expect("an IStar block has a BAL");
+    for result in import(&block, &bal, &keys, ISTAR_AT_FIRST_BLOCK).await {
         result.expect("the block imports");
     }
 
@@ -428,7 +470,7 @@ async fn lstar_block_strips_every_eligible_proof_and_carries_one_aggregate_proof
         &with_transactions(block.clone(), transactions),
         &bal,
         &keys,
-        LSTAR_AT_FIRST_BLOCK,
+        ISTAR_AT_FIRST_BLOCK,
     )
     .await;
     for result in results {
@@ -441,7 +483,7 @@ async fn lstar_block_strips_every_eligible_proof_and_carries_one_aggregate_proof
         );
     }
 
-    // The same transactions in a Hegota block, on a chain without LStar: every
+    // The same transactions in a Hegota block, on a chain without IStar: every
     // proof stays in its transaction, and the block has no aggregate proof.
     let (hegota_store, _) = setup_store(&keys, None).await;
     let hegota_blockchain = self::blockchain(hegota_store.clone());
@@ -471,7 +513,7 @@ async fn lstar_block_strips_every_eligible_proof_and_carries_one_aggregate_proof
     assert_eq!(hegota_block.header.aggregate_proof_hash, None);
     assert_eq!(hegota_block.header.gas_used, block.header.gas_used);
     println!(
-        "LStar block: {} bytes of RLP block and {} bytes of aggregate proof, {} gas used. \
+        "IStar block: {} bytes of RLP block and {} bytes of aggregate proof, {} gas used. \
          Hegota block with the same transactions: {} bytes of RLP block, {} gas used.",
         block.length_without_aggregate_proof(),
         proof.len(),
@@ -479,8 +521,8 @@ async fn lstar_block_strips_every_eligible_proof_and_carries_one_aggregate_proof
         hegota_block.length(),
         hegota_block.header.gas_used,
     );
-    // Three signatures left the RLP block, which gained two header fields: the
-    // commitment to the proof and the fees burned (EIP-8079).
+    // Three signatures left the RLP block, which gained one header field: the
+    // commitment to the proof.
     let saved = hegota_block.length() - block.length_without_aggregate_proof();
     assert!(saved > 3 * SIGNATURE_SIZE - 128 && saved < 3 * SIGNATURE_SIZE);
     // The proof travels with the block, after the body's other items.
@@ -494,7 +536,7 @@ async fn claim_that_two_transactions_share_is_proven_once() {
     // Signs the same explicit message for both transactions.
     let shared = key(0x8c);
     let keys = [&first, &second];
-    let (store, chain_id) = setup_store(&keys, LSTAR_AT_FIRST_BLOCK).await;
+    let (store, chain_id) = setup_store(&keys, ISTAR_AT_FIRST_BLOCK).await;
     let blockchain = blockchain(store.clone());
     let message = H256::repeat_byte(0x99);
     let mut sig_hashes = Vec::new();
@@ -541,8 +583,8 @@ async fn claim_that_two_transactions_share_is_proven_once() {
             .count(),
         2
     );
-    let bal = built.block_access_list.expect("an LStar block has a BAL");
-    for result in import(&block, &bal, &keys, LSTAR_AT_FIRST_BLOCK).await {
+    let bal = built.block_access_list.expect("an IStar block has a BAL");
+    for result in import(&block, &bal, &keys, ISTAR_AT_FIRST_BLOCK).await {
         result.expect("the block imports");
     }
 
@@ -557,7 +599,7 @@ async fn claim_that_two_transactions_share_is_proven_once() {
         &with_proof(block.clone(), same_claims),
         &bal,
         &keys,
-        LSTAR_AT_FIRST_BLOCK,
+        ISTAR_AT_FIRST_BLOCK,
     )
     .await
     {
@@ -568,7 +610,7 @@ async fn claim_that_two_transactions_share_is_proven_once() {
         &with_proof(block, without_shared),
         &bal,
         &keys,
-        LSTAR_AT_FIRST_BLOCK,
+        ISTAR_AT_FIRST_BLOCK,
     )
     .await;
     assert_rejected!(results, InvalidBlockError::InvalidAggregateProof(4));
@@ -579,12 +621,12 @@ async fn aggregate_proof_is_stored_and_served_with_the_block_body() {
     let first = key(0x66);
     let second = key(0x67);
     let keys = [&first, &second];
-    let built = lstar_block(&first, &second).await;
+    let built = istar_block(&first, &second).await;
     let proof = built.block.body.aggregate_proof.clone().unwrap();
 
     // A node that imports the block keeps the proof with the block's body, and
     // the transactions as the block carries them.
-    let (store, _) = setup_store(&keys, LSTAR_AT_FIRST_BLOCK).await;
+    let (store, _) = setup_store(&keys, ISTAR_AT_FIRST_BLOCK).await;
     blockchain(store.clone())
         .add_block(built.block.clone())
         .expect("the block imports");
@@ -666,7 +708,7 @@ async fn block_whose_aggregate_proof_misses_a_claim_is_rejected() {
     let first = key(0x68);
     let second = key(0x69);
     let keys = [&first, &second];
-    let built = lstar_block(&first, &second).await;
+    let built = istar_block(&first, &second).await;
 
     // A proof that the first transaction was signed says nothing of the second.
     let partial = aggregate(&[(&first, built.sig_hashes[0])]);
@@ -674,7 +716,7 @@ async fn block_whose_aggregate_proof_misses_a_claim_is_rejected() {
         &with_proof(built.block, partial),
         &built.bal,
         &keys,
-        LSTAR_AT_FIRST_BLOCK,
+        ISTAR_AT_FIRST_BLOCK,
     )
     .await;
     assert_rejected!(results, InvalidBlockError::InvalidAggregateProof(2));
@@ -686,7 +728,7 @@ async fn block_whose_aggregate_proof_is_for_other_claims_is_rejected() {
     let second = key(0x6b);
     let other = key(0x6c);
     let keys = [&first, &second];
-    let built = lstar_block(&first, &second).await;
+    let built = istar_block(&first, &second).await;
 
     // The first key signed another message than the transaction's signature hash.
     let another_message = aggregate(&[
@@ -710,7 +752,7 @@ async fn block_whose_aggregate_proof_is_for_other_claims_is_rejected() {
             &with_proof(built.block.clone(), proof),
             &built.bal,
             &keys,
-            LSTAR_AT_FIRST_BLOCK,
+            ISTAR_AT_FIRST_BLOCK,
         )
         .await;
         assert_rejected!(results, InvalidBlockError::InvalidAggregateProof(2));
@@ -725,7 +767,7 @@ async fn block_whose_aggregate_proof_is_for_other_claims_is_rejected() {
         &with_proof(built.block, same_claims),
         &built.bal,
         &keys,
-        LSTAR_AT_FIRST_BLOCK,
+        ISTAR_AT_FIRST_BLOCK,
     )
     .await;
     for result in results {
@@ -738,7 +780,7 @@ async fn block_with_a_damaged_or_missing_aggregate_proof_is_rejected() {
     let first = key(0x6d);
     let second = key(0x6e);
     let keys = [&first, &second];
-    let built = lstar_block(&first, &second).await;
+    let built = istar_block(&first, &second).await;
     let proof = built.block.body.aggregate_proof.clone().unwrap();
 
     // One byte flipped.
@@ -755,7 +797,7 @@ async fn block_with_a_damaged_or_missing_aggregate_proof_is_rejected() {
             &with_proof(built.block.clone(), damaged),
             &built.bal,
             &keys,
-            LSTAR_AT_FIRST_BLOCK,
+            ISTAR_AT_FIRST_BLOCK,
         )
         .await;
         assert_rejected!(results, InvalidBlockError::InvalidAggregateProof(2));
@@ -764,14 +806,14 @@ async fn block_with_a_damaged_or_missing_aggregate_proof_is_rejected() {
     // No proof at all, with the header still committing to one.
     let mut proofless = built.block.clone();
     proofless.body.aggregate_proof = None;
-    let results = import(&proofless, &built.bal, &keys, LSTAR_AT_FIRST_BLOCK).await;
+    let results = import(&proofless, &built.bal, &keys, ISTAR_AT_FIRST_BLOCK).await;
     assert_rejected!(results, InvalidBlockError::AggregateProofNotPresent);
 
-    // Neither the proof nor the commitment, as a block before LStar.
+    // Neither the proof nor the commitment, as a block before IStar.
     let mut hegota_shaped = proofless;
     hegota_shaped.header.aggregate_proof_hash = None;
     hegota_shaped.header.hash = Default::default();
-    let results = import(&hegota_shaped, &built.bal, &keys, LSTAR_AT_FIRST_BLOCK).await;
+    let results = import(&hegota_shaped, &built.bal, &keys, ISTAR_AT_FIRST_BLOCK).await;
     assert_rejected!(
         results,
         InvalidBlockError::InvalidHeader(InvalidBlockHeaderError::AggregateProofHashNotPresent)
@@ -784,23 +826,23 @@ async fn block_without_stripped_frames_must_carry_an_empty_aggregate_proof() {
     let second = key(0x70);
     let keys = [&first, &second];
     // A valid proof, of the claims of another block.
-    let other = lstar_block(&first, &second).await;
+    let other = istar_block(&first, &second).await;
     let proof = other.block.body.aggregate_proof.clone().unwrap();
     let proof_len = proof.len();
 
-    // An LStar block without transactions: its proof is empty, and the header
+    // An IStar block without transactions: its proof is empty, and the header
     // commits to the empty proof.
-    let (store, _) = setup_store(&keys, LSTAR_AT_FIRST_BLOCK).await;
+    let (store, _) = setup_store(&keys, ISTAR_AT_FIRST_BLOCK).await;
     let built = build_block(&store, &blockchain(store.clone()), &genesis_header(&store));
     let empty_block = built.payload;
-    let empty_bal = built.block_access_list.expect("an LStar block has a BAL");
+    let empty_bal = built.block_access_list.expect("an IStar block has a BAL");
     assert!(empty_block.body.transactions.is_empty());
     assert_eq!(empty_block.body.aggregate_proof, Some(Bytes::new()));
     assert_eq!(
         empty_block.header.aggregate_proof_hash,
         Some(compute_aggregate_proof_hash(&[], &NativeCrypto))
     );
-    for result in import(&empty_block, &empty_bal, &keys, LSTAR_AT_FIRST_BLOCK).await {
+    for result in import(&empty_block, &empty_bal, &keys, ISTAR_AT_FIRST_BLOCK).await {
         result.expect("the block imports");
     }
     // With a proof it has nothing to prove, it is invalid, however valid the
@@ -809,7 +851,7 @@ async fn block_without_stripped_frames_must_carry_an_empty_aggregate_proof() {
         &with_proof(empty_block, proof.clone()),
         &empty_bal,
         &keys,
-        LSTAR_AT_FIRST_BLOCK,
+        ISTAR_AT_FIRST_BLOCK,
     )
     .await;
     assert_rejected!(
@@ -817,7 +859,7 @@ async fn block_without_stripped_frames_must_carry_an_empty_aggregate_proof() {
         InvalidBlockError::AggregateProofNotEmpty(len) if *len == proof_len
     );
 
-    // An LStar block whose transactions all keep their proofs: the builder may
+    // An IStar block whose transactions all keep their proofs: the builder may
     // strip them, the protocol does not require it. Its aggregate proof is empty.
     let unstripped = with_proof(
         with_transactions(
@@ -826,7 +868,7 @@ async fn block_without_stripped_frames_must_carry_an_empty_aggregate_proof() {
         ),
         Bytes::new(),
     );
-    for result in import(&unstripped, &other.bal, &keys, LSTAR_AT_FIRST_BLOCK).await {
+    for result in import(&unstripped, &other.bal, &keys, ISTAR_AT_FIRST_BLOCK).await {
         result.expect("a block whose proofs stayed in their transactions imports");
     }
     // The proof of the same signatures has nothing to stand for in it.
@@ -834,7 +876,7 @@ async fn block_without_stripped_frames_must_carry_an_empty_aggregate_proof() {
         &with_proof(unstripped.clone(), proof),
         &other.bal,
         &keys,
-        LSTAR_AT_FIRST_BLOCK,
+        ISTAR_AT_FIRST_BLOCK,
     )
     .await;
     assert_rejected!(
@@ -858,7 +900,7 @@ async fn block_without_stripped_frames_must_carry_an_empty_aggregate_proof() {
         ),
         aggregate(&[(signer, stripped_tx.compute_sig_hash())]),
     );
-    for result in import(&mixed, &other.bal, &keys, LSTAR_AT_FIRST_BLOCK).await {
+    for result in import(&mixed, &other.bal, &keys, ISTAR_AT_FIRST_BLOCK).await {
         result.expect("a block with stripped and unstripped proof frames imports");
     }
 }
@@ -868,13 +910,13 @@ async fn block_whose_header_does_not_commit_to_its_aggregate_proof_is_rejected()
     let first = key(0x71);
     let second = key(0x72);
     let keys = [&first, &second];
-    let built = lstar_block(&first, &second).await;
+    let built = istar_block(&first, &second).await;
 
     // The proof is the right one, the header commits to another.
     let mut wrong_hash = built.block.clone();
     wrong_hash.header.aggregate_proof_hash = Some(H256::repeat_byte(0xab));
     wrong_hash.header.hash = Default::default();
-    let results = import(&wrong_hash, &built.bal, &keys, LSTAR_AT_FIRST_BLOCK).await;
+    let results = import(&wrong_hash, &built.bal, &keys, ISTAR_AT_FIRST_BLOCK).await;
     assert_rejected!(
         results,
         InvalidBlockError::InvalidBody(InvalidBlockBodyError::AggregateProofHashNotMatch)
@@ -885,7 +927,7 @@ async fn block_whose_header_does_not_commit_to_its_aggregate_proof_is_rejected()
     let mut stale_hash = built.block;
     stale_hash.header.aggregate_proof_hash = Some(compute_aggregate_proof_hash(&[], &NativeCrypto));
     stale_hash.header.hash = Default::default();
-    let results = import(&stale_hash, &built.bal, &keys, LSTAR_AT_FIRST_BLOCK).await;
+    let results = import(&stale_hash, &built.bal, &keys, ISTAR_AT_FIRST_BLOCK).await;
     assert_rejected!(
         results,
         InvalidBlockError::InvalidBody(InvalidBlockBodyError::AggregateProofHashNotMatch)
@@ -897,7 +939,7 @@ async fn block_with_an_aggregate_proof_over_the_size_bound_is_rejected() {
     let first = key(0x73);
     let second = key(0x74);
     let keys = [&first, &second];
-    let built = lstar_block(&first, &second).await;
+    let built = istar_block(&first, &second).await;
     let proof = built.block.body.aggregate_proof.clone().unwrap();
 
     // The valid proof followed by padding up to one byte over the bound. The
@@ -908,7 +950,7 @@ async fn block_with_an_aggregate_proof_over_the_size_bound_is_rejected() {
         &with_proof(built.block.clone(), Bytes::from(oversized)),
         &built.bal,
         &keys,
-        LSTAR_AT_FIRST_BLOCK,
+        ISTAR_AT_FIRST_BLOCK,
     )
     .await;
     assert_rejected!(
@@ -924,7 +966,7 @@ async fn block_with_an_aggregate_proof_over_the_size_bound_is_rejected() {
         &with_proof(built.block, Bytes::from(at_the_bound)),
         &built.bal,
         &keys,
-        LSTAR_AT_FIRST_BLOCK,
+        ISTAR_AT_FIRST_BLOCK,
     )
     .await;
     assert_rejected!(results, InvalidBlockError::InvalidAggregateProof(2));
@@ -935,7 +977,7 @@ async fn block_with_an_aggregate_proof_over_the_size_bound_is_rejected() {
 /// the replacement's first proof frame, signed again by `signer`, and the second
 /// transaction's. Only the stripped frame itself can make the block invalid.
 fn with_first_transaction(
-    built: &LStarBlock,
+    built: &IStarBlock,
     replacement: FrameTransaction,
     signer: &Key,
     second: &Key,
@@ -957,7 +999,7 @@ async fn block_with_a_stripped_frame_the_protocol_may_not_strip_is_rejected() {
     let first = key(0x75);
     let second = key(0x76);
     let keys = [&first, &second];
-    let built = lstar_block(&first, &second).await;
+    let built = istar_block(&first, &second).await;
     let stripped_tx = stripped(&built.pooled[0]);
 
     // The verifier is not the leanSPHINCS verifier.
@@ -1000,7 +1042,7 @@ async fn block_with_a_stripped_frame_the_protocol_may_not_strip_is_rejected() {
             .iter()
             .position(|tx| frame_tx(tx).sender == first.account)
             .unwrap();
-        let results = import(&block, &built.bal, &keys, LSTAR_AT_FIRST_BLOCK).await;
+        let results = import(&block, &built.bal, &keys, ISTAR_AT_FIRST_BLOCK).await;
         assert_rejected!(
             results,
             InvalidBlockError::InvalidStrippedProofFrame(at, reason)
@@ -1011,7 +1053,7 @@ async fn block_with_a_stripped_frame_the_protocol_may_not_strip_is_rejected() {
     // The same replacement with an untouched stripped frame is a valid block:
     // the aggregate made here stands for the proofs as the builder's does.
     let block = with_first_transaction(&built, stripped_tx, &first, &second);
-    for result in import(&block, &built.bal, &keys, LSTAR_AT_FIRST_BLOCK).await {
+    for result in import(&block, &built.bal, &keys, ISTAR_AT_FIRST_BLOCK).await {
         result.expect("the block imports");
     }
 }
@@ -1021,7 +1063,7 @@ async fn stripped_transaction_in_a_hegota_block_is_rejected() {
     let first = key(0x77);
     let second = key(0x78);
     let keys = [&first, &second];
-    // On this chain LStar never activates: the first block is a Hegota block.
+    // On this chain IStar never activates: the first block is a Hegota block.
     let (store, chain_id) = setup_store(&keys, None).await;
     let blockchain = blockchain(store.clone());
     let pooled = keys.map(|sender| proof_transaction(chain_id, sender, 0, 0));
@@ -1035,7 +1077,7 @@ async fn stripped_transaction_in_a_hegota_block_is_rejected() {
     let block = built.payload;
     let bal = built.block_access_list.expect("a Hegota block has a BAL");
     assert_eq!(block.body.transactions.len(), 2);
-    // Before LStar the builder strips nothing, and the block has no proof.
+    // Before IStar the builder strips nothing, and the block has no proof.
     assert!(
         block
             .body
@@ -1068,9 +1110,9 @@ async fn stripped_transaction_in_a_hegota_block_is_rejected() {
     let results = import(&with_proof_only, &bal, &keys, None).await;
     assert_rejected!(results, InvalidBlockError::AggregateProofPresent);
 
-    // The block as LStar would have it: the proof and the header's commitment.
-    let lstar_shaped = with_proof(with_stripped, proof.clone());
-    let results = import(&lstar_shaped, &bal, &keys, None).await;
+    // The block as IStar would have it: the proof and the header's commitment.
+    let istar_shaped = with_proof(with_stripped, proof.clone());
+    let results = import(&istar_shaped, &bal, &keys, None).await;
     assert_rejected!(
         results,
         InvalidBlockError::InvalidHeader(InvalidBlockHeaderError::AggregateProofHashPresent)
@@ -1089,8 +1131,8 @@ async fn stripped_transaction_in_a_hegota_block_is_rejected() {
 async fn stripped_transaction_is_rejected_by_the_pool() {
     let key = key(0x79);
     // The pool holds transactions with their proofs at every fork.
-    for lstar_after in [None, LSTAR_AT_FIRST_BLOCK, Some(0)] {
-        let (store, chain_id) = setup_store(&[&key], lstar_after).await;
+    for istar_after in [None, ISTAR_AT_FIRST_BLOCK, Some(0)] {
+        let (store, chain_id) = setup_store(&[&key], istar_after).await;
         let ctx = default_context_with_storage(store).await;
         let tx = proof_transaction(chain_id, &key, 0, 0);
         let stripped = Transaction::FrameTransaction(stripped(&tx));
@@ -1141,9 +1183,9 @@ async fn stripped_transaction_is_rejected_by_the_pool() {
 async fn account_keeps_authorizing_with_the_same_key_across_the_fork() {
     let key = key(0x7a);
     let keys = [&key];
-    // Hegota at genesis and for the first block; LStar from the second block on.
-    let lstar_after = Some(2 * BLOCK_TIME);
-    let (store, chain_id) = setup_store(&keys, lstar_after).await;
+    // Hegota at genesis and for the first block; IStar from the second block on.
+    let istar_after = Some(2 * BLOCK_TIME);
+    let (store, chain_id) = setup_store(&keys, istar_after).await;
     let blockchain = blockchain(store.clone());
     let genesis = genesis_header(&store);
     let account_at_genesis = store
@@ -1195,23 +1237,23 @@ async fn account_keeps_authorizing_with_the_same_key_across_the_fork() {
     assert!(
         !store
             .get_chain_config()
-            .is_lstar_activated(first_block.header.timestamp)
+            .is_istar_activated(first_block.header.timestamp)
     );
     let second_tx = proof_transaction(chain_id, &key, 1, 0);
     let pool_hash = blockchain
         .add_transaction_to_pool(Transaction::FrameTransaction(second_tx.clone()))
         .await
-        .expect("the transaction enters the pool before LStar");
+        .expect("the transaction enters the pool before IStar");
     assert_eq!(pool_hash, tx_hash(&second_tx));
 
-    // The chain crosses LStar. The block that includes the transaction strips
+    // The chain crosses IStar. The block that includes the transaction strips
     // the signature made before the fork and proves it.
     let second_built = build_block(&store, &blockchain, &first_block.header);
     let second_block = second_built.payload;
     assert!(
         store
             .get_chain_config()
-            .is_lstar_activated(second_block.header.timestamp)
+            .is_istar_activated(second_block.header.timestamp)
     );
     assert_eq!(second_block.body.transactions.len(), 1);
     assert!(second_built.receipts[0].succeeded);
@@ -1224,7 +1266,7 @@ async fn account_keeps_authorizing_with_the_same_key_across_the_fork() {
         .body
         .aggregate_proof
         .clone()
-        .expect("the LStar block has an aggregate proof");
+        .expect("the IStar block has an aggregate proof");
     assert!(!proof.is_empty());
     // The proof stands for the signature the pool held, the one made before the
     // fork: the builder had no other, and the claim the proof covers is the one
@@ -1236,7 +1278,7 @@ async fn account_keeps_authorizing_with_the_same_key_across_the_fork() {
     let bal = second_built
         .block_access_list
         .clone()
-        .expect("an LStar block has a BAL");
+        .expect("an IStar block has a BAL");
 
     // Until the block is imported the pool holds the transaction with its proof.
     assert!(
@@ -1248,7 +1290,7 @@ async fn account_keeps_authorizing_with_the_same_key_across_the_fork() {
     );
     blockchain
         .add_block(second_block.clone())
-        .expect("the LStar block imports");
+        .expect("the IStar block imports");
     apply_fork_choice(
         &store,
         second_block.hash(),
@@ -1257,7 +1299,7 @@ async fn account_keeps_authorizing_with_the_same_key_across_the_fork() {
         None,
     )
     .await
-    .expect("the LStar block becomes the head");
+    .expect("the IStar block becomes the head");
     // The included transaction leaves the pool, where it had another hash.
     blockchain
         .remove_block_transactions_from_pool(&second_block)
@@ -1295,15 +1337,15 @@ async fn account_keeps_authorizing_with_the_same_key_across_the_fork() {
     }
 
     // Other nodes import the two blocks, one of each fork, on every path.
-    let (other_store, _) = setup_store(&keys, lstar_after).await;
+    let (other_store, _) = setup_store(&keys, istar_after).await;
     let other = self::blockchain(other_store);
     other
         .add_block(first_block.clone())
         .expect("plain import of the Hegota block");
     other
         .add_block(second_block.clone())
-        .expect("plain import of the LStar block");
-    let (other_store, _) = setup_store(&keys, lstar_after).await;
+        .expect("plain import of the IStar block");
+    let (other_store, _) = setup_store(&keys, istar_after).await;
     let other = self::blockchain(other_store);
     other
         .add_block_pipeline(
@@ -1313,15 +1355,15 @@ async fn account_keeps_authorizing_with_the_same_key_across_the_fork() {
         .expect("pipeline import of the Hegota block");
     other
         .add_block_pipeline(second_block.clone(), Some(Arc::new(bal)))
-        .expect("pipeline import of the LStar block");
-    let (other_store, _) = setup_store(&keys, lstar_after).await;
+        .expect("pipeline import of the IStar block");
+    let (other_store, _) = setup_store(&keys, istar_after).await;
     let other = self::blockchain(other_store);
     other
         .add_block_pipeline(first_block.clone(), None)
         .expect("pipeline import of the Hegota block, rebuilding its access list");
     other
         .add_block_pipeline(second_block.clone(), None)
-        .expect("pipeline import of the LStar block, rebuilding its access list");
+        .expect("pipeline import of the IStar block, rebuilding its access list");
 
     // The two transactions do the same work and pay the same: the charge follows
     // the signature hash, which does not see whether the proof was stripped.
@@ -1333,42 +1375,54 @@ async fn account_keeps_authorizing_with_the_same_key_across_the_fork() {
     assert_eq!(gas_before, first_tx.calldata_floor_total());
     println!(
         "Gas of the transaction in the Hegota block: {gas_before}. \
-         Gas of the transaction in the LStar block: {gas_after}."
+         Gas of the transaction in the IStar block: {gas_after}."
     );
     println!(
         "Hash of the Hegota transaction, in the pool and in the block: {first_hash:#x}. \
-         Hash of the LStar transaction in the pool: {pool_hash:#x}; \
+         Hash of the IStar transaction in the pool: {pool_hash:#x}; \
          in the block: {block_hash_of_tx:#x}."
     );
     println!(
         "Hegota block: {} bytes of RLP block, no aggregate proof. \
-         LStar block: {} bytes of RLP block and {} bytes of aggregate proof.",
+         IStar block: {} bytes of RLP block and {} bytes of aggregate proof.",
         first_block.length(),
         second_block.length_without_aggregate_proof(),
         proof.len(),
     );
-    // The signature left the RLP block, which gained two header fields: the
-    // commitment to the proof and the fees burned (EIP-8079).
+    // The signature left the RLP block, which gained one header field: the
+    // commitment to the proof.
     let saved = first_block.length() - second_block.length_without_aggregate_proof();
     assert!(saved > SIGNATURE_SIZE - 64 && saved < SIGNATURE_SIZE);
 }
 
 #[tokio::test]
-async fn chain_that_starts_in_lstar_carries_the_proof_from_its_first_block() {
+async fn chain_that_starts_in_istar_carries_the_proof_from_its_first_block() {
     let key = key(0x8d);
     let keys = [&key];
-    // LStar is active at genesis.
-    let lstar_at_genesis = Some(0);
-    let (store, chain_id) = setup_store(&keys, lstar_at_genesis).await;
+    // IStar is active at genesis.
+    let istar_at_genesis = Some(0);
+    let (store, chain_id) = setup_store(&keys, istar_at_genesis).await;
     let blockchain = blockchain(store.clone());
     let genesis = genesis_header(&store);
     assert!(
         store
             .get_chain_config()
-            .is_lstar_activated(genesis.timestamp)
+            .is_istar_activated(genesis.timestamp)
     );
-    // The genesis block has no aggregate proof and no commitment to one.
-    assert_eq!(genesis.aggregate_proof_hash, None);
+    // The genesis block carries the empty aggregate proof, and its header
+    // commits to it.
+    assert_eq!(
+        genesis.aggregate_proof_hash,
+        Some(compute_aggregate_proof_hash(&[], &NativeCrypto))
+    );
+    let genesis_body = store
+        .get_block_body_by_hash(genesis.hash())
+        .await
+        .unwrap()
+        .expect("the genesis body is stored");
+    assert_eq!(genesis_body.aggregate_proof, Some(Bytes::new()));
+    validate_block_body(&genesis, &genesis_body, &NativeCrypto)
+        .expect("the genesis header commits to its body");
 
     let tx = proof_transaction(chain_id, &key, 0, 0);
     blockchain
@@ -1393,9 +1447,325 @@ async fn chain_that_starts_in_lstar_carries_the_proof_from_its_first_block() {
         block.header.aggregate_proof_hash,
         Some(compute_aggregate_proof_hash(&proof, &NativeCrypto))
     );
-    let bal = built.block_access_list.expect("an LStar block has a BAL");
-    for result in import(&block, &bal, &keys, lstar_at_genesis).await {
+    let bal = built.block_access_list.expect("an IStar block has a BAL");
+    for result in import(&block, &bal, &keys, istar_at_genesis).await {
         result.expect("the block imports");
+    }
+}
+
+#[tokio::test]
+async fn istar_block_carries_the_aggregate_proof_and_no_burned_fees() {
+    let first = key(0x8e);
+    let second = key(0x8f);
+    // On this chain LStar never activates.
+    let built = istar_block(&first, &second).await;
+    let header = &built.block.header;
+    assert!(built.block.body.aggregate_proof.is_some());
+    assert!(header.aggregate_proof_hash.is_some());
+    // The fees burned are a header field of LStar (EIP-8079), not of IStar.
+    assert_eq!(header.burned_fees, None);
+
+    // The header reads back as it was written: the commitment is its last field.
+    let decoded = BlockHeader::decode(&header.encode_to_vec()).expect("the header decodes");
+    assert_eq!(&decoded, header);
+    assert_eq!(decoded.aggregate_proof_hash, header.aggregate_proof_hash);
+    assert_eq!(decoded.burned_fees, None);
+
+    // The payload of the block carries the proof and no fees burned.
+    let payload = payload_json(built.block, &built.bal);
+    assert!(payload.get("aggregateProof").is_some());
+    assert!(payload.get("burnedFees").is_none());
+}
+
+/// Builds a block on `parent` from one transaction of `sender` with this nonce,
+/// which enters the pool with its proof, and makes the block the head.
+async fn build_next_block(
+    store: &Store,
+    blockchain: &Blockchain,
+    parent: &BlockHeader,
+    sender: &Key,
+    nonce: u64,
+    chain_id: u64,
+) -> PayloadBuildResult {
+    blockchain
+        .add_transaction_to_pool(Transaction::FrameTransaction(proof_transaction(
+            chain_id, sender, nonce, 0,
+        )))
+        .await
+        .expect("the transaction enters the pool with its proof");
+    let built = build_block(store, blockchain, parent);
+    assert_eq!(built.payload.body.transactions.len(), 1);
+    assert!(built.receipts[0].succeeded);
+    blockchain
+        .add_block(built.payload.clone())
+        .expect("the block imports");
+    apply_fork_choice(
+        store,
+        built.payload.hash(),
+        H256::zero(),
+        H256::zero(),
+        None,
+    )
+    .await
+    .expect("the block becomes the head");
+    blockchain
+        .remove_block_transactions_from_pool(&built.payload)
+        .unwrap();
+    built
+}
+
+#[tokio::test]
+async fn lstar_block_carries_the_aggregate_proof_and_the_burned_fees() {
+    let sender = key(0x90);
+    let other = key(0x91);
+    let keys = [&sender];
+    // Hegota at genesis, IStar from the first block on and LStar from the second.
+    let istar_after = Some(BLOCK_TIME);
+    let lstar_after = Some(2 * BLOCK_TIME);
+    let (store, chain_id) = setup_store_with_lstar(&keys, istar_after, lstar_after).await;
+    let blockchain = blockchain(store.clone());
+    let config = store.get_chain_config();
+    let genesis = genesis_header(&store);
+    assert_eq!(config.fork(genesis.timestamp), Fork::Hegota);
+    assert_eq!(genesis.aggregate_proof_hash, None);
+    assert_eq!(genesis.burned_fees, None);
+
+    let first = build_next_block(&store, &blockchain, &genesis, &sender, 0, chain_id).await;
+    let in_istar = &first.payload;
+    let second =
+        build_next_block(&store, &blockchain, &in_istar.header, &sender, 1, chain_id).await;
+    let in_lstar = &second.payload;
+    assert_eq!(config.fork(in_istar.header.timestamp), Fork::IStar);
+    assert_eq!(config.fork(in_lstar.header.timestamp), Fork::LStar);
+
+    // In both forks the builder strips the proof of the transaction, and the
+    // block carries an aggregate proof its header commits to.
+    for block in [in_istar, in_lstar] {
+        assert!(
+            frame_tx(&block.body.transactions[0])
+                .stripped_proof_len(0)
+                .is_some()
+        );
+        let proof = block
+            .body
+            .aggregate_proof
+            .clone()
+            .expect("the block has an aggregate proof");
+        assert!(!proof.is_empty());
+        assert_eq!(
+            block.header.aggregate_proof_hash,
+            Some(compute_aggregate_proof_hash(&proof, &NativeCrypto))
+        );
+        validate_block_body(&block.header, &block.body, &NativeCrypto)
+            .expect("the header commits to the block's transactions and proof");
+    }
+    // Only the LStar block has the fees burned (EIP-8079): the base fee times the
+    // gas its transaction paid for, since the block has no blobs.
+    assert_eq!(in_istar.header.burned_fees, None);
+    let base_fee = in_lstar.header.base_fee_per_gas.expect("a base fee");
+    let gas = second.receipts[0].cumulative_gas_used;
+    assert_eq!(in_lstar.header.blob_gas_used, Some(0));
+    assert_eq!(in_lstar.header.burned_fees, Some(base_fee * gas));
+    // The transaction pays the same in both forks.
+    assert_eq!(first.receipts[0].cumulative_gas_used, gas);
+
+    // The header of each fork reads back as it was written: the Hegota header
+    // with neither field, the IStar header with the commitment, the LStar header
+    // with the commitment and then the fees burned.
+    for header in [&genesis, &in_istar.header, &in_lstar.header] {
+        let decoded = BlockHeader::decode(&header.encode_to_vec()).expect("the header decodes");
+        assert_eq!(&decoded, header);
+        assert_eq!(decoded.aggregate_proof_hash, header.aggregate_proof_hash);
+        assert_eq!(decoded.burned_fees, header.burned_fees);
+    }
+    println!(
+        "Header: {} bytes in Hegota, {} in IStar, {} in LStar.",
+        genesis.encode_to_vec().len(),
+        in_istar.header.encode_to_vec().len(),
+        in_lstar.header.encode_to_vec().len(),
+    );
+
+    // Other nodes import the two blocks on every path.
+    let first_bal = first
+        .block_access_list
+        .clone()
+        .expect("an IStar block has a BAL");
+    let bal = second
+        .block_access_list
+        .clone()
+        .expect("an LStar block has a BAL");
+    let parent = Some((in_istar, &first_bal));
+    for result in import_after(parent, in_lstar, &bal, &keys, istar_after, lstar_after).await {
+        result.expect("the LStar block imports");
+    }
+
+    // The aggregate proof is checked in LStar as it is in IStar. A proof of
+    // another key's signature does not stand for the block's stripped frame.
+    let sig_hash = frame_tx(&in_lstar.body.transactions[0]).compute_sig_hash();
+    let another_key = with_proof(in_lstar.clone(), aggregate(&[(&other, sig_hash)]));
+    let results = import_after(parent, &another_key, &bal, &keys, istar_after, lstar_after).await;
+    assert_rejected!(results, InvalidBlockError::InvalidAggregateProof(1));
+    // Nor is the block valid without its proof,
+    let mut proofless = in_lstar.clone();
+    proofless.body.aggregate_proof = None;
+    let results = import_after(parent, &proofless, &bal, &keys, istar_after, lstar_after).await;
+    assert_rejected!(results, InvalidBlockError::AggregateProofNotPresent);
+    // or with the fees burned and no commitment, the header of a chain that
+    // schedules LStar without IStar.
+    let mut uncommitted = proofless;
+    uncommitted.header.aggregate_proof_hash = None;
+    uncommitted.header.hash = Default::default();
+    let results = import_after(parent, &uncommitted, &bal, &keys, istar_after, lstar_after).await;
+    assert_rejected!(
+        results,
+        InvalidBlockError::InvalidHeader(InvalidBlockHeaderError::AggregateProofHashNotPresent)
+    );
+}
+
+#[tokio::test]
+async fn chain_that_starts_in_lstar_carries_the_proof_and_the_burned_fees_from_its_first_block() {
+    let sender = key(0x92);
+    let keys = [&sender];
+    // IStar and LStar are both active at genesis.
+    let at_genesis = Some(0);
+    let (store, chain_id) = setup_store_with_lstar(&keys, at_genesis, at_genesis).await;
+    let blockchain = blockchain(store.clone());
+    let genesis = genesis_header(&store);
+    assert_eq!(
+        store.get_chain_config().fork(genesis.timestamp),
+        Fork::LStar
+    );
+    // The genesis block commits to the empty aggregate proof. No block came
+    // before it, so its header has no fees burned.
+    assert_eq!(
+        genesis.aggregate_proof_hash,
+        Some(compute_aggregate_proof_hash(&[], &NativeCrypto))
+    );
+    assert_eq!(genesis.burned_fees, None);
+
+    let tx = proof_transaction(chain_id, &sender, 0, 0);
+    blockchain
+        .add_transaction_to_pool(Transaction::FrameTransaction(tx.clone()))
+        .await
+        .expect("the transaction enters the pool with its proof");
+    let built = build_block(&store, &blockchain, &genesis);
+    let block = built.payload;
+    assert_eq!(block.body.transactions.len(), 1);
+    assert!(built.receipts[0].succeeded);
+    assert_eq!(
+        encoded(frame_tx(&block.body.transactions[0])),
+        encoded(&stripped(&tx))
+    );
+    let proof = block
+        .body
+        .aggregate_proof
+        .clone()
+        .expect("the first block has an aggregate proof");
+    assert!(!proof.is_empty());
+    assert_eq!(
+        block.header.aggregate_proof_hash,
+        Some(compute_aggregate_proof_hash(&proof, &NativeCrypto))
+    );
+    let base_fee = block.header.base_fee_per_gas.expect("a base fee");
+    assert_eq!(
+        block.header.burned_fees,
+        Some(base_fee * built.receipts[0].cumulative_gas_used)
+    );
+    let bal = built.block_access_list.expect("an LStar block has a BAL");
+    for result in import_after(None, &block, &bal, &keys, at_genesis, at_genesis).await {
+        result.expect("the block imports");
+    }
+
+    // Through the Engine API the payload carries both fields, and the block is
+    // not the one its hash names without either.
+    let payload = payload_json(block, &bal);
+    assert!(payload.get("aggregateProof").is_some());
+    assert!(payload.get("burnedFees").is_some());
+    let (other_store, _) = setup_store_with_lstar(&keys, at_genesis, at_genesis).await;
+    let status = new_payload_on(other_store, payload.clone()).await;
+    assert_eq!(status["status"], "VALID", "got {status:?}");
+    for field in ["aggregateProof", "burnedFees"] {
+        let mut without = payload.clone();
+        without.as_object_mut().unwrap().remove(field);
+        let (other_store, _) = setup_store_with_lstar(&keys, at_genesis, at_genesis).await;
+        let status = new_payload_on(other_store, without).await;
+        assert_eq!(
+            status["status"], "INVALID",
+            "without {field}: got {status:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn chain_that_schedules_lstar_without_istar_has_no_aggregate_proof() {
+    let first = key(0x93);
+    let second = key(0x94);
+    let keys = [&first, &second];
+    // LStar from the first block on, and IStar never: the chain goes from Hegota
+    // to LStar.
+    let lstar_after = Some(BLOCK_TIME);
+    let (store, chain_id) = setup_store_with_lstar(&keys, None, lstar_after).await;
+    let blockchain = blockchain(store.clone());
+    for sender in keys {
+        blockchain
+            .add_transaction_to_pool(Transaction::FrameTransaction(proof_transaction(
+                chain_id, sender, 0, 0,
+            )))
+            .await
+            .expect("the transaction enters the pool");
+    }
+    let built = build_block(&store, &blockchain, &genesis_header(&store));
+    let block = built.payload;
+    let bal = built.block_access_list.expect("an LStar block has a BAL");
+    assert_eq!(
+        store.get_chain_config().fork(block.header.timestamp),
+        Fork::LStar
+    );
+    assert_eq!(block.body.transactions.len(), 2);
+    assert!(built.receipts.iter().all(|receipt| receipt.succeeded));
+
+    // The builder strips nothing. The block has the fees burned of LStar
+    // (EIP-8079) and no aggregate proof: its header is the one EIP-8079 defines.
+    assert!(
+        block
+            .body
+            .transactions
+            .iter()
+            .all(|tx| !frame_tx(tx).has_stripped_proofs())
+    );
+    assert_eq!(block.body.aggregate_proof, None);
+    assert_eq!(block.header.aggregate_proof_hash, None);
+    assert!(block.header.burned_fees.is_some());
+    let decoded = BlockHeader::decode(&block.header.encode_to_vec()).expect("the header decodes");
+    assert_eq!(decoded, block.header);
+    assert_eq!(decoded.aggregate_proof_hash, None);
+    assert_eq!(decoded.burned_fees, block.header.burned_fees);
+    for result in import_after(None, &block, &bal, &keys, None, lstar_after).await {
+        result.expect("the LStar block imports with its proofs");
+    }
+
+    // A stripped transaction is invalid in it, as in a Hegota block,
+    let mut transactions = block.body.transactions.clone();
+    transactions[1] = Transaction::FrameTransaction(stripped(frame_tx(&transactions[1])));
+    let stripped_tx = frame_tx(&transactions[1]);
+    let signer = keys
+        .iter()
+        .find(|key| key.account == stripped_tx.sender)
+        .unwrap();
+    let proof = aggregate(&[(signer, stripped_tx.compute_sig_hash())]);
+    let with_stripped = with_transactions(block.clone(), transactions.clone());
+    let results = import_after(None, &with_stripped, &bal, &keys, None, lstar_after).await;
+    assert_rejected!(results, InvalidBlockError::StrippedProofFramePresent(1));
+    // and so is an aggregate proof, with the stripped claim it proves or without.
+    for invalid in [
+        with_proof(with_stripped, proof.clone()),
+        with_proof(block, proof),
+    ] {
+        let results = import_after(None, &invalid, &bal, &keys, None, lstar_after).await;
+        assert_rejected!(
+            results,
+            InvalidBlockError::InvalidHeader(InvalidBlockHeaderError::AggregateProofHashPresent)
+        );
     }
 }
 
@@ -1404,11 +1774,11 @@ async fn included_transaction_leaves_the_pool_by_its_signature_hash() {
     let first = key(0x84);
     let second = key(0x85);
     let keys = [&first, &second];
-    let built = lstar_block(&first, &second).await;
+    let built = istar_block(&first, &second).await;
 
     // Another node holds the first transaction as it was signed, and another
     // transaction of the second sender for the same nonce.
-    let (store, chain_id) = setup_store(&keys, LSTAR_AT_FIRST_BLOCK).await;
+    let (store, chain_id) = setup_store(&keys, ISTAR_AT_FIRST_BLOCK).await;
     let blockchain = blockchain(store.clone());
     let same = built.pooled[0].clone();
     let mut other = transaction_with_proof_frames(
@@ -1456,7 +1826,7 @@ async fn payload_build_loop_strips_and_proves_the_payload_it_returns() {
     let first = key(0x7b);
     let second = key(0x7c);
     let keys = [&first, &second];
-    let (store, chain_id) = setup_store(&keys, LSTAR_AT_FIRST_BLOCK).await;
+    let (store, chain_id) = setup_store(&keys, ISTAR_AT_FIRST_BLOCK).await;
     let blockchain = Arc::new(blockchain(store.clone()));
     for sender in keys {
         blockchain
@@ -1503,8 +1873,8 @@ async fn payload_build_loop_strips_and_proves_the_payload_it_returns() {
         block.header.aggregate_proof_hash,
         Some(compute_aggregate_proof_hash(&proof, &NativeCrypto))
     );
-    let bal = built.block_access_list.expect("an LStar block has a BAL");
-    for result in import(&block, &bal, &keys, LSTAR_AT_FIRST_BLOCK).await {
+    let bal = built.block_access_list.expect("an IStar block has a BAL");
+    for result in import(&block, &bal, &keys, ISTAR_AT_FIRST_BLOCK).await {
         result.expect("the block imports");
     }
 }
@@ -1515,8 +1885,13 @@ fn new_payload_params(payload: Value) -> Option<Vec<Value>> {
     Some(vec![payload, json!([]), json!(H256::zero()), json!([])])
 }
 
-async fn new_payload(payload: Value, keys: &[&Key], lstar_after: Option<u64>) -> Value {
-    let (store, _) = setup_store(keys, lstar_after).await;
+async fn new_payload(payload: Value, keys: &[&Key], istar_after: Option<u64>) -> Value {
+    let (store, _) = setup_store(keys, istar_after).await;
+    new_payload_on(store, payload).await
+}
+
+/// What `engine_newPayloadV5` answers for the payload on a node with this store.
+async fn new_payload_on(store: Store, payload: Value) -> Value {
     let context = default_context_with_storage(store).await;
     NewPayloadV5Request::parse(&new_payload_params(payload))
         .expect("well-formed newPayloadV5 params")
@@ -1536,7 +1911,7 @@ async fn aggregate_proof_travels_through_get_payload_and_new_payload() {
     let first = key(0x7d);
     let second = key(0x7e);
     let keys = [&first, &second];
-    let (store, chain_id) = setup_store(&keys, LSTAR_AT_FIRST_BLOCK).await;
+    let (store, chain_id) = setup_store(&keys, ISTAR_AT_FIRST_BLOCK).await;
     let builder = default_context_with_storage(store.clone()).await;
     let mut pooled = Vec::new();
     for sender in keys {
@@ -1591,14 +1966,14 @@ async fn aggregate_proof_travels_through_get_payload_and_new_payload() {
     assert!(payload.get("aggregateProofHash").is_none());
 
     // `engine_newPayloadV5` on another node accepts it.
-    let status = new_payload(payload.clone(), &keys, LSTAR_AT_FIRST_BLOCK).await;
+    let status = new_payload(payload.clone(), &keys, ISTAR_AT_FIRST_BLOCK).await;
     assert_eq!(status["status"], "VALID", "got {status:?}");
     assert_eq!(status["latestValidHash"], payload["blockHash"]);
 
     // The same payload with another proof is not the block its hash names.
     let mut other_proof = payload.clone();
     other_proof["aggregateProof"] = json!(format!("{proof}00"));
-    let status = new_payload(other_proof, &keys, LSTAR_AT_FIRST_BLOCK).await;
+    let status = new_payload(other_proof, &keys, ISTAR_AT_FIRST_BLOCK).await;
     assert_eq!(status["status"], "INVALID", "got {status:?}");
     // Nor is it without the proof.
     let mut without_proof = payload.clone();
@@ -1606,12 +1981,12 @@ async fn aggregate_proof_travels_through_get_payload_and_new_payload() {
         .as_object_mut()
         .unwrap()
         .remove("aggregateProof");
-    let status = new_payload(without_proof, &keys, LSTAR_AT_FIRST_BLOCK).await;
+    let status = new_payload(without_proof, &keys, ISTAR_AT_FIRST_BLOCK).await;
     assert_eq!(status["status"], "INVALID", "got {status:?}");
     // Nor with the transactions as they were pooled.
     let mut with_pooled_transactions = payload;
     with_pooled_transactions["transactions"] = json!(pooled);
-    let status = new_payload(with_pooled_transactions, &keys, LSTAR_AT_FIRST_BLOCK).await;
+    let status = new_payload(with_pooled_transactions, &keys, ISTAR_AT_FIRST_BLOCK).await;
     assert_eq!(status["status"], "INVALID", "got {status:?}");
 }
 
@@ -1621,14 +1996,14 @@ async fn engine_answers_invalid_to_a_payload_whose_aggregate_proof_does_not_hold
     let second = key(0x80);
     let other = key(0x81);
     let keys = [&first, &second];
-    let built = lstar_block(&first, &second).await;
+    let built = istar_block(&first, &second).await;
     let proof = built.block.body.aggregate_proof.clone().unwrap();
 
     // The block as built is valid.
     let status = new_payload(
         payload_json(built.block.clone(), &built.bal),
         &keys,
-        LSTAR_AT_FIRST_BLOCK,
+        ISTAR_AT_FIRST_BLOCK,
     )
     .await;
     assert_eq!(status["status"], "VALID", "got {status:?}");
@@ -1664,7 +2039,7 @@ async fn engine_answers_invalid_to_a_payload_whose_aggregate_proof_does_not_hold
     for invalid_proof in invalid_proofs {
         let block = with_proof(built.block.clone(), invalid_proof);
         let status =
-            new_payload(payload_json(block, &built.bal), &keys, LSTAR_AT_FIRST_BLOCK).await;
+            new_payload(payload_json(block, &built.bal), &keys, ISTAR_AT_FIRST_BLOCK).await;
         assert_eq!(status["status"], "INVALID", "got {status:?}");
     }
 
@@ -1673,24 +2048,24 @@ async fn engine_answers_invalid_to_a_payload_whose_aggregate_proof_does_not_hold
     let mut readable = stripped(&built.pooled[0]);
     readable.frames[0].flags = PROOF_READ_FLAG;
     let block = with_first_transaction(&built, readable, &first, &second);
-    let status = new_payload(payload_json(block, &built.bal), &keys, LSTAR_AT_FIRST_BLOCK).await;
+    let status = new_payload(payload_json(block, &built.bal), &keys, ISTAR_AT_FIRST_BLOCK).await;
     assert_eq!(status["status"], "INVALID", "got {status:?}");
 
     // A proof in a block without stripped frames.
-    let (store, _) = setup_store(&keys, LSTAR_AT_FIRST_BLOCK).await;
+    let (store, _) = setup_store(&keys, ISTAR_AT_FIRST_BLOCK).await;
     let empty = build_block(&store, &blockchain(store.clone()), &genesis_header(&store));
-    let empty_bal = empty.block_access_list.expect("an LStar block has a BAL");
+    let empty_bal = empty.block_access_list.expect("an IStar block has a BAL");
     let status = new_payload(
         payload_json(empty.payload.clone(), &empty_bal),
         &keys,
-        LSTAR_AT_FIRST_BLOCK,
+        ISTAR_AT_FIRST_BLOCK,
     )
     .await;
     assert_eq!(status["status"], "VALID", "got {status:?}");
     let status = new_payload(
         payload_json(with_proof(empty.payload, proof), &empty_bal),
         &keys,
-        LSTAR_AT_FIRST_BLOCK,
+        ISTAR_AT_FIRST_BLOCK,
     )
     .await;
     assert_eq!(status["status"], "INVALID", "got {status:?}");
@@ -1720,7 +2095,7 @@ async fn engine_reads_the_aggregate_proof_of_a_payload_under_its_fork() {
     assert_eq!(status["status"], "VALID", "got {status:?}");
 
     // With an aggregate proof it is another block than its hash names, and a
-    // block with one before LStar is invalid under its own hash too.
+    // block with one before IStar is invalid under its own hash too.
     let mut with_empty_proof = payload.clone();
     with_empty_proof["aggregateProof"] = json!("0x");
     let status = new_payload(with_empty_proof, &keys, None).await;

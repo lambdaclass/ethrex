@@ -1304,7 +1304,7 @@ impl Mempool {
     /// Removes the sender's pending frame transaction if `sig_hash` is its
     /// canonical signature hash (EIP-8141).
     ///
-    /// A block from LStar may carry a frame transaction without some of its
+    /// A block from IStar may carry a frame transaction without some of its
     /// proofs, which the block's aggregate proof stands for. That changes the
     /// transaction's hash but not its signature hash, so this is how an included
     /// transaction is found in the pool, where it still carries its proofs.

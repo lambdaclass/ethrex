@@ -1,6 +1,6 @@
 //! EIP-8141 §Aggregation: stripped proof frames.
 //!
-//! From LStar a block may carry a frame transaction without the proofs of its
+//! From IStar a block may carry a frame transaction without the proofs of its
 //! `LEANSPHINCS_VERIFIER` proof frames: the frame keeps its claim and the length
 //! of its proof, the form the signature hash gives it, and the block's aggregate
 //! proof stands for the proof that left. These tests cover what that changes for
@@ -198,7 +198,7 @@ pub(crate) fn proof_transaction(
 }
 
 /// The transaction with every proof the protocol may strip stripped, as a block
-/// from LStar carries it.
+/// from IStar carries it.
 pub(crate) fn stripped(tx: &FrameTransaction) -> FrameTransaction {
     let mut stripped = tx.clone();
     stripped.strip_proofs();
@@ -479,7 +479,7 @@ fn only_a_proof_the_protocol_may_strip_is_stripped() {
 }
 
 #[test]
-fn gas_is_the_same_before_and_after_lstar_and_with_the_proof_stripped() {
+fn gas_is_the_same_before_and_after_istar_and_with_the_proof_stripped() {
     let key = key(0x45);
     let tx = proof_transaction(CHAIN_ID, &key, 0, 0);
     let stripped = stripped(&tx);
@@ -493,22 +493,25 @@ fn gas_is_the_same_before_and_after_lstar_and_with_the_proof_stripped() {
     assert_eq!(stripped.proof_frames_gas(), tx.proof_frames_gas());
 
     let (in_hegota, _) = run(&accounts, &tx, Fork::Hegota);
-    let (in_lstar, _) = run(&accounts, &tx, Fork::LStar);
-    let (stripped_in_lstar, _) = run(&accounts, &stripped, Fork::LStar);
     let in_hegota = in_hegota.expect("the transaction is valid in Hegota");
-    let in_lstar = in_lstar.expect("the transaction is valid in LStar with its proof");
-    let stripped_in_lstar = stripped_in_lstar.expect("the stripped transaction is valid in LStar");
 
     // The signature is priced as transaction data, at the calldata floor.
     assert_eq!(in_hegota.gas_used, tx.calldata_floor_total());
     assert_eq!(in_hegota.gas_used, 513_009);
-    for report in [&in_lstar, &stripped_in_lstar] {
-        assert_eq!(report.gas_used, in_hegota.gas_used);
-        assert_eq!(report.gas_spent, in_hegota.gas_spent);
-        assert_eq!(report.state_gas_used, in_hegota.state_gas_used);
-        assert_eq!(report.payer_address, Some(key.account));
-        // Frame by frame: the proof frame is charged its whole limit either way.
-        assert_eq!(report.frame_results, in_hegota.frame_results);
+    // From IStar on, and so in LStar after it, with the proof or stripped of it.
+    for fork in [Fork::IStar, Fork::LStar] {
+        let (with_proof, _) = run(&accounts, &tx, fork);
+        let (without_proof, _) = run(&accounts, &stripped, fork);
+        let with_proof = with_proof.expect("the transaction is valid with its proof");
+        let without_proof = without_proof.expect("the stripped transaction is valid");
+        for report in [&with_proof, &without_proof] {
+            assert_eq!(report.gas_used, in_hegota.gas_used);
+            assert_eq!(report.gas_spent, in_hegota.gas_spent);
+            assert_eq!(report.state_gas_used, in_hegota.state_gas_used);
+            assert_eq!(report.payer_address, Some(key.account));
+            // Frame by frame: the proof frame is charged its whole limit either way.
+            assert_eq!(report.frame_results, in_hegota.frame_results);
+        }
     }
     // A frame result is `(status, execution gas used, state gas used, logs)`.
     let proof_frame = &in_hegota.frame_results.as_ref().unwrap()[0];
@@ -561,8 +564,8 @@ fn stripped_proof_frame_is_observed_like_the_frame_it_replaces() {
         (observer, observer_code()),
     ];
 
-    let (with_proof, with_proof_db) = run(&accounts, &tx, Fork::LStar);
-    let (without_proof, without_proof_db) = run(&accounts, &stripped, Fork::LStar);
+    let (with_proof, with_proof_db) = run(&accounts, &tx, Fork::IStar);
+    let (without_proof, without_proof_db) = run(&accounts, &stripped, Fork::IStar);
     let with_proof = with_proof.expect("the transaction is valid with its proof");
     let without_proof = without_proof.expect("the stripped transaction is valid");
     assert!(
@@ -610,7 +613,7 @@ fn stripped_proof_frame_is_observed_like_the_frame_it_replaces() {
 }
 
 #[test]
-fn stripped_proof_frame_is_invalid_before_lstar() {
+fn stripped_proof_frame_is_invalid_before_istar() {
     let key = key(0x47);
     let tx = proof_transaction(CHAIN_ID, &key, 0, 0);
     let accounts = [(key.account, account_code(key.public))];
@@ -669,7 +672,7 @@ fn stripped_proof_frame_must_be_one_the_protocol_may_strip() {
             .expect_err("the stripped frame is not one the protocol may strip");
         assert!(error.contains(reason), "expected `{reason}` in `{error}`");
         assert!(invalid.validate_stripped_proofs().is_err());
-        let (result, _) = run(&accounts, &invalid, Fork::LStar);
+        let (result, _) = run(&accounts, &invalid, Fork::IStar);
         assert!(is_invalid_format(&result), "{reason}: got {result:?}");
     }
 }
@@ -694,10 +697,10 @@ fn stripped_proof_frame_needs_a_limit_that_covers_its_verifier() {
     };
 
     // With its proof the claim does not hold: the verifier runs out of gas.
-    let (result, _) = run(&accounts, &underfunded, Fork::LStar);
+    let (result, _) = run(&accounts, &underfunded, Fork::IStar);
     assert!(is_invalid_proof(&result), "got {result:?}");
     // Without it the claim does not hold either: no aggregate stands for a proof
     // whose frame could not have paid for its verifier.
-    let (result, _) = run(&accounts, &stripped(&underfunded), Fork::LStar);
+    let (result, _) = run(&accounts, &stripped(&underfunded), Fork::IStar);
     assert!(is_invalid_proof(&result), "got {result:?}");
 }

@@ -194,11 +194,11 @@ pub fn create_payload(
             .is_prague_activated(args.timestamp)
             .then_some(*DEFAULT_REQUESTS_HASH),
         slot_number: args.slot_number,
-        // EIP-8141 §Aggregation: from LStar, the commitment to the block's
+        // EIP-8141 §Aggregation: from IStar, the commitment to the block's
         // aggregate proof. The proof is empty until the payload is handed out,
         // when the proofs of its transactions are stripped and aggregated.
         aggregate_proof_hash: chain_config
-            .is_lstar_activated(args.timestamp)
+            .is_istar_activated(args.timestamp)
             .then(|| compute_aggregate_proof_hash(&[], &NativeCrypto)),
         ..Default::default()
     };
@@ -216,7 +216,7 @@ pub fn create_payload(
             .is_shanghai_activated(args.timestamp)
             .then(|| args.withdrawals.clone().unwrap_or_default()),
         aggregate_proof: chain_config
-            .is_lstar_activated(args.timestamp)
+            .is_istar_activated(args.timestamp)
             .then(Bytes::new),
     };
 
@@ -435,7 +435,7 @@ impl PayloadBuildResult {
     /// EIP-8141 §Aggregation: strips every proof the protocol may strip from the
     /// block's transactions, aggregates the stripped signatures into the block's
     /// aggregate proof, and commits to both in the header. Nothing changes before
-    /// LStar, for a block with no proof to strip, or for a block that already has
+    /// IStar, for a block with no proof to strip, or for a block that already has
     /// its aggregate proof.
     ///
     /// This runs after the block was executed, on the transactions as the pool
@@ -512,10 +512,10 @@ impl Blockchain {
         // provider, so it holds complete blob data for every blob tx it may include.
         // Inert unless blob sampling is enabled.
         self.mempool.latch_eager_provider();
-        // EIP-8141 §Aggregation: the payload of an LStar block gets its aggregate
-        // proof when it is handed out. The prover is prepared now, off this
-        // thread, so that the proof does not wait for it. It is done once in the
-        // process.
+        // EIP-8141 §Aggregation: the payload of a block from IStar gets its
+        // aggregate proof when it is handed out. The prover is prepared now, off
+        // this thread, so that the proof does not wait for it. It is done once in
+        // the process.
         if payload.body.aggregate_proof.is_some() {
             tokio::task::spawn_blocking(prepare_prover);
         }

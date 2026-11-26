@@ -33,10 +33,10 @@ pub struct FullBlockBody {
     pub transactions: Vec<RpcTransaction>,
     pub uncles: Vec<H256>,
     pub withdrawals: Vec<Withdrawal>,
-    /// The block's aggregate proof (EIP-8141 §Aggregation), the one proof an
-    /// LStar block carries for the claims of its stripped proof frames. Present
-    /// from LStar. The form with transaction hashes only leaves it out; the
-    /// header's `aggregateProofHash` commits to it either way.
+    /// The block's aggregate proof (EIP-8141 §Aggregation), the one proof a
+    /// block from IStar carries for the claims of its stripped proof frames.
+    /// The form with transaction hashes only leaves it out; the header's
+    /// `aggregateProofHash` commits to it either way.
     #[serde(
         rename = "aggregateProof",
         default,
@@ -273,7 +273,7 @@ mod test {
         assert!(json.get("aggregateProof").is_none());
         assert!(json.get("aggregateProofHash").is_some());
 
-        // A block before LStar has neither field.
+        // A block before IStar has neither field.
         let header = BlockHeader::default();
         let block =
             RpcBlock::build(header.clone(), BlockBody::empty(), header.hash(), true).unwrap();

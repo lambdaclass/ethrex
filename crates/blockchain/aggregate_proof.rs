@@ -3,7 +3,7 @@
 //! signature.
 //!
 //! A pending transaction carries its signatures inside it, as the proofs of its
-//! proof frames. From LStar the builder of a block strips every proof the
+//! proof frames. From IStar the builder of a block strips every proof the
 //! protocol may strip from the transactions it includes and aggregates the
 //! stripped signatures into one proof, which the block carries and its header
 //! commits to. A stripped frame keeps its claim and the length of its proof, the
@@ -44,8 +44,8 @@ pub enum AggregateProofError {
 }
 
 /// Builds the prover's program and starts its threads, which the first proof
-/// does otherwise. A node calls this when it starts to build an LStar payload,
-/// so the first payload it has to prove does not wait for it.
+/// does otherwise. A node calls this when it starts to build a payload from
+/// IStar, so the first payload it has to prove does not wait for it.
 pub fn prepare_prover() {
     leansphincs_aggregation_setup();
 }
@@ -106,7 +106,7 @@ pub fn strip_and_aggregate(
 }
 
 /// Block validity for the aggregate proof (EIP-8141 §Aggregation), checked
-/// before the block executes. From LStar:
+/// before the block executes. From IStar:
 ///
 /// 1. the block carries an aggregate proof of at most
 ///    `MAX_AGGREGATE_PROOF_BYTES` bytes;
@@ -115,7 +115,9 @@ pub fn strip_and_aggregate(
 /// 4. the proof is empty when the block has no stripped proof frame, and
 ///    otherwise it proves exactly the claims of the block's stripped frames.
 ///
-/// Before LStar a block carries no aggregate proof and no stripped proof frame.
+/// Before IStar a block carries no aggregate proof and no stripped proof frame.
+/// The rule is keyed on the activation time of IStar, as the header's fields
+/// are: a chain that schedules LStar without IStar never has an aggregate proof.
 /// Proof frames that keep their proof are not looked at here: executing them
 /// verifies them, at any fork.
 pub fn validate_aggregate_proof(
@@ -123,7 +125,7 @@ pub fn validate_aggregate_proof(
     chain_config: &ChainConfig,
 ) -> Result<(), InvalidBlockError> {
     let transactions = &block.body.transactions;
-    if !chain_config.is_lstar_activated(block.header.timestamp) {
+    if !chain_config.is_istar_activated(block.header.timestamp) {
         if block.body.aggregate_proof.is_some() {
             return Err(InvalidBlockError::AggregateProofPresent);
         }
@@ -175,12 +177,13 @@ mod tests {
     };
 
     const HEGOTA: u64 = 1_000;
-    const LSTAR: u64 = 2_000;
+    const ISTAR: u64 = 2_000;
+    const LSTAR: u64 = 3_000;
 
     fn config() -> ChainConfig {
         ChainConfig {
             hegota_time: Some(HEGOTA),
-            lstar_time: Some(LSTAR),
+            istar_time: Some(ISTAR),
             ..Default::default()
         }
     }
@@ -205,9 +208,9 @@ mod tests {
 
     #[test]
     fn a_block_without_stripped_frames_is_proven_by_the_empty_proof() {
-        assert!(validate_aggregate_proof(&block(LSTAR, Some(Bytes::new())), &config()).is_ok());
+        assert!(validate_aggregate_proof(&block(ISTAR, Some(Bytes::new())), &config()).is_ok());
         let result =
-            validate_aggregate_proof(&block(LSTAR, Some(Bytes::from(vec![1u8; 7]))), &config());
+            validate_aggregate_proof(&block(ISTAR, Some(Bytes::from(vec![1u8; 7]))), &config());
         assert!(
             matches!(result, Err(InvalidBlockError::AggregateProofNotEmpty(7))),
             "got {result:?}"
@@ -215,16 +218,16 @@ mod tests {
     }
 
     #[test]
-    fn an_lstar_block_must_carry_its_aggregate_proof_and_commit_to_it() {
-        let result = validate_aggregate_proof(&block(LSTAR, None), &config());
+    fn an_istar_block_must_carry_its_aggregate_proof_and_commit_to_it() {
+        let result = validate_aggregate_proof(&block(ISTAR, None), &config());
         assert!(
             matches!(result, Err(InvalidBlockError::AggregateProofNotPresent)),
             "got {result:?}"
         );
         // The proof without the header's commitment, and with a wrong one.
-        let mut uncommitted = block(LSTAR, Some(Bytes::new()));
+        let mut uncommitted = block(ISTAR, Some(Bytes::new()));
         uncommitted.header.aggregate_proof_hash = None;
-        let mut miscommitted = block(LSTAR, Some(Bytes::new()));
+        let mut miscommitted = block(ISTAR, Some(Bytes::new()));
         miscommitted.header.aggregate_proof_hash = Some(H256::repeat_byte(0xab));
         for invalid in [uncommitted, miscommitted] {
             let result = validate_aggregate_proof(&invalid, &config());
@@ -240,7 +243,7 @@ mod tests {
         }
         // A proof over the bound, before anything reads it.
         let oversized = Bytes::from(vec![0u8; MAX_AGGREGATE_PROOF_BYTES + 1]);
-        let result = validate_aggregate_proof(&block(LSTAR, Some(oversized)), &config());
+        let result = validate_aggregate_proof(&block(ISTAR, Some(oversized)), &config());
         assert!(
             matches!(
                 result,
@@ -253,8 +256,8 @@ mod tests {
     }
 
     #[test]
-    fn a_block_before_lstar_carries_no_aggregate_proof() {
-        for timestamp in [HEGOTA, LSTAR - 1] {
+    fn a_block_before_istar_carries_no_aggregate_proof() {
+        for timestamp in [HEGOTA, ISTAR - 1] {
             assert!(validate_aggregate_proof(&block(timestamp, None), &config()).is_ok());
             let result = validate_aggregate_proof(&block(timestamp, Some(Bytes::new())), &config());
             assert!(
@@ -262,12 +265,12 @@ mod tests {
                 "got {result:?}"
             );
         }
-        // Nor on a chain that never schedules LStar.
-        let without_lstar = ChainConfig {
+        // Nor on a chain that never schedules IStar.
+        let without_istar = ChainConfig {
             hegota_time: Some(HEGOTA),
             ..Default::default()
         };
-        let result = validate_aggregate_proof(&block(LSTAR, Some(Bytes::new())), &without_lstar);
+        let result = validate_aggregate_proof(&block(ISTAR, Some(Bytes::new())), &without_istar);
         assert!(
             matches!(result, Err(InvalidBlockError::AggregateProofPresent)),
             "got {result:?}"
@@ -275,16 +278,54 @@ mod tests {
     }
 
     #[test]
-    fn a_chain_that_schedules_lstar_without_hegota_still_requires_the_proof() {
-        // Fork rules resolve from the fork ordinal: with LStar scheduled, a block
-        // at its timestamp is an LStar block whether or not Hegota has a
-        // timestamp of its own.
+    fn an_lstar_block_carries_its_aggregate_proof_too() {
+        // LStar follows IStar: its blocks keep the aggregate proof.
         let config = ChainConfig {
+            lstar_time: Some(LSTAR),
+            ..config()
+        };
+        for timestamp in [ISTAR, LSTAR - 1, LSTAR, LSTAR + 1] {
+            assert!(
+                validate_aggregate_proof(&block(timestamp, Some(Bytes::new())), &config).is_ok()
+            );
+            let result = validate_aggregate_proof(&block(timestamp, None), &config);
+            assert!(
+                matches!(result, Err(InvalidBlockError::AggregateProofNotPresent)),
+                "got {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_chain_that_schedules_lstar_without_istar_carries_no_aggregate_proof() {
+        // The aggregate proof belongs to IStar. A chain that goes from Hegota to
+        // LStar has LStar's own rules and no aggregate proof at any time.
+        let config = ChainConfig {
+            hegota_time: Some(HEGOTA),
             lstar_time: Some(LSTAR),
             ..Default::default()
         };
-        assert!(validate_aggregate_proof(&block(LSTAR, Some(Bytes::new())), &config).is_ok());
-        let result = validate_aggregate_proof(&block(LSTAR, None), &config);
+        for timestamp in [HEGOTA, LSTAR - 1, LSTAR, LSTAR + 1] {
+            assert!(validate_aggregate_proof(&block(timestamp, None), &config).is_ok());
+            let result = validate_aggregate_proof(&block(timestamp, Some(Bytes::new())), &config);
+            assert!(
+                matches!(result, Err(InvalidBlockError::AggregateProofPresent)),
+                "got {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_chain_that_schedules_istar_without_hegota_still_requires_the_proof() {
+        // The rule is keyed on the activation time of IStar alone: with IStar
+        // scheduled, a block at its timestamp is an IStar block whether or not
+        // Hegota has a timestamp of its own.
+        let config = ChainConfig {
+            istar_time: Some(ISTAR),
+            ..Default::default()
+        };
+        assert!(validate_aggregate_proof(&block(ISTAR, Some(Bytes::new())), &config).is_ok());
+        let result = validate_aggregate_proof(&block(ISTAR, None), &config);
         assert!(
             matches!(result, Err(InvalidBlockError::AggregateProofNotPresent)),
             "got {result:?}"

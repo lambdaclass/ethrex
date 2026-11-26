@@ -14,7 +14,8 @@ use tracing::warn;
 
 use super::{
     AccountState, Block, BlockBody, BlockHeader, BlockNumber, INITIAL_BASE_FEE,
-    compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
+    compute_aggregate_proof_hash, compute_receipts_root, compute_transactions_root,
+    compute_withdrawals_root,
 };
 use crate::{
     constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, EMPTY_BLOCK_ACCESS_LIST_HASH},
@@ -855,6 +856,14 @@ impl Genesis {
             .is_amsterdam_activated(self.timestamp)
             .then_some(self.slot_number.unwrap_or(0));
 
+        // EIP-8141 §Aggregation: the genesis block of a chain that starts in
+        // IStar commits to the empty aggregate proof, as every block from IStar
+        // without stripped proof frames does.
+        let aggregate_proof_hash = self
+            .config
+            .is_istar_activated(self.timestamp)
+            .then(|| compute_aggregate_proof_hash(&[], &NativeCrypto));
+
         BlockHeader {
             parent_hash: H256::zero(),
             ommers_hash: *DEFAULT_OMMERS_HASH,
@@ -879,6 +888,7 @@ impl Genesis {
             requests_hash,
             block_access_list_hash,
             slot_number,
+            aggregate_proof_hash,
             ..Default::default()
         }
     }
@@ -888,10 +898,12 @@ impl Genesis {
             transactions: vec![],
             ommers: vec![],
             withdrawals: Some(vec![]),
-            // A genesis block has no aggregate proof, even on a chain that starts
-            // in LStar: its header has no `burned_fees` either, and the first
-            // block after it is the first one with both.
-            aggregate_proof: None,
+            // The genesis block of a chain that starts in IStar carries the empty
+            // aggregate proof its header commits to.
+            aggregate_proof: self
+                .config
+                .is_istar_activated(self.timestamp)
+                .then(Bytes::new),
         }
     }
 
@@ -1836,8 +1848,11 @@ mod tests {
     }
 
     #[test]
-    fn genesis_that_starts_in_lstar_has_no_aggregate_proof() {
-        let genesis = Genesis {
+    fn genesis_that_starts_in_istar_commits_to_the_empty_aggregate_proof() {
+        use crate::types::validate_block_body;
+        use ethrex_rlp::decode::RLPDecode;
+
+        let genesis_of = |istar_time: Option<u64>, lstar_time: Option<u64>| Genesis {
             config: ChainConfig {
                 london_block: Some(0),
                 shanghai_time: Some(0),
@@ -1846,19 +1861,54 @@ mod tests {
                 osaka_time: Some(0),
                 amsterdam_time: Some(0),
                 hegota_time: Some(0),
-                lstar_time: Some(0),
+                istar_time,
+                lstar_time,
                 ..Default::default()
             },
             ..Default::default()
         };
-        let block = genesis.get_block();
-        assert_eq!(genesis.config.fork(block.header.timestamp), Fork::LStar);
-        assert_eq!(block.body.aggregate_proof, None);
-        assert_eq!(block.header.aggregate_proof_hash, None);
-        assert_eq!(block.header.burned_fees, None);
-        // The header reads back as it was written.
-        use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-        let decoded = BlockHeader::decode(&block.header.encode_to_vec()).expect("it decodes");
-        assert_eq!(decoded, block.header);
+        let empty_proof_hash = compute_aggregate_proof_hash(&[], &NativeCrypto);
+
+        // A chain that starts in IStar, and one that starts in LStar after it:
+        // the genesis block carries the empty proof and its header commits to it.
+        for (lstar_time, fork) in [
+            (None, Fork::IStar),
+            (Some(1_000), Fork::IStar),
+            (Some(0), Fork::LStar),
+        ] {
+            let genesis = genesis_of(Some(0), lstar_time);
+            let block = genesis.get_block();
+            assert_eq!(genesis.config.fork(block.header.timestamp), fork);
+            assert_eq!(block.body.aggregate_proof, Some(Bytes::new()));
+            assert_eq!(block.header.aggregate_proof_hash, Some(empty_proof_hash));
+            // No block came before a genesis block, so it burned no fees: its
+            // header has no `burned_fees`, in LStar too.
+            assert_eq!(block.header.burned_fees, None);
+            validate_block_body(&block.header, &block.body, &NativeCrypto)
+                .expect("the header commits to the body");
+            // The block reads back as it was written.
+            let decoded = Block::decode(&block.encode_to_vec()).expect("it decodes");
+            assert_eq!(decoded, block);
+        }
+
+        // A chain that starts in Hegota, whether IStar comes later or never, and
+        // a chain that schedules LStar without IStar: no proof and no commitment.
+        for (istar_time, lstar_time, fork) in [
+            (None, None, Fork::Hegota),
+            (Some(1_000), None, Fork::Hegota),
+            (Some(1_000), Some(2_000), Fork::Hegota),
+            (None, Some(0), Fork::LStar),
+        ] {
+            let genesis = genesis_of(istar_time, lstar_time);
+            let block = genesis.get_block();
+            assert_eq!(genesis.config.fork(block.header.timestamp), fork);
+            assert_eq!(block.body.aggregate_proof, None);
+            assert_eq!(block.header.aggregate_proof_hash, None);
+            assert_eq!(block.header.burned_fees, None);
+            validate_block_body(&block.header, &block.body, &NativeCrypto)
+                .expect("the header commits to the body");
+            let decoded = Block::decode(&block.encode_to_vec()).expect("it decodes");
+            assert_eq!(decoded, block);
+        }
     }
 }

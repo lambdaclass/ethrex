@@ -210,12 +210,12 @@ pub fn verify_stateless_block(
 
     // The request has no field for the block's aggregate proof (EIP-8141
     // §Aggregation), and stateless execution accepts only a block without
-    // stripped proof frames, whose proof is empty. From LStar the header commits
+    // stripped proof frames, whose proof is empty. From IStar the header commits
     // to that empty proof, so a block that carried another one fails the
     // `block_hash` check below.
     if execution_witness
         .chain_config
-        .is_lstar_activated(block.header.timestamp)
+        .is_istar_activated(block.header.timestamp)
     {
         block.body.aggregate_proof = Some(bytes::Bytes::new());
         block.header.aggregate_proof_hash = Some(

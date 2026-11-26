@@ -75,10 +75,10 @@ pub struct ExecutionPayload {
         default
     )]
     pub burned_fees: Option<u64>,
-    // aggregateProof (EIP-8141 §Aggregation, LStar+): the proof the block carries
+    // aggregateProof (EIP-8141 §Aggregation, IStar+): the proof the block carries
     // for the claims of its stripped proof frames; empty when it has none. The
     // header commits to it, so it must survive the getPayload → newPayload
-    // round-trip. `None` for pre-LStar payloads (skipped in serialization).
+    // round-trip. `None` for pre-IStar payloads (skipped in serialization).
     #[serde(
         skip_serializing_if = "Option::is_none",
         with = "serde_utils::bytes::opt",
@@ -489,7 +489,7 @@ mod test {
         assert_eq!(json["witness"], "0x1234");
     }
 
-    // From LStar the payload carries the block's aggregate proof (EIP-8141
+    // From IStar the payload carries the block's aggregate proof (EIP-8141
     // §Aggregation).
 
     fn payload_with_aggregate_proof(aggregate_proof: Option<Bytes>) -> ExecutionPayload {

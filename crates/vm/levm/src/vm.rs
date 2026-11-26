@@ -1886,12 +1886,15 @@ impl<'a> VM<'a> {
         };
 
         // EIP-8141 §Aggregation: a proof leaves its frame only in a block from
-        // LStar, whose aggregate proof stands for it. Which proofs may leave is a
-        // static rule, checked with the others below.
-        if frame_tx.has_stripped_proofs() && self.env.config.fork < Fork::LStar {
+        // IStar, whose aggregate proof stands for it. Which proofs may leave is a
+        // static rule, checked with the others below. The fork is the one of the
+        // fork ordinal, which is past IStar also on a chain that schedules LStar
+        // without IStar: there the block check, keyed on the activation time of
+        // IStar, refuses a stripped frame before the block executes.
+        if frame_tx.has_stripped_proofs() && self.env.config.fork < Fork::IStar {
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::InvalidFrameTransactionFormat(
-                    "a stripped proof frame is valid only in a block from LStar".to_string(),
+                    "a stripped proof frame is valid only in a block from IStar".to_string(),
                 ),
             ));
         }

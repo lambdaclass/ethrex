@@ -316,9 +316,9 @@ mod tests {
 
     #[test]
     fn a_block_whose_proof_frames_keep_their_proofs_is_executed() {
-        // From LStar, with the empty aggregate proof.
+        // From IStar, with the empty aggregate proof.
         assert!(reject_unverified_aggregate_proof(&block(false, Some(Bytes::new()))).is_ok());
-        // Before LStar, without one.
+        // Before IStar, without one.
         assert!(reject_unverified_aggregate_proof(&block(false, None)).is_ok());
     }
 }

@@ -2341,7 +2341,7 @@ pub struct FrameTransaction {
     /// a frame holds its claim alone, and the transaction encodes it as the list
     /// `[claim, proof_length]`, the frame's elided form in the signature hash.
     /// The block's aggregate proof stands for the proofs that left, so only a
-    /// transaction inside a block from LStar has an entry here.
+    /// transaction inside a block from IStar has an entry here.
     pub stripped_proofs: BTreeMap<usize, u64>,
     /// EIP-8141 `fees.max_fee`: one budget, in wei, for all of the transaction's
     /// execution, state and blob gas. The fee fields are bounded at 2**256, not
@@ -2694,7 +2694,7 @@ impl FrameTransaction {
     }
 
     /// Whether the proof of any proof frame was stripped. Such a transaction is
-    /// valid only inside a block from LStar, whose aggregate proof covers the
+    /// valid only inside a block from IStar, whose aggregate proof covers the
     /// claims of its stripped frames.
     pub fn has_stripped_proofs(&self) -> bool {
         !self.stripped_proofs.is_empty()
@@ -2744,7 +2744,7 @@ impl FrameTransaction {
     /// Validates the stripped proof frames (EIP-8141 §Aggregation): each holds its
     /// claim alone, and only a proof the protocol may strip left its frame (see
     /// [`Self::check_proof_can_be_stripped`]). Whether a stripped frame may appear
-    /// at all, which is only in a block from LStar, is for the caller to decide.
+    /// at all, which is only in a block from IStar, is for the caller to decide.
     pub fn validate_stripped_proofs(&self) -> Result<(), String> {
         for (index, proof_len) in &self.stripped_proofs {
             let Some(frame) = self.frames.get(*index) else {
