@@ -37,7 +37,7 @@ impl DiscoveryServer {
         }: Discv4Message,
     ) -> Result<(), DiscoveryServerError> {
         // Ignore packets sent by ourselves
-        if node_id(&sender_public_key) == self.local_node.node_id() {
+        if node_id(&sender_public_key) == self.local_node_id {
             return Ok(());
         }
         #[cfg(feature = "metrics")]
@@ -251,17 +251,18 @@ impl DiscoveryServer {
         node: &Node,
     ) -> Result<(), DiscoveryServerError> {
         let expiration: u64 = get_msg_expiration_from_seconds(EXPIRATION_SECONDS);
+        let local = self.local_node.load();
         let from = Endpoint {
-            ip: self.local_node.ip,
-            udp_port: self.local_node.udp_port,
-            tcp_port: self.local_node.tcp_port,
+            ip: local.node.ip,
+            udp_port: local.node.udp_port,
+            tcp_port: local.node.tcp_port,
         };
         let to = Endpoint {
             ip: node.ip,
             udp_port: node.udp_port,
             tcp_port: node.tcp_port,
         };
-        let enr_seq = self.local_node_record.seq;
+        let enr_seq = local.record.seq;
         let ping = Message::Ping(PingMessage::new(from, to, expiration).with_enr_seq(enr_seq));
         let ping_hash = self.discv4_send_else_dispose(ping, node).await?;
         trace!(protocol = "discv4", sent = "Ping", to = %format!("{:#x}", node.public_key));
@@ -282,7 +283,7 @@ impl DiscoveryServer {
             udp_port: node.udp_port,
             tcp_port: node.tcp_port,
         };
-        let enr_seq = self.local_node_record.seq;
+        let enr_seq = self.local_node.load().record.seq;
         let pong = Message::Pong(PongMessage::new(to, ping_hash, expiration).with_enr_seq(enr_seq));
         self.discv4_send(pong, node.udp_addr()).await?;
         trace!(protocol = "discv4", sent = "Pong", to = %format!("{:#x}", node.public_key));
@@ -315,8 +316,8 @@ impl DiscoveryServer {
         request_hash: H256,
         from: std::net::SocketAddr,
     ) -> Result<(), DiscoveryServerError> {
-        let node_record = &self.local_node_record;
-        let msg = Message::ENRResponse(ENRResponseMessage::new(request_hash, node_record.clone()));
+        let node_record = self.local_node.load().record.clone();
+        let msg = Message::ENRResponse(ENRResponseMessage::new(request_hash, node_record));
         self.discv4_send(msg, from).await?;
         Ok(())
     }

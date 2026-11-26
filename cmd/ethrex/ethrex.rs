@@ -68,13 +68,8 @@ async fn server_shutdown(
     if !is_memory_datadir(datadir) {
         let node_config_path = datadir.join("node_config.json");
         info!("Storing config at {:?}...", node_config_path);
-        // Clone the current (possibly updated) record out and drop the guard.
-        let record = {
-            let guard = shared_local_node
-                .read()
-                .expect("shared_local_node poisoned");
-            guard.record.clone()
-        };
+        // The current record, including any update discovery made since startup.
+        let record = shared_local_node.load().record.clone();
         let node_config = NodeConfigFile::new(peer_table, record).await;
         store_node_config_file(node_config, node_config_path);
         tokio::time::sleep(Duration::from_secs(1)).await;

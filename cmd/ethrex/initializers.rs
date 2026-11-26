@@ -39,7 +39,7 @@ use std::{
     io::IsTerminal,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
-    sync::{Arc, RwLock},
+    sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
@@ -956,10 +956,10 @@ pub async fn init_l1(
     let local_node_record = get_local_node_record(&datadir, &local_p2p_node, &signer);
 
     // Build the shared live identity Arc once; threaded into RPC, discovery, and shutdown.
-    let shared_local_node: SharedLocalNode = Arc::new(RwLock::new(LocalNode {
+    let shared_local_node: SharedLocalNode = SharedLocalNode::new(LocalNode {
         node: local_p2p_node.clone(),
         record: local_node_record,
-    }));
+    });
 
     let peer_table = PeerTableServer::spawn(opts.target_peers);
 

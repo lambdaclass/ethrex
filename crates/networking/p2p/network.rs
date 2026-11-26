@@ -14,7 +14,9 @@ use crate::{
         p2p::SUPPORTED_SNAP_CAPABILITIES,
     },
     tx_broadcaster::{TxBroadcaster, TxBroadcasterError},
-    types::{INITIAL_ENR_SEQ, NetworkConfig, Node, NodeError, NodeRecord, SharedLocalNode},
+    types::{
+        INITIAL_ENR_SEQ, LocalNode, NetworkConfig, Node, NodeError, NodeRecord, SharedLocalNode,
+    },
 };
 use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
@@ -184,6 +186,12 @@ pub async fn start_network(
     );
 
     let (local_node_record, initial_fork_id) = build_local_node_record(&context).await?;
+    // Discovery serves straight from the shared slot, so this is the record
+    // peers get, and the one RPC and shutdown read back.
+    shared_local_node.replace(LocalNode {
+        node: context.local_node.clone(),
+        record: local_node_record,
+    });
 
     // The ENR's `eth` entry is only correct for the fork the chain is on. Nothing
     // recomputed it after startup, so once the chain crossed a fork we kept
@@ -193,14 +201,12 @@ pub async fn start_network(
     let fork_id_rx = spawn_fork_id_publisher(&context, initial_fork_id);
 
     let discovery = DiscoveryServer::spawn(
-        context.local_node.clone(),
-        local_node_record,
+        shared_local_node,
         context.signer,
         udp_socket,
         Box::new(EthForkIdFilter::new(context.storage.clone())),
         bootnodes,
         config,
-        shared_local_node,
         fork_id_rx,
     )
     .await

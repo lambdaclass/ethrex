@@ -172,7 +172,7 @@ impl DiscoveryServer {
         let session = derive_session_keys(
             &ephemeral_key,
             &dest_pubkey,
-            &self.local_node.node_id(),
+            &self.local_node_id,
             &node.node_id(),
             &challenge_data,
             true,
@@ -203,8 +203,8 @@ impl DiscoveryServer {
         );
 
         let whoareyou = WhoAreYou::decode(&packet)?;
-        let record = (self.local_node_record.seq != whoareyou.enr_seq)
-            .then(|| self.local_node_record.clone());
+        let local = self.local_node.load();
+        let record = (local.record.seq != whoareyou.enr_seq).then(|| local.record.clone());
         self.discv5_send_handshake(message, signature, &ephemeral_pubkey, node, record)
             .await
     }
@@ -266,7 +266,7 @@ impl DiscoveryServer {
             &src_pubkey,
             &challenge_data,
             &authdata.eph_pubkey,
-            &self.local_node.node_id(),
+            &self.local_node_id,
             &signature,
         ) {
             trace!(protocol = "discv5", from = %src_id, "Handshake signature verification failed");
@@ -283,7 +283,7 @@ impl DiscoveryServer {
             &self.signer,
             &eph_pubkey,
             &src_id,
-            &self.local_node.node_id(),
+            &self.local_node_id,
             &challenge_data,
             false,
         );
@@ -610,7 +610,7 @@ impl DiscoveryServer {
 
         let pong = Message::Pong(PongMessage {
             req_id: ping_message.req_id,
-            enr_seq: self.local_node_record.seq,
+            enr_seq: self.local_node.load().record.seq,
             recipient_addr: sender_addr,
         });
 
@@ -686,7 +686,7 @@ impl DiscoveryServer {
         // Our own record first: `split_answer` may leave out the tail.
         let mut nodes = Vec::new();
         if find_node_message.distances.contains(&0) {
-            nodes.push(self.local_node_record.clone());
+            nodes.push(self.local_node.load().record.clone());
         }
         nodes.extend(
             self.contacts
@@ -801,7 +801,7 @@ impl DiscoveryServer {
 
         let ping = Message::Ping(PingMessage {
             req_id: req_id.clone(),
-            enr_seq: self.local_node_record.seq,
+            enr_seq: self.local_node.load().record.seq,
         });
 
         self.discv5_send_ordinary(ping, node).await?;
@@ -821,7 +821,7 @@ impl DiscoveryServer {
             METRICS_P2P.inc_discv5_outgoing(message.metric_label());
         }
         let ordinary = Ordinary {
-            src_id: self.local_node.node_id(),
+            src_id: self.local_node_id,
             message: message.clone(),
         };
         let encrypt_key = match self.contacts.session(&node.node_id()) {
@@ -897,7 +897,7 @@ impl DiscoveryServer {
             discv5.record_findnode_sent(*dest_id, find_node.req_id.clone(), Instant::now());
         }
         let ordinary = Ordinary {
-            src_id: self.local_node.node_id(),
+            src_id: self.local_node_id,
             message,
         };
 
@@ -925,7 +925,7 @@ impl DiscoveryServer {
             METRICS_P2P.inc_discv5_outgoing("Handshake");
         }
         let handshake = Handshake {
-            src_id: self.local_node.node_id(),
+            src_id: self.local_node_id,
             id_signature: signature.serialize_compact().to_vec(),
             eph_pubkey: eph_pubkey.to_vec(),
             record,
@@ -1081,7 +1081,7 @@ impl DiscoveryServer {
         outbound_key: Option<[u8; 16]>,
     ) -> Result<(), DiscoveryServerError> {
         let sender_id = ordinary.src_id;
-        if sender_id == self.local_node.node_id() {
+        if sender_id == self.local_node_id {
             return Ok(());
         }
         #[cfg(feature = "metrics")]

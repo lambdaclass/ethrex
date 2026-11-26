@@ -34,7 +34,6 @@ use ethrex_partial::verify::TrustedHash;
 use ethrex_partial::working::WorkingSet;
 use ethrex_storage::{EngineType, Store};
 use serde::{Deserialize, Serialize};
-use std::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tracing::{info, warn};
@@ -171,10 +170,10 @@ impl PartialCommand {
         let signer = get_signer(&datadir);
         let (local_node, network_config) = get_local_p2p_node(&opts, &signer);
         let record = get_local_node_record(&datadir, &local_node, &signer);
-        let shared_local_node: SharedLocalNode = Arc::new(RwLock::new(LocalNode {
+        let shared_local_node: SharedLocalNode = SharedLocalNode::new(LocalNode {
             node: local_node.clone(),
             record,
-        }));
+        });
         let peer_table =
             PeerTableServer::spawn(local_node.node_id(), opts.target_peers, store.clone());
         let tracker = TaskTracker::new();

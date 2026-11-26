@@ -46,15 +46,12 @@ struct EthProtocolInfo {
 }
 
 pub async fn node_info(storage: Store, node_data: &NodeData) -> Result<Value, RpcErr> {
-    // Read the live identity; clone out values and drop the guard before any .await.
+    // One snapshot of the live identity, so the node and its record agree.
     let (enode_url, enr_url, node_id, ip, udp_port, tcp_port) = {
-        let guard = node_data
-            .shared_local_node
-            .read()
-            .map_err(|_| RpcErr::Internal("shared_local_node lock poisoned".to_string()))?;
-        let node = &guard.node;
+        let local = node_data.shared_local_node.load();
+        let node = &local.node;
         let enode_url = node.enode_url();
-        let enr_url = guard.record.enr_url().unwrap_or_default();
+        let enr_url = local.record.enr_url().unwrap_or_default();
         let node_id = hex::encode(node.node_id());
         let ip = node.ip.to_string();
         let udp_port = node.udp_port;
