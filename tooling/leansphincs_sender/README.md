@@ -1,7 +1,8 @@
 # leansphincs_sender
 
-Sends [EIP-8504](../../docs/eip-8504.md) dependency transactions: frame transactions whose
-authorization is a leanSPHINCS signature that travels beside the transaction instead of inside it.
+Sends frame transactions that a leanSPHINCS key authorizes through a
+[declarative claim](../../docs/eip-8141-declarative-claims.md): the transaction declares that the
+key signed it, and the signature travels beside the transaction instead of inside it.
 
 ## Usage
 
@@ -17,7 +18,7 @@ Commands:
 ```
 
 1. Print the genesis entries and merge them into the `alloc` of a genesis that schedules
-   Hegotá, which EIP-8504 is part of:
+   Hegotá, which claims are part of:
 
    ```sh
    cargo run --release --manifest-path tooling/Cargo.toml -p leansphincs_sender -- \
@@ -26,9 +27,9 @@ Commands:
 
    ```json
    {
-     "0x008292b820008d9d7218710fa962c6d9610dd970": {
+     "0xbd6fea88015ad67cc46f39e2bbeb693df935ae50": {
        "balance": "0x3635c9adc5dea00000",
-       "code": "0x60025f35b36004145f35…",
+       "code": "0x5f7feb7cfb04946e4e36765467a24939f9ff4cc1d3a28d47d6f24e7df2dd989adfc37300000000000000000000000000000000000000adb4603e575f5ffd5b60035f5faa",
        "nonce": "0x0",
        "storage": {}
      }
@@ -50,8 +51,8 @@ Commands:
 
    ```text
    Sending from 4 accounts on chain 9 at 2 tx/s
-   sent 0x9e97…aa7e from 0xbd6f…ae50 nonce 0 (8032 bytes)
-   sent 0xc1ac…3d01 from 0x0082…d970 nonce 0 (8032 bytes)
+   sent 0xd58ef90d46e1e71179e40bfbf2ab8b0723153fd824f407cbd54049d435cda661 from 0xbd6fea88015ad67cc46f39e2bbeb693df935ae50 nonce 0 (7918 bytes)
+   sent 0x97fdc1b6768ee4ff6258de1c2815fb125642f2ca91be7bf8fbbd44544ce1e75a from 0x008292b820008d9d7218710fa962c6d9610dd970 nonce 0 (7918 bytes)
    ...
    Done in 3.6s: 8 sent, 0 sent again, 4 seen included, 0 rejected
    ```
@@ -73,20 +74,20 @@ Commands:
 ## How it works
 
 - **Accounts.** The key of account `i` is `keccak256(seed || i)`, and its address is the last 20
-  bytes of `keccak256(public_key)`. Each account runs validation code that approves execution and
-  payment when the transaction has a proof frame with the triple `(0x10, 0, public_key)`: a
-  leanSPHINCS signature of the transaction's own signature hash under the account's key.
-- **Transactions.** Each one has three frames: `VERIFY` runs the account's validation code,
-  `PROOF` declares the dependency, and `SENDER` calls the recipient.
-- **Submission.** The tool signs the signature hash and submits
-  `0x06 || rlp([tx_payload_body, [signature]])` through `eth_sendRawTransaction`. The signature is
-  7,740 bytes, so a submission is about 8 KB.
+  bytes of `keccak256(public_key)`. Each account runs 68 bytes of validation code that approves
+  execution and payment when `HASCLAIM(LEANSPHINCS_VERIFIER, public_key, 0)` is 1: the
+  transaction has a claim that the account's key signed the transaction's own signature hash.
+- **Transactions.** Each one has one claim, `[LEANSPHINCS_VERIFIER, public_key, "", 0, 0]`, and
+  two frames: `VERIFY` runs the account's validation code and `SENDER` calls the recipient.
+- **Submission.** The tool signs the signature hash and submits the pooled representation,
+  `0x06 || rlp([tx_body, 0, [signature], []])`, through `eth_sendRawTransaction`. The signature
+  is 7,740 bytes, so a submission is about 8 KB.
 - **Pacing.** A node keeps one pending frame transaction per sender. The tool therefore sends an
   account's next transaction only after its nonce shows the previous one was included, and the
   achievable rate is at most the number of accounts per block.
 
 ## References
 
-- [EIP-8504 in ethrex](../../docs/eip-8504.md)
-- Draft EIP-8504, ethereum/EIPs#12672
+- [Declarative claims in ethrex](../../docs/eip-8141-declarative-claims.md)
+- The declarative-claims proposal for EIP-8141
 - leanEthereum/leanVM, the `lean_sphincs` crate the tool signs with

@@ -29,7 +29,7 @@ network_params:
   gloas_fork_epoch: 1
   # Schedule Hegota (heze) so the EIP-8141 frame-tx opcodes are enabled.
   # The EIP-8141 opcodes (APPROVE 0xAA, TXPARAM 0xB0, FRAMEDATALOAD 0xB1,
-  # FRAMEDATACOPY 0xB2, FRAMEPARAM 0xB3, SIGPARAM 0xB4) are gated on Hegota,
+  # FRAMEDATACOPY 0xB2, FRAMEPARAM 0xB3, HASCLAIM 0xB4) are gated on Hegota,
   # not Osaka. The ethereum-genesis-generator emits `bogotaTime`/`hezeTime`
   # into the EL genesis JSON, which ethrex parses into
   # `ChainConfig.hegota_time` via its serde aliases. Without this, every

@@ -37,7 +37,7 @@ network_params:
   gloas_fork_epoch: 1
   # Hegotá (heze) at epoch 2 enables the EIP-8141 frame-tx opcodes (APPROVE
   # 0xAA, TXPARAM 0xB0, FRAMEDATALOAD 0xB1, FRAMEDATACOPY 0xB2, FRAMEPARAM 0xB3,
-  # SIGPARAM 0xB4) and the EXPIRY_VERIFIER predeploy at 0x…8141. They are gated
+  # HASCLAIM 0xB4) and the EXPIRY_VERIFIER predeploy at 0x…8141. They are gated
   # on Hegotá, not Osaka or Amsterdam. The genesis generator emits
   # `bogotaTime`/`hezeTime` into the EL genesis JSON, which ethrex parses into
   # `ChainConfig.hegota_time` via its serde aliases; without this every frame

@@ -118,7 +118,7 @@ Notes on individual checks:
 
 **Privileged short-circuit.** `Transaction::PrivilegedL2Transaction` returns early before pool admission; these are produced by the L2 sequencer.
 
-**Frame transactions (EIP-8141).** Frame txs go through an extended set of gates — fork activation (`FrameTxPreFork`), expiry (`FrameTxExpired`), static structural validity (`InvalidFrameTransaction`), a signature-verification gas budget (`FrameTxVerifyGasExceeded` / `FrameTxVerifyGasBudgetExceeded`), signature authenticity and low-`s` malleability (`InvalidFrameSignature` / `FrameTxMalleableSignature`), and validation-prefix shape (`FrameTxUnrecognizedPrefix` / `FrameTxInvalidPrefixStructure`). The validation-prefix simulation and paymaster accounting run last (see [Frame transactions](#frame-transactions-eip-8141)). A frame tx has no fee cap per gas or per blob gas, since its `max_fee` budget pays for all of its gas, so checks 8 and 12 do not apply to it, and the paymaster reservation is its `max_fee`.
+**Frame transactions (EIP-8141).** Frame txs go through an extended set of gates — fork activation (`FrameTxPreFork`), expiry (`FrameTxExpired`), static structural validity (`InvalidFrameTransaction`), a claim-verification gas budget (`FrameTxVerifyGasExceeded` / `FrameTxVerifyGasBudgetExceeded`), a valid witness for each of its claims (`FrameTxWithoutWitnesses` / `ClaimWitnessCountMismatch` / `ClaimWitnessLengthMismatch` / `ClaimNotSatisfied`), and validation-prefix shape (`FrameTxUnrecognizedPrefix` / `FrameTxInvalidPrefixStructure`). The validation-prefix simulation and paymaster accounting run last (see [Frame transactions](#frame-transactions-eip-8141)). A frame tx has no fee cap per gas or per blob gas, since its `max_fee` budget pays for all of its gas, so checks 8 and 12 do not apply to it, and the paymaster reservation is its `max_fee`.
 
 **Per-tx wire-size cap.** Non-blob transactions are bounded by `MAX_TX_SIZE = 128 KiB` against `Transaction::encode_canonical_len()`. Blob transactions are bounded by `MAX_BLOB_TX_SIZE` in `add_blob_transaction_to_pool` against the wire wrapper, since ethrex stores the core transaction and the sidecar in separate structs.
 
@@ -292,7 +292,7 @@ Mempool-related flags in `cmd/ethrex/cli.rs`:
 | `MaxQueuedTxsPerAccountExceeded { sender, count, limit }` | Per-sender queued (future-nonce) cap would be exceeded. |
 | `BlobsBundleError(_)` / `BlobTxNoBlobsBundle` | KZG/sidecar validation failed / blob tx submitted to a non-blob entry point. |
 | `InvalidPooledTxType(_)` / `InvalidPooledTxSize` / `RequestedPooledTxNotFound` | `PooledTransactions` response type/size mismatch, or an unrequested tx. |
-| `FrameTx*` (many) | EIP-8141 frame-tx admission failures (fork, expiry, signature, prefix, paymaster). |
+| `FrameTx*` / `Claim*` (many) | EIP-8141 frame-tx admission failures (fork, expiry, claim witnesses, prefix, paymaster). |
 | `InvalidTxSender(_)` / `StoreError(_)` / `NoBlockHeaderError` | Signature recovery failed / storage error / missing latest header. |
 
 ## Known Limitations / Open Work
