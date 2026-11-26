@@ -839,6 +839,7 @@ async fn bounded_sync_rejects_an_execution_invalid_served_bal() {
     ));
     let failure = failure.expect("block execution should report the failure");
     assert_eq!(failure.failed_block_hash, block.hash());
+    assert_eq!(failure.failed_block_number, block.header.number);
     assert_eq!(failure.last_valid_hash, block.header.parent_hash);
 }
 

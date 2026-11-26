@@ -331,10 +331,14 @@ impl PeerHandler {
                 task_receiver.try_recv()
             {
                 trace!("We received a download chunk from peer");
+                // Last block of the chunk this task asked for.
+                let chunk_end = startblock + previous_chunk_limit.saturating_sub(1);
                 if headers.is_empty() {
                     self.peer_table.record_failure(peer_id)?;
 
-                    debug!("Failed to download chunk from peer. Downloader {peer_id} freed");
+                    debug!(
+                        "Failed to download headers chunk {startblock} - {chunk_end} from peer. Downloader {peer_id} freed"
+                    );
 
                     // reinsert the task to the queue
                     tasks_queue_not_started.push_back((startblock, previous_chunk_limit));
@@ -350,7 +354,7 @@ impl PeerHandler {
 
                 if current_show < batch_show {
                     debug!(
-                        "Downloaded {} headers from peer {} (current count: {downloaded_count})",
+                        "Downloaded {} headers from peer {}, chunk: {startblock} - {chunk_end} (current count: {downloaded_count})",
                         headers.len(),
                         peer_id
                     );
@@ -368,7 +372,7 @@ impl PeerHandler {
                     let new_chunk_limit = previous_chunk_limit - headers.len() as u64;
 
                     debug!(
-                        "Task for ({startblock}, {new_chunk_limit}) was not completed, re-adding to the queue, {new_chunk_limit} remaining headers"
+                        "Headers chunk {startblock} - {chunk_end} was not completed, re-adding {new_start} - {chunk_end} to the queue, {new_chunk_limit} remaining headers"
                     );
 
                     tasks_queue_not_started.push_back((new_start, new_chunk_limit));
@@ -415,8 +419,9 @@ impl PeerHandler {
             debug!("Downloader {peer_id} is now busy");
 
             tokio::spawn(async move {
+                let chunk_end = startblock + chunk_limit.saturating_sub(1);
                 trace!(
-                    "Sync Log 5: Requesting block headers from peer {peer_id}, chunk_limit: {chunk_limit}"
+                    "Sync Log 5: Requesting block headers from peer {peer_id}, chunk: {startblock} - {chunk_end}"
                 );
                 let headers = Self::download_chunk_from_peer(
                     peer_id,
@@ -426,7 +431,11 @@ impl PeerHandler {
                     chunk_limit,
                 )
                 .await
-                .inspect_err(|err| trace!("Sync Log 6: {peer_id} failed to download chunk: {err}"))
+                .inspect_err(|err| {
+                    trace!(
+                        "Sync Log 6: {peer_id} failed to download chunk {startblock} - {chunk_end}: {err}"
+                    )
+                })
                 .unwrap_or_default();
 
                 tx.send((headers, peer_id, connection, startblock, chunk_limit))
@@ -590,7 +599,10 @@ impl PeerHandler {
         startblock: u64,
         chunk_limit: u64,
     ) -> Result<Vec<BlockHeader>, PeerHandlerError> {
-        debug!("Requesting block headers from peer {peer_id}");
+        debug!(
+            "Requesting block headers from peer {peer_id}, chunk: {startblock} - {}",
+            startblock + chunk_limit.saturating_sub(1)
+        );
         let request_id = rand::random();
         let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
             id: request_id,

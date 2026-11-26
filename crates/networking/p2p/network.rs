@@ -274,6 +274,8 @@ struct PhaseCounters {
     storage_inserted: u64,
     healed_accounts: u64,
     healed_storage: u64,
+    healing_state_nodes: u64,
+    healing_storage_nodes: u64,
     bytecodes: u64,
 }
 
@@ -290,6 +292,12 @@ impl PhaseCounters {
                 .load(Ordering::Relaxed),
             healed_storage: METRICS
                 .global_storage_tries_leafs_healed
+                .load(Ordering::Relaxed),
+            healing_state_nodes: METRICS
+                .healing_state_nodes_downloaded
+                .load(Ordering::Relaxed),
+            healing_storage_nodes: METRICS
+                .healing_storage_nodes_downloaded
                 .load(Ordering::Relaxed),
             bytecodes: METRICS.downloaded_bytecodes.load(Ordering::Relaxed),
         }
@@ -573,14 +581,30 @@ async fn phase_metrics(step: CurrentStepValue, phase_start: &PhaseCounters) -> S
                 .global_state_trie_leafs_healed
                 .load(Ordering::Relaxed)
                 .saturating_sub(phase_start.healed_accounts);
-            format!("{} state paths healed", format_thousands(healed))
+            let nodes = METRICS
+                .healing_state_nodes_downloaded
+                .load(Ordering::Relaxed)
+                .saturating_sub(phase_start.healing_state_nodes);
+            format!(
+                "{} state paths healed ({} trie nodes downloaded)",
+                format_thousands(healed),
+                format_thousands(nodes)
+            )
         }
         CurrentStepValue::HealingStorage => {
             let healed = METRICS
                 .global_storage_tries_leafs_healed
                 .load(Ordering::Relaxed)
                 .saturating_sub(phase_start.healed_storage);
-            format!("{} storage slots healed", format_thousands(healed))
+            let nodes = METRICS
+                .healing_storage_nodes_downloaded
+                .load(Ordering::Relaxed)
+                .saturating_sub(phase_start.healing_storage_nodes);
+            format!(
+                "{} storage slots healed ({} trie nodes downloaded)",
+                format_thousands(healed),
+                format_thousands(nodes)
+            )
         }
         CurrentStepValue::RequestingBytecodes => {
             let downloaded = METRICS
@@ -716,6 +740,13 @@ async fn log_phase_progress(
             info!("  {:<col1_width$} │  Elapsed: {}", col1, phase_elapsed_str);
             let col1 = format!("Rate: {} paths/s", format_thousands(rate));
             info!("  {:<col1_width$} │  Peers: {}", col1, peer_count);
+            log_healing_nodes_downloaded(
+                METRICS
+                    .healing_state_nodes_downloaded
+                    .load(Ordering::Relaxed),
+                prev_interval.healing_state_nodes,
+                col1_width,
+            );
             info!("  Total time: {}", total_elapsed);
         }
         CurrentStepValue::HealingStorage => {
@@ -730,6 +761,13 @@ async fn log_phase_progress(
             info!("  {:<col1_width$} │  Elapsed: {}", col1, phase_elapsed_str);
             let col1 = format!("Rate: {} accounts/s", format_thousands(rate));
             info!("  {:<col1_width$} │  Peers: {}", col1, peer_count);
+            log_healing_nodes_downloaded(
+                METRICS
+                    .healing_storage_nodes_downloaded
+                    .load(Ordering::Relaxed),
+                prev_interval.healing_storage_nodes,
+                col1_width,
+            );
             info!("  Total time: {}", total_elapsed);
         }
         CurrentStepValue::RequestingBytecodes => {
@@ -758,6 +796,17 @@ async fn log_phase_progress(
         }
         CurrentStepValue::None => {}
     }
+}
+
+/// Logs the trie nodes a healing phase has downloaded so far, and their rate.
+fn log_healing_nodes_downloaded(nodes: u64, prev_interval_nodes: u64, col1_width: usize) {
+    let rate = nodes.saturating_sub(prev_interval_nodes) / PROGRESS_INTERVAL_SECS;
+    let col1 = format!("Trie nodes downloaded: {}", format_thousands(nodes));
+    info!(
+        "  {:<col1_width$} │  Rate: {} nodes/s",
+        col1,
+        format_thousands(rate)
+    );
 }
 
 /// Push snap sync progress to Prometheus gauges (from METRICS atomics).
