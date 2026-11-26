@@ -247,6 +247,12 @@ impl Contact {
     pub fn has_pending_enr_request(&self) -> bool {
         self.enr_request_hash.is_some()
     }
+
+    /// Whether the consumer has turned this contact down, directly or through
+    /// its [`PeerFilter`]: such a contact is never offered to it again.
+    pub fn is_written_off(&self) -> bool {
+        !self.knows_us || self.unwanted || self.passes_filter == Some(false)
+    }
 }
 
 impl Contact {
@@ -777,10 +783,7 @@ impl ContactTable {
             }
 
             let contact = self.get_contact_or_replacement(&node_id);
-            if contact
-                .map(|c| !c.knows_us || c.unwanted || c.passes_filter == Some(false))
-                .unwrap_or(false)
-            {
+            if contact.is_some_and(Contact::is_written_off) {
                 continue;
             }
 
@@ -799,6 +802,63 @@ impl ContactTable {
         tracing::trace!("Resetting list of tried peers.");
         self.already_tried_peers.clear();
         None
+    }
+
+    /// Whether the consumer could still want `node_id`: it is not connected to
+    /// it, and has not written its contact off. A node with no contact left in
+    /// the k-buckets has never been turned down, so it qualifies.
+    pub fn could_dial(&self, node_id: &H256) -> bool {
+        !self.connected.contains(node_id)
+            && !self
+                .get_contact_or_replacement(node_id)
+                .is_some_and(Contact::is_written_off)
+    }
+
+    /// Every cached record that passes `predicate`, from contacts the consumer
+    /// could dial and that have not failed to answer us.
+    ///
+    /// A full scan of the k-buckets, main and replacement lists, so at most a
+    /// few thousand records: the consumer's "dial what we already know" step,
+    /// without a network round trip.
+    pub fn records_matching(&self, predicate: &dyn Fn(&NodeRecord) -> bool) -> Vec<NodeRecord> {
+        self.iter_contacts()
+            .filter(|(node_id, contact)| {
+                !contact.disposable
+                    && !contact.is_written_off()
+                    && !self.connected.contains(*node_id)
+            })
+            .filter_map(|(_, contact)| contact.record.as_ref())
+            .filter(|record| predicate(record))
+            .cloned()
+            .collect()
+    }
+
+    /// The `count` discv5 contacts closest to `target`, as `(id, node,
+    /// record)`, closest first, with the record when we hold one. Seeds a
+    /// predicate query, which runs its predicate on the seeds' records too.
+    ///
+    /// A contact we hold no record for, such as a bootnode, is a seed all the
+    /// same: without it, a query started before the crawl fetched any record
+    /// would have nowhere to begin.
+    pub fn closest_discv5_contacts(
+        &self,
+        target: H256,
+        count: usize,
+    ) -> Vec<(H256, Node, Option<NodeRecord>)> {
+        let mut closest: Vec<(H256, &H256, &Contact)> = self
+            .iter_contacts()
+            .filter(|(_, c)| c.is_discv5 && !c.disposable)
+            .map(|(node_id, c)| (xor_distance(&target, node_id), node_id, c))
+            .collect();
+        if closest.len() > count {
+            closest.select_nth_unstable_by(count, |a, b| a.0.cmp(&b.0));
+            closest.truncate(count);
+        }
+        closest.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        closest
+            .into_iter()
+            .map(|(_, node_id, c)| (*node_id, c.node.clone(), c.record.clone()))
+            .collect()
     }
 
     /// Get the `count` closest nodes from the connection pool, sorted by XOR distance to `target`.
@@ -980,7 +1040,17 @@ impl ContactTable {
         }
     }
 
-    pub async fn new_contact_records(&mut self, node_records: Vec<NodeRecord>) {
+    /// Take in records a peer handed us, and return, for each one that
+    /// verified and parsed, the newest record the table knows for its node, as
+    /// `(id, node, record)`: the incoming one, or the one already held when
+    /// that is newer. Whatever else reads the same NODES response then never
+    /// sees a record the table has already superseded, and does not check
+    /// every signature a second time. The local node's own record is left out.
+    pub async fn new_contact_records(
+        &mut self,
+        node_records: Vec<NodeRecord>,
+    ) -> Vec<(H256, Node, NodeRecord)> {
+        let mut verified = Vec::with_capacity(node_records.len());
         for node_record in node_records {
             if !node_record.verify_signature() {
                 continue;
@@ -990,6 +1060,20 @@ impl ContactTable {
                 if node_id == self.local_node_id {
                     continue;
                 }
+                // A lagging peer can relay a record older than the one we
+                // hold. The table keeps the newer one, and so does the report.
+                let newer_held = self
+                    .get_contact_or_replacement(&node_id)
+                    .and_then(|contact| {
+                        let held = contact
+                            .record
+                            .as_ref()
+                            .filter(|held| held.seq > node_record.seq)?;
+                        Some((contact.node.clone(), held.clone()))
+                    });
+                let (reported_node, reported_record) =
+                    newer_held.unwrap_or_else(|| (node.clone(), node_record.clone()));
+                verified.push((node_id, reported_node, reported_record));
 
                 // Always add to the connection pool (regardless of k-bucket capacity)
                 self.insert_to_connection_pool(node_id, node.clone());
@@ -1030,6 +1114,7 @@ impl ContactTable {
                 }
             }
         }
+        verified
     }
 
     fn is_validation_needed(contact: &Contact, revalidation_interval: Duration) -> bool {
@@ -1329,6 +1414,43 @@ mod tests {
             Some(false),
             "a stale record must not overwrite the answer we hold"
         );
+    }
+
+    #[tokio::test]
+    async fn new_contact_records_reports_the_newer_record_it_holds() {
+        // A lagging peer relaying an old record must not hand whatever else
+        // reads the same NODES response a record the table has superseded.
+        let mut table = table_with(FixedAnswer(true));
+        let (node_id, newer) = record_for(6, 5);
+        let (_, older) = record_for(6, 3);
+
+        table.new_contact_records(vec![newer]).await;
+        let reported = table.new_contact_records(vec![older]).await;
+
+        let reported: Vec<_> = reported
+            .iter()
+            .map(|(id, _, record)| (*id, record.seq))
+            .collect();
+        assert_eq!(reported, vec![(node_id, 5)]);
+    }
+
+    #[tokio::test]
+    async fn a_contact_without_a_record_still_seeds_a_query() {
+        // Bootnodes enter as bare nodes. A query started before the crawl has
+        // fetched a single record must still have somewhere to begin.
+        let mut table = table_with(FixedAnswer(true));
+        let (node_id, contact) = dummy_contact(7);
+        table
+            .new_contacts(vec![contact.node.clone()], DiscoveryProtocol::Discv5)
+            .await;
+
+        let seeds = table.closest_discv5_contacts(H256::zero(), 16);
+
+        assert_eq!(seeds.len(), 1);
+        let (seed_id, seed_node, seed_record) = &seeds[0];
+        assert_eq!(*seed_id, node_id);
+        assert_eq!(seed_node.node_id(), node_id);
+        assert!(seed_record.is_none());
     }
 
     // --- Consumer lifecycle ---

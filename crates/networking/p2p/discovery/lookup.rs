@@ -11,6 +11,12 @@ pub const LOOKUP_BUCKET_SIZE: usize = 16;
 /// Maximum duration before a lookup is considered timed out.
 pub const LOOKUP_TIMEOUT: Duration = Duration::from_secs(20);
 
+/// Names one running discv5 lookup, the background crawl's or a predicate
+/// query's, so a NODES response is credited to the lookup that asked for it
+/// and to no other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct LookupId(pub(crate) u64);
+
 /// A single entry in the iterative lookup result set.
 #[derive(Debug, Clone)]
 pub struct LookupEntry {
@@ -119,6 +125,19 @@ impl IterativeLookup {
         }
     }
 
+    /// Whether any entry in the result set is still waiting to be asked.
+    pub fn has_unqueried(&self) -> bool {
+        self.result.iter().any(|e| !e.queried)
+    }
+
+    /// Mark `node_id` as asked, for a query sent outside [`Self::next_to_query`],
+    /// so this lookup does not ask it a second time.
+    pub fn mark_queried(&mut self, node_id: &H256) {
+        if let Some(entry) = self.result.iter_mut().find(|e| e.node_id == *node_id) {
+            entry.queried = true;
+        }
+    }
+
     /// Record that a response was received (decrements in-flight counter).
     pub fn record_response(&mut self) {
         self.queries_in_flight = self.queries_in_flight.saturating_sub(1);
@@ -138,7 +157,7 @@ impl IterativeLookup {
         if self.started_at.elapsed() >= LOOKUP_TIMEOUT {
             return true;
         }
-        !self.result.iter().any(|e| !e.queried)
+        !self.has_unqueried()
     }
 }
 
