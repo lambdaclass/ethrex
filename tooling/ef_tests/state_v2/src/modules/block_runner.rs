@@ -186,6 +186,8 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
         slot_number: None,
         dependency_witnesses_hash: None,
         burned_fees: None,
+        dependency_proof_hash: None,
+        block_deps_hash: None,
     };
     let block = Block::new(header, body);
 

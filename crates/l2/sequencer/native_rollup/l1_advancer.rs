@@ -598,6 +598,7 @@ mod tests {
             ommers: vec![],
             withdrawals: Some(vec![]),
             dependency_witnesses: None,
+            dependency_proof: None,
         };
         let block = Block::new(header.clone(), body.clone());
         let original_hash = block.hash();
@@ -781,6 +782,7 @@ mod tests {
             ommers: vec![],
             withdrawals: Some(vec![]),
             dependency_witnesses: None,
+            dependency_proof: None,
         };
         let block = Block::new(header.clone(), body.clone());
         let original_hash = block.hash();

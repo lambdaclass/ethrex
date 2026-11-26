@@ -60,6 +60,8 @@ fn random_block_header(rng: &mut impl Rng) -> BlockHeader {
         slot_number: None,
         dependency_witnesses_hash: None,
         burned_fees: None,
+        dependency_proof_hash: None,
+        block_deps_hash: None,
     }
 }
 

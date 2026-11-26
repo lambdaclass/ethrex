@@ -324,6 +324,7 @@ fn create_block_for_testing() -> (BlockHeader, BlockBody) {
         ommers: Default::default(),
         withdrawals: Default::default(),
         dependency_witnesses: None,
+        dependency_proof: None,
     };
     (block_header, block_body)
 }

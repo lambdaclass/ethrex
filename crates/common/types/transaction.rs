@@ -50,7 +50,7 @@ use ethrex_rlp::{
 #[cfg(all(feature = "zisk", target_arch = "riscv64"))]
 use super::unsync_cell::OnceCell;
 use crate::types::{
-    AccessList, AuthorizationList, BlobsBundle, constants::VERSIONED_HASH_VERSION_KZG,
+    AccessList, AuthorizationList, BlobsBundle, Fork, constants::VERSIONED_HASH_VERSION_KZG,
 };
 #[cfg(not(all(feature = "zisk", target_arch = "riscv64")))]
 use once_cell::sync::OnceCell;
@@ -1817,6 +1817,16 @@ impl Transaction {
         }
     }
 
+    /// [`Self::gas_limit`] under the rules of `fork`. Only a frame transaction's
+    /// depends on the fork: it has no gas limit field, and its `max_gas` includes
+    /// what its dependencies cost (see [`FrameTransaction::dependency_gas`]).
+    pub fn gas_limit_at(&self, fork: Fork) -> u64 {
+        match self {
+            Transaction::FrameTransaction(tx) => tx.max_gas_at(fork),
+            _ => self.gas_limit(),
+        }
+    }
+
     //TODO: It's not very correct to return gas price for legacy and eip-2930 txs but return the max fee per gas for the others, make necessary changes for it to be technically correct.
     pub fn gas_price(&self) -> U256 {
         match self {
@@ -2062,9 +2072,15 @@ impl Transaction {
     /// the result orders transactions, and the exact fee budget is checked when the
     /// transaction executes.
     pub fn effective_gas_tip(&self, base_fee: Option<u64>) -> Option<U256> {
+        self.effective_gas_tip_at(Fork::Hegota, base_fee)
+    }
+
+    /// [`Self::effective_gas_tip`] under the rules of `fork`, which decide the
+    /// `max_gas` of a frame transaction. No other transaction depends on it.
+    pub fn effective_gas_tip_at(&self, fork: Fork, base_fee: Option<u64>) -> Option<U256> {
         if let Transaction::FrameTransaction(tx) = self {
             let base_fee = U256::from(base_fee.unwrap_or_default());
-            let budget = tx.fee_budget(base_fee, U256::zero())?;
+            let budget = tx.fee_budget_at(fork, base_fee, U256::zero())?;
             return Some(budget.gas_price - base_fee);
         }
         let tip_cap = self.gas_tip_cap();
@@ -2565,6 +2581,13 @@ const FRAME_TX_TOTAL_COST_FLOOR_PER_TOKEN: u64 = 16;
 pub const LEANSPHINCS_WITNESS_GAS: u64 = LEANSPHINCS_SIGNATURE_SIZE as u64
     * FRAME_TX_STANDARD_TOKEN_COST
     * FRAME_TX_TOTAL_COST_FLOOR_PER_TOKEN;
+/// EIP-8288 `LEANSTARK_VERIFICATION_GAS`: gas a transaction pays, from LStar,
+/// for each triple its proof frames declare, as its share of the dependency
+/// proof the block carries in place of the witnesses.
+pub const LEANSTARK_VERIFICATION_GAS: u64 = 30_000;
+/// EIP-8288 `MAX_DEPENDENCY_PROOF_BYTES`: the most bytes a block's dependency
+/// proof may have.
+pub const MAX_DEPENDENCY_PROOF_BYTES: usize = 1 << 20;
 /// EIP-8141 signature schemes: ARBITRARY=0, SECP256K1=1, P256=2.
 pub const FRAME_SIG_SCHEME_ARBITRARY: u8 = 0;
 pub const FRAME_SIG_SCHEME_SECP256K1: u8 = 1;
@@ -3063,16 +3086,33 @@ impl FrameTransaction {
 
     /// The mandatory costs, always charged in full: the intrinsic cost, the
     /// per-frame cost, signature verification, value transfers, EIP-8250's
-    /// keyed-nonce access, and EIP-8504's witnesses. They are the terms EIP-8141's
-    /// `frame_tx_intrinsic_gas` and `calldata_floor_gas` share, so each is charged
-    /// once on either side.
-    pub fn mandatory_gas(&self) -> u64 {
+    /// keyed-nonce access, and what the transaction's dependencies cost under the
+    /// rules of `fork`. They are the terms EIP-8141's `frame_tx_intrinsic_gas` and
+    /// `calldata_floor_gas` share, so each is charged once on either side.
+    pub fn mandatory_gas_at(&self, fork: Fork) -> u64 {
         FRAME_TX_INTRINSIC_COST
             .saturating_add((self.frames.len() as u64).saturating_mul(FRAME_TX_PER_FRAME_COST))
             .saturating_add(self.signature_verification_cost())
             .saturating_add(self.value_transfer_gas())
             .saturating_add(self.keyed_nonce_access_cost())
-            .saturating_add(self.dependency_witness_gas())
+            .saturating_add(self.dependency_gas(fork))
+    }
+
+    /// [`Self::mandatory_gas_at`] under the rules of Hegota, the fork that
+    /// introduces frame transactions.
+    pub fn mandatory_gas(&self) -> u64 {
+        self.mandatory_gas_at(Fork::Hegota)
+    }
+
+    /// What the transaction pays for its dependencies under the rules of `fork`:
+    /// before LStar a witness for each of them (EIP-8504), and from LStar its share
+    /// of the proof that stands for the witnesses of the whole block (EIP-8288).
+    pub fn dependency_gas(&self, fork: Fork) -> u64 {
+        if fork >= Fork::LStar {
+            self.dependency_proof_gas()
+        } else {
+            self.dependency_witness_gas()
+        }
     }
 
     /// EIP-8504: `LEANSPHINCS_WITNESS_GAS` for every entry of `dependencies()`, so
@@ -3083,6 +3123,22 @@ impl FrameTransaction {
     /// both, although the block carries a single witness for it.
     pub fn dependency_witness_gas(&self) -> u64 {
         (self.dependencies().len() as u64).saturating_mul(LEANSPHINCS_WITNESS_GAS)
+    }
+
+    /// EIP-8288 `dependency_proof_gas(tx)`: `LEANSTARK_VERIFICATION_GAS` for every
+    /// triple of every proof frame, so a triple declared more than once is paid
+    /// for each time. It is the transaction's share of the block's dependency
+    /// proof and, like the witness gas it replaces, part of the intrinsic gas: it
+    /// is charged whatever execution does.
+    pub fn dependency_proof_gas(&self) -> u64 {
+        let triples = self
+            .frames
+            .iter()
+            .filter(|frame| frame.is_proof())
+            .fold(0u64, |acc, frame| {
+                acc.saturating_add((frame.data.len() / DEPENDENCY_TRIPLE_BYTES) as u64)
+            });
+        triples.saturating_mul(LEANSTARK_VERIFICATION_GAS)
     }
 
     /// EIP-8250 `keyed_nonce_access_cost`: `KEYED_NONCE_ACCESS_COST` for every key,
@@ -3117,10 +3173,15 @@ impl FrameTransaction {
     /// dimensions are separate budgets during execution, but the transaction
     /// reserves and is charged over their sum -- so a frame's state budget counts
     /// here even though its execution budget can never be spent on it.
-    pub fn standard_gas_limit(&self) -> u64 {
-        self.mandatory_gas()
+    pub fn standard_gas_limit_at(&self, fork: Fork) -> u64 {
+        self.mandatory_gas_at(fork)
             .saturating_add(self.data_cost())
             .saturating_add(self.total_frame_gas())
+    }
+
+    /// [`Self::standard_gas_limit_at`] under the rules of Hegota.
+    pub fn standard_gas_limit(&self) -> u64 {
+        self.standard_gas_limit_at(Fork::Hegota)
     }
 
     /// Σ(`limits.execution` + `limits.state`) over every frame.
@@ -3142,25 +3203,39 @@ impl FrameTransaction {
     /// EIP-8141 `calldata_floor_gas`: the mandatory costs plus the EIP-7623
     /// floor over every byte this transaction carries. The mandatory costs are
     /// always charged, so they sit on both sides of the `max_gas` comparison.
-    pub fn calldata_floor_total(&self) -> u64 {
-        self.mandatory_gas()
+    pub fn calldata_floor_total_at(&self, fork: Fork) -> u64 {
+        self.mandatory_gas_at(fork)
             .saturating_add(self.calldata_floor_gas())
+    }
+
+    /// [`Self::calldata_floor_total_at`] under the rules of Hegota.
+    pub fn calldata_floor_total(&self) -> u64 {
+        self.calldata_floor_total_at(Fork::Hegota)
     }
 
     /// EIP-8141 `max_gas = max(standard_gas_limit, calldata_floor_gas)`: the gas
     /// reserved from the block pool before execution and the quantity `max_cost`
     /// is charged over. A transaction whose data floor exceeds what it declared
     /// for execution reserves the floor rather than being rejected.
-    pub fn max_gas(&self) -> u64 {
+    ///
+    /// The transaction has no gas limit field: `max_gas` follows from its frames
+    /// and from the mandatory costs, so it is a quantity of the fork whose rules
+    /// price it.
+    pub fn max_gas_at(&self, fork: Fork) -> u64 {
         // Both sides of the comparison span both dimensions: the floor prices
         // calldata in the execution dimension only, so the frames' state budget is
         // added to it. Comparing a floor without the state budget against a standard
         // limit that includes it would escrow less than a floor-bound transaction
         // goes on to spend.
         let floor_side = self
-            .calldata_floor_total()
+            .calldata_floor_total_at(fork)
             .saturating_add(self.total_frame_state_gas());
-        self.standard_gas_limit().max(floor_side)
+        self.standard_gas_limit_at(fork).max(floor_side)
+    }
+
+    /// [`Self::max_gas_at`] under the rules of Hegota.
+    pub fn max_gas(&self) -> u64 {
+        self.max_gas_at(Fork::Hegota)
     }
 
     /// EIP-8141 `blob_gas`: `GAS_PER_BLOB` per blob versioned hash.
@@ -3182,12 +3257,15 @@ impl FrameTransaction {
     /// (`max_gas` at the base fee plus the blob gas at the blob base fee): the
     /// transaction is then invalid in that block. The arithmetic is exact, so a
     /// requirement past 2**256 is one no `max_fee` can meet.
-    pub fn fee_budget(
+    ///
+    /// `fork` is the fork of the including block: its rules decide `max_gas`.
+    pub fn fee_budget_at(
         &self,
+        fork: Fork,
         base_fee_per_gas: U256,
         blob_base_fee: U256,
     ) -> Option<FrameFeeBudget> {
-        let max_gas = U256::from(self.max_gas());
+        let max_gas = U256::from(self.max_gas_at(fork));
         let required_max_fee = max_gas
             .checked_mul(base_fee_per_gas)?
             .checked_add(U256::from(self.blob_gas()).checked_mul(blob_base_fee)?)?;
@@ -3203,6 +3281,15 @@ impl FrameTransaction {
             // `max_gas` is never zero: it includes the fixed intrinsic cost.
             gas_price: base_fee_per_gas + max_priority_fee / max_gas,
         })
+    }
+
+    /// [`Self::fee_budget_at`] under the rules of Hegota.
+    pub fn fee_budget(
+        &self,
+        base_fee_per_gas: U256,
+        blob_base_fee: U256,
+    ) -> Option<FrameFeeBudget> {
+        self.fee_budget_at(Fork::Hegota, base_fee_per_gas, blob_base_fee)
     }
 
     /// Σ(`limits.state`) over every frame.
@@ -7664,6 +7751,72 @@ mod tests {
             tx.calldata_floor_total(),
             unpriced_mandatory + 2 * LEANSPHINCS_WITNESS_GAS + tx.calldata_floor_gas()
         );
+    }
+
+    #[test]
+    fn dependencies_cost_a_witness_each_before_lstar_and_a_share_of_the_proof_per_triple_from_it() {
+        assert_eq!(LEANSTARK_VERIFICATION_GAS, 30_000);
+
+        let key = H256::repeat_byte(0xAA);
+        let plain = make_test_frame_tx();
+        assert_eq!(plain.dependency_proof_gas(), 0);
+        assert_eq!(plain.dependency_gas(Fork::LStar), 0);
+
+        // Three declarations of one triple and one of another: two dependencies.
+        let mut tx = make_test_frame_tx();
+        tx.frames
+            .insert(1, proof_frame(&[(H256::zero(), key), (H256::zero(), key)]));
+        tx.frames.push(proof_frame(&[
+            (H256::zero(), key),
+            (H256::zero(), H256::repeat_byte(0xBB)),
+        ]));
+        assert_eq!(tx.dependencies().len(), 2);
+        assert_eq!(tx.dependency_proof_gas(), 4 * LEANSTARK_VERIFICATION_GAS);
+
+        // Before LStar the charge is the witness gas of each dependency; from
+        // LStar it is the proof gas of each declaration.
+        for fork in [Fork::Hegota, Fork::LStar] {
+            let expected = if fork == Fork::LStar {
+                4 * LEANSTARK_VERIFICATION_GAS
+            } else {
+                2 * LEANSPHINCS_WITNESS_GAS
+            };
+            assert_eq!(tx.dependency_gas(fork), expected);
+            // The charge is one of the mandatory costs, so it is on both sides
+            // of the `max_gas` comparison.
+            let unpriced_mandatory = tx.mandatory_gas_at(fork) - expected;
+            assert_eq!(
+                unpriced_mandatory,
+                FRAME_TX_INTRINSIC_COST
+                    + tx.frames.len() as u64 * FRAME_TX_PER_FRAME_COST
+                    + tx.signature_verification_cost()
+            );
+            assert_eq!(
+                tx.standard_gas_limit_at(fork),
+                unpriced_mandatory + expected + tx.data_cost() + tx.total_frame_gas()
+            );
+            assert_eq!(
+                tx.calldata_floor_total_at(fork),
+                unpriced_mandatory + expected + tx.calldata_floor_gas()
+            );
+            assert_eq!(
+                tx.max_gas_at(fork),
+                tx.standard_gas_limit_at(fork)
+                    .max(tx.calldata_floor_total_at(fork) + tx.total_frame_state_gas())
+            );
+        }
+
+        // Without a fork the quantities are those of Hegota.
+        assert_eq!(tx.mandatory_gas(), tx.mandatory_gas_at(Fork::Hegota));
+        assert_eq!(
+            tx.standard_gas_limit(),
+            tx.standard_gas_limit_at(Fork::Hegota)
+        );
+        assert_eq!(
+            tx.calldata_floor_total(),
+            tx.calldata_floor_total_at(Fork::Hegota)
+        );
+        assert_eq!(tx.max_gas(), tx.max_gas_at(Fork::Hegota));
     }
 
     // ── The wrapper of a dependency transaction (EIP-8504) ──

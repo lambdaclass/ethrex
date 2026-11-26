@@ -8,7 +8,7 @@ use crate::{
         BLOB_BASE_COST, DEFAULT_OMMERS_HASH, EMPTY_WITHDRAWALS_HASH, GAS_PER_BLOB,
         MIN_BASE_FEE_PER_BLOB_GAS,
     },
-    types::{Receipt, Transaction},
+    types::{Dependency, MAX_DEPENDENCY_PROOF_BYTES, Receipt, Transaction, block_dependencies},
 };
 use bytes::Bytes;
 use ethereum_types::Bloom;
@@ -51,6 +51,25 @@ impl Block {
     pub fn hash(&self) -> BlockHash {
         self.header.hash()
     }
+
+    /// The length of the block's RLP encoding as it is without the dependency
+    /// proof (EIP-8288). This is the size EIP-7934 limits: the proof is not part
+    /// of the RLP block and has a bound of its own.
+    pub fn length_without_dependency_proof(&self) -> usize {
+        if self.body.dependency_proof.is_none() {
+            return self.length();
+        }
+        let payload = self.header.length()
+            + self.body.transactions.length()
+            + self.body.ommers.length()
+            + self.body.withdrawals.as_ref().map_or(0, RLPEncode::length)
+            + self
+                .body
+                .dependency_witnesses
+                .as_ref()
+                .map_or(0, RLPEncode::length);
+        ethrex_rlp::encode::list_length(payload)
+    }
 }
 
 impl RLPEncode for Block {
@@ -61,6 +80,7 @@ impl RLPEncode for Block {
             .encode_field(&self.body.ommers)
             .encode_optional_field(&self.body.withdrawals)
             .encode_optional_field(&self.body.dependency_witnesses)
+            .encode_optional_field(&self.body.dependency_proof)
             .finish();
     }
 }
@@ -73,12 +93,14 @@ impl RLPDecode for Block {
         let (ommers, decoder) = decoder.decode_field("ommers")?;
         let (withdrawals, decoder) = decoder.decode_optional_field();
         let (dependency_witnesses, decoder) = decoder.decode_optional_field();
+        let (dependency_proof, decoder) = decoder.decode_optional_field();
         let remaining = decoder.finish()?;
         let body = BlockBody {
             transactions,
             ommers,
             withdrawals,
             dependency_witnesses,
+            dependency_proof,
         };
         let block = Block::new(header, body);
         Ok((block, remaining))
@@ -172,6 +194,19 @@ pub struct BlockHeader {
         default = "Option::default"
     )]
     pub burned_fees: Option<u64>,
+    /// EIP-8288: `keccak256(dependency_proof)`, the commitment to the proof the
+    /// block carries for its dependencies in place of their witnesses. Present
+    /// from LStar, even when the block has no dependencies and the proof is
+    /// empty.
+    #[serde(skip_serializing_if = "Option::is_none", default = "Option::default")]
+    #[rkyv(with=crate::rkyv_utils::OptionH256Wrapper)]
+    pub dependency_proof_hash: Option<H256>,
+    /// EIP-8288: the digest of the block's dependencies (see
+    /// [`compute_deps_hash`]), the statement the dependency proof is verified
+    /// against. Present from LStar.
+    #[serde(skip_serializing_if = "Option::is_none", default = "Option::default")]
+    #[rkyv(with=crate::rkyv_utils::OptionH256Wrapper)]
+    pub block_deps_hash: Option<H256>,
 }
 
 // Needs a explicit impl due to the hash OnceLock.
@@ -204,6 +239,8 @@ impl PartialEq for BlockHeader {
             slot_number,
             dependency_witnesses_hash,
             burned_fees,
+            dependency_proof_hash,
+            block_deps_hash,
         } = self;
 
         parent_hash == &other.parent_hash
@@ -229,6 +266,8 @@ impl PartialEq for BlockHeader {
             && slot_number == &other.slot_number
             && dependency_witnesses_hash == &other.dependency_witnesses_hash
             && burned_fees == &other.burned_fees
+            && dependency_proof_hash == &other.dependency_proof_hash
+            && block_deps_hash == &other.block_deps_hash
             && logs_bloom == &other.logs_bloom
             && extra_data == &other.extra_data
     }
@@ -264,6 +303,11 @@ impl RLPEncode for BlockHeader {
             // type, and this hash must not be taken for a later field.
             .encode_optional_field(&self.dependency_witnesses_hash)
             .encode_optional_field(&self.burned_fees)
+            // EIP-8288 appends its two hashes. A header never has them together
+            // with `dependency_witnesses_hash`, and `burned_fees`, an integer that
+            // is present whenever they are, keeps them apart from that hash.
+            .encode_optional_field(&self.dependency_proof_hash)
+            .encode_optional_field(&self.block_deps_hash)
             .finish();
     }
 }
@@ -297,6 +341,8 @@ impl RLPDecode for BlockHeader {
         let (slot_number, decoder) = decoder.decode_optional_field();
         let (dependency_witnesses_hash, decoder) = decoder.decode_optional_field();
         let (burned_fees, decoder) = decoder.decode_optional_field();
+        let (dependency_proof_hash, decoder) = decoder.decode_optional_field();
+        let (block_deps_hash, decoder) = decoder.decode_optional_field();
 
         Ok((
             BlockHeader {
@@ -326,6 +372,8 @@ impl RLPDecode for BlockHeader {
                 slot_number,
                 dependency_witnesses_hash,
                 burned_fees,
+                dependency_proof_hash,
+                block_deps_hash,
             },
             decoder.finish()?,
         ))
@@ -353,6 +401,19 @@ pub struct BlockBody {
     )]
     #[rkyv(with = rkyv::with::Map<rkyv::with::Map<crate::rkyv_utils::BytesWrapper>>)]
     pub dependency_witnesses: Option<Vec<Bytes>>,
+    /// EIP-8288: the block's dependency proof, one proof that every entry of
+    /// `block_dependencies` over its transactions has a valid signature. From
+    /// LStar it takes the place of `dependency_witnesses`: `Some`, empty when the
+    /// block has no dependencies, from LStar; `None` before. No root of the body
+    /// covers it; the header commits to it with `dependency_proof_hash`. It
+    /// follows the body's other items in storage and on the network.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "crate::serde_utils::bytes::opt"
+    )]
+    #[rkyv(with = rkyv::with::Map<crate::rkyv_utils::BytesWrapper>)]
+    pub dependency_proof: Option<Bytes>,
 }
 
 impl BlockBody {
@@ -362,6 +423,7 @@ impl BlockBody {
             ommers: Vec::new(),
             withdrawals: Some(Vec::new()),
             dependency_witnesses: None,
+            dependency_proof: None,
         }
     }
 
@@ -442,6 +504,10 @@ impl RLPEncode for BlockBody {
             .encode_field(&self.ommers)
             .encode_optional_field(&self.withdrawals)
             .encode_optional_field(&self.dependency_witnesses)
+            // A byte string after a list: the two trailing items decode by type,
+            // so a body with either one alone, or with neither, reads back as it
+            // was written.
+            .encode_optional_field(&self.dependency_proof)
             .finish();
     }
 }
@@ -453,12 +519,14 @@ impl RLPDecode for BlockBody {
         let (ommers, decoder) = decoder.decode_field("ommers")?;
         let (withdrawals, decoder) = decoder.decode_optional_field();
         let (dependency_witnesses, decoder) = decoder.decode_optional_field();
+        let (dependency_proof, decoder) = decoder.decode_optional_field();
         Ok((
             BlockBody {
                 transactions,
                 ommers,
                 withdrawals,
                 dependency_witnesses,
+                dependency_proof,
             },
             decoder.finish()?,
         ))
@@ -730,6 +798,14 @@ pub enum InvalidBlockHeaderError {
     DependencyWitnessesHashNotPresent,
     #[error("Dependency witnesses hash is present")]
     DependencyWitnessesHashPresent,
+    #[error("Dependency proof hash is not present")]
+    DependencyProofHashNotPresent,
+    #[error("Dependency proof hash is present")]
+    DependencyProofHashPresent,
+    #[error("Block dependencies hash is not present")]
+    BlockDepsHashNotPresent,
+    #[error("Block dependencies hash is present")]
+    BlockDepsHashPresent,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -742,6 +818,12 @@ pub enum InvalidBlockBodyError {
     OmmersIsNotEmpty,
     #[error("Dependency witnesses do not match the header's dependency_witnesses_hash")]
     DependencyWitnessesHashNotMatch,
+    #[error("Dependency proof has {0} bytes, more than MAX_DEPENDENCY_PROOF_BYTES")]
+    DependencyProofTooLarge(usize),
+    #[error("Dependency proof does not match the header's dependency_proof_hash")]
+    DependencyProofHashNotMatch,
+    #[error("Dependencies of the transactions do not match the header's block_deps_hash")]
+    BlockDepsHashNotMatch,
 }
 
 /// Validates that the header fields are correct in reference to the parent_header
@@ -851,7 +933,76 @@ pub fn validate_block_body(
         _ => return Err(InvalidBlockBodyError::DependencyWitnessesHashNotMatch),
     }
 
+    // EIP-8288: from LStar the header commits to the dependency proof the body
+    // carries and to the dependencies of its transactions. The proof and the two
+    // commitments are present together or not at all; whether they are required
+    // is a header rule.
+    if block_header.block_deps_hash.is_some()
+        || block_header.dependency_proof_hash.is_some()
+        || block_body.dependency_proof.is_some()
+    {
+        let dependencies = block_dependencies(&block_body.transactions);
+        validate_dependency_proof_commitments(block_header, block_body, &dependencies, crypto)?;
+    }
+
     Ok(())
+}
+
+/// EIP-8288 block validity rules 1 to 3, for a block that has a dependency
+/// proof: the header's `block_deps_hash` is the digest of `dependencies`, which
+/// must be `block_dependencies` of the body's transactions; the proof is within
+/// `MAX_DEPENDENCY_PROOF_BYTES`, checked before the proof is hashed; and the
+/// header's `dependency_proof_hash` is the hash of the proof.
+///
+/// Whether the proof holds for the dependencies is not checked here: that needs
+/// the verifier.
+pub fn validate_dependency_proof_commitments(
+    block_header: &BlockHeader,
+    block_body: &BlockBody,
+    dependencies: &[Dependency],
+    crypto: &dyn Crypto,
+) -> Result<(), InvalidBlockBodyError> {
+    let (Some(deps_hash), Some(proof_hash), Some(proof)) = (
+        block_header.block_deps_hash,
+        block_header.dependency_proof_hash,
+        &block_body.dependency_proof,
+    ) else {
+        // The proof without its commitments, or a commitment without the proof.
+        return Err(InvalidBlockBodyError::DependencyProofHashNotMatch);
+    };
+    if deps_hash != compute_deps_hash(dependencies, crypto) {
+        return Err(InvalidBlockBodyError::BlockDepsHashNotMatch);
+    }
+    if proof.len() > MAX_DEPENDENCY_PROOF_BYTES {
+        return Err(InvalidBlockBodyError::DependencyProofTooLarge(proof.len()));
+    }
+    if proof_hash != compute_dependency_proof_hash(proof, crypto) {
+        return Err(InvalidBlockBodyError::DependencyProofHashNotMatch);
+    }
+    Ok(())
+}
+
+/// EIP-8288 `dependency_proof_hash`: the Keccak-256 hash of the serialized
+/// dependency proof. For the empty proof of a block without dependencies it is
+/// the hash of the empty byte string.
+pub fn compute_dependency_proof_hash(proof: &[u8], crypto: &dyn Crypto) -> H256 {
+    H256(crypto.keccak256(proof))
+}
+
+/// EIP-8288 `get_deps_hash`: the digest of a list of dependencies, the hash of
+/// `data_hash || verification_key_hash` of each one in the order of the list.
+/// A header's `block_deps_hash` is this digest over `block_dependencies`. The
+/// scheme is not hashed: the digest is defined for leanSPHINCS dependencies.
+///
+/// The EIP leaves the hash function `DEPS_HASH` open, to follow the one the
+/// aggregation circuit uses for its claims. It is Keccak-256 here (provisional).
+pub fn compute_deps_hash(dependencies: &[Dependency], crypto: &dyn Crypto) -> H256 {
+    let mut buf = Vec::with_capacity(dependencies.len() * 64);
+    for dependency in dependencies {
+        buf.extend_from_slice(dependency.data_hash.as_bytes());
+        buf.extend_from_slice(dependency.verification_key_hash.as_bytes());
+    }
+    H256(crypto.keccak256(&buf))
 }
 
 /// EIP-8504 `dependency_witnesses_hash`: the Keccak-256 hash of the RLP list of
@@ -929,13 +1080,31 @@ pub fn validate_prague_header_fields(
         }
     }
     // EIP-8504: the commitment to the dependency witnesses is a header field
-    // exactly while the EIP is active.
-    if chain_config.fork(header.timestamp) >= Fork::Hegota {
+    // exactly while blocks carry them, from Hegota until LStar.
+    let fork = chain_config.fork(header.timestamp);
+    if fork.has_dependency_witnesses() {
         if header.dependency_witnesses_hash.is_none() {
             return Err(InvalidBlockHeaderError::DependencyWitnessesHashNotPresent);
         }
     } else if header.dependency_witnesses_hash.is_some() {
         return Err(InvalidBlockHeaderError::DependencyWitnessesHashPresent);
+    }
+    // EIP-8288: from LStar the header commits to the dependency proof and to the
+    // dependencies it proves, and never before.
+    if fork.has_dependency_proof() {
+        if header.dependency_proof_hash.is_none() {
+            return Err(InvalidBlockHeaderError::DependencyProofHashNotPresent);
+        }
+        if header.block_deps_hash.is_none() {
+            return Err(InvalidBlockHeaderError::BlockDepsHashNotPresent);
+        }
+    } else {
+        if header.dependency_proof_hash.is_some() {
+            return Err(InvalidBlockHeaderError::DependencyProofHashPresent);
+        }
+        if header.block_deps_hash.is_some() {
+            return Err(InvalidBlockHeaderError::BlockDepsHashPresent);
+        }
     }
     Ok(())
 }
@@ -1590,6 +1759,7 @@ mod test {
                 ommers: Vec::new(),
                 withdrawals: Some(Vec::new()),
                 dependency_witnesses: dependency_witnesses.clone(),
+                dependency_proof: None,
             };
             let decoded = BlockBody::decode(&body.encode_to_vec()).expect("the body decodes");
             assert_eq!(decoded, body);
@@ -1624,6 +1794,7 @@ mod test {
             ommers: Vec::new(),
             withdrawals: Some(Vec::new()),
             dependency_witnesses: Some(witnesses.clone()),
+            dependency_proof: None,
         };
         let header = BlockHeader {
             transactions_root: compute_transactions_root(&[], &NativeCrypto),
@@ -1657,5 +1828,237 @@ mod test {
             validate_block_body(&header, &listless, &NativeCrypto),
             Err(InvalidBlockBodyError::DependencyWitnessesHashNotMatch)
         ));
+    }
+
+    // EIP-8288: from LStar the block carries one proof for its dependencies, and
+    // the header commits to the proof and to the dependencies it proves.
+
+    #[test]
+    fn dependency_proof_header_fields_roundtrip_in_the_shape_of_every_fork() {
+        // The trailing fields a header has by fork: before Hegota none of the
+        // three hashes; from Hegota the commitment to the witnesses; from LStar
+        // `burned_fees` followed by the two hashes of EIP-8288, and no commitment
+        // to witnesses. `burned_fees` is an integer, so a decoder that reads the
+        // trailing fields by position and type attributes each hash to its field.
+        let witnesses_hash = Some(H256::repeat_byte(0x5A));
+        let proof_hash = Some(H256::repeat_byte(0x6B));
+        let deps_hash = Some(H256::repeat_byte(0x7C));
+        let shapes = [
+            (None, None, None, None),
+            (witnesses_hash, None, None, None),
+            (None, Some(11u64), proof_hash, deps_hash),
+        ];
+        let mut seen = std::collections::HashSet::new();
+        for (dependency_witnesses_hash, burned_fees, dependency_proof_hash, block_deps_hash) in
+            shapes
+        {
+            let header = BlockHeader {
+                base_fee_per_gas: Some(1),
+                withdrawals_root: Some(H256::zero()),
+                blob_gas_used: Some(0),
+                excess_blob_gas: Some(0),
+                parent_beacon_block_root: Some(H256::zero()),
+                requests_hash: Some(H256::zero()),
+                block_access_list_hash: Some(H256::zero()),
+                slot_number: Some(7),
+                dependency_witnesses_hash,
+                burned_fees,
+                dependency_proof_hash,
+                block_deps_hash,
+                ..Default::default()
+            };
+            let decoded = BlockHeader::decode(&header.encode_to_vec()).expect("the header decodes");
+            assert_eq!(decoded, header);
+            assert_eq!(decoded.dependency_witnesses_hash, dependency_witnesses_hash);
+            assert_eq!(decoded.burned_fees, burned_fees);
+            assert_eq!(decoded.dependency_proof_hash, dependency_proof_hash);
+            assert_eq!(decoded.block_deps_hash, block_deps_hash);
+            assert!(seen.insert(header.compute_block_hash(&NativeCrypto)));
+        }
+
+        // Each of the two hashes is part of the block hash.
+        let header = BlockHeader {
+            slot_number: Some(7),
+            burned_fees: Some(11),
+            dependency_proof_hash: proof_hash,
+            block_deps_hash: deps_hash,
+            ..Default::default()
+        };
+        let other_proof = BlockHeader {
+            dependency_proof_hash: deps_hash,
+            ..header.clone()
+        };
+        let other_deps = BlockHeader {
+            block_deps_hash: proof_hash,
+            ..header.clone()
+        };
+        assert_ne!(header.hash(), other_proof.compute_block_hash(&NativeCrypto));
+        assert_ne!(header.hash(), other_deps.compute_block_hash(&NativeCrypto));
+    }
+
+    #[test]
+    fn dependency_proof_body_and_block_roundtrip() {
+        // A body has the witness list (Hegota), the proof (LStar) or neither. The
+        // list is an RLP list and the proof a byte string, so each one reads back
+        // as the item it was written as, the empty ones included.
+        let witnesses = vec![Bytes::from(vec![0xAB; 7740])];
+        let shapes = [
+            (None, None),
+            (Some(Vec::new()), None),
+            (Some(witnesses), None),
+            (None, Some(Bytes::new())),
+            (None, Some(Bytes::from(vec![0xEE; 300]))),
+        ];
+        for (dependency_witnesses, dependency_proof) in shapes {
+            let body = BlockBody {
+                transactions: Vec::new(),
+                ommers: Vec::new(),
+                withdrawals: Some(Vec::new()),
+                dependency_witnesses: dependency_witnesses.clone(),
+                dependency_proof: dependency_proof.clone(),
+            };
+            let decoded = BlockBody::decode(&body.encode_to_vec()).expect("the body decodes");
+            assert_eq!(decoded, body);
+            assert_eq!(decoded.dependency_witnesses, dependency_witnesses);
+            assert_eq!(decoded.dependency_proof, dependency_proof);
+
+            let block = Block::new(BlockHeader::default(), body);
+            let decoded = Block::decode(&block.encode_to_vec()).expect("the block decodes");
+            assert_eq!(decoded.body.dependency_witnesses, dependency_witnesses);
+            assert_eq!(decoded.body.dependency_proof, dependency_proof);
+        }
+    }
+
+    #[test]
+    fn rlp_block_size_leaves_the_dependency_proof_out() {
+        let body = BlockBody {
+            transactions: Vec::new(),
+            ommers: Vec::new(),
+            withdrawals: Some(Vec::new()),
+            dependency_witnesses: None,
+            dependency_proof: None,
+        };
+        let without_proof = Block::new(BlockHeader::default(), body.clone());
+        assert_eq!(
+            without_proof.length_without_dependency_proof(),
+            without_proof.length()
+        );
+        for proof in [Bytes::new(), Bytes::from(vec![0xEE; 200_000])] {
+            let with_proof = Block::new(
+                BlockHeader::default(),
+                BlockBody {
+                    dependency_proof: Some(proof),
+                    ..body.clone()
+                },
+            );
+            assert!(with_proof.length() > without_proof.length());
+            assert_eq!(
+                with_proof.length_without_dependency_proof(),
+                without_proof.length()
+            );
+        }
+    }
+
+    #[test]
+    fn deps_hash_is_the_hash_of_each_message_and_key_in_order() {
+        // Without dependencies it is the hash of the empty byte string.
+        assert_eq!(compute_deps_hash(&[], &NativeCrypto), *EMPTY_KECCAK_HASH);
+        assert_eq!(
+            compute_dependency_proof_hash(&[], &NativeCrypto),
+            *EMPTY_KECCAK_HASH
+        );
+
+        let first = Dependency {
+            scheme: 0x10,
+            data_hash: H256::repeat_byte(0x01),
+            verification_key_hash: H256::repeat_byte(0x02),
+        };
+        let second = Dependency {
+            scheme: 0x10,
+            data_hash: H256::repeat_byte(0x03),
+            verification_key_hash: H256::repeat_byte(0x04),
+        };
+        let mut preimage = Vec::new();
+        for byte in [0x01, 0x02, 0x03, 0x04] {
+            preimage.extend_from_slice(&[byte; 32]);
+        }
+        assert_eq!(
+            compute_deps_hash(&[first, second], &NativeCrypto),
+            H256(NativeCrypto.keccak256(&preimage))
+        );
+        // The order of the list is part of the digest.
+        assert_ne!(
+            compute_deps_hash(&[first, second], &NativeCrypto),
+            compute_deps_hash(&[second, first], &NativeCrypto)
+        );
+    }
+
+    #[test]
+    fn validate_block_body_checks_the_dependency_proof_commitments() {
+        let proof = Bytes::from(vec![0xEE; 300]);
+        let body = BlockBody {
+            transactions: Vec::new(),
+            ommers: Vec::new(),
+            withdrawals: Some(Vec::new()),
+            dependency_witnesses: None,
+            dependency_proof: Some(proof.clone()),
+        };
+        let header = BlockHeader {
+            transactions_root: compute_transactions_root(&[], &NativeCrypto),
+            withdrawals_root: Some(compute_withdrawals_root(&[], &NativeCrypto)),
+            dependency_proof_hash: Some(compute_dependency_proof_hash(&proof, &NativeCrypto)),
+            block_deps_hash: Some(compute_deps_hash(&[], &NativeCrypto)),
+            ..Default::default()
+        };
+        // Whether the proof holds for the dependencies is not a matter of the
+        // commitments: these bytes are no proof, and they match the header.
+        validate_block_body(&header, &body, &NativeCrypto).expect("the commitments match");
+
+        // Another proof under the same commitment.
+        let mut other = body.clone();
+        other.dependency_proof = Some(Bytes::from(vec![0xEF; 300]));
+        assert!(matches!(
+            validate_block_body(&header, &other, &NativeCrypto),
+            Err(InvalidBlockBodyError::DependencyProofHashNotMatch)
+        ));
+
+        // A header that commits to other dependencies than the body's.
+        let mut other_deps = header.clone();
+        other_deps.block_deps_hash = Some(H256::repeat_byte(0x01));
+        assert!(matches!(
+            validate_block_body(&other_deps, &body, &NativeCrypto),
+            Err(InvalidBlockBodyError::BlockDepsHashNotMatch)
+        ));
+
+        // A proof over the bound, with the header committing to it.
+        let oversized = Bytes::from(vec![0xEE; MAX_DEPENDENCY_PROOF_BYTES + 1]);
+        let mut large_header = header.clone();
+        large_header.dependency_proof_hash =
+            Some(compute_dependency_proof_hash(&oversized, &NativeCrypto));
+        let mut large_body = body.clone();
+        large_body.dependency_proof = Some(oversized);
+        assert!(matches!(
+            validate_block_body(&large_header, &large_body, &NativeCrypto),
+            Err(InvalidBlockBodyError::DependencyProofTooLarge(size))
+                if size == MAX_DEPENDENCY_PROOF_BYTES + 1
+        ));
+
+        // The proof without the commitments, and the commitments without the
+        // proof.
+        let mut uncommitted = header.clone();
+        uncommitted.dependency_proof_hash = None;
+        uncommitted.block_deps_hash = None;
+        assert!(matches!(
+            validate_block_body(&uncommitted, &body, &NativeCrypto),
+            Err(InvalidBlockBodyError::DependencyProofHashNotMatch)
+        ));
+        let mut proofless = body;
+        proofless.dependency_proof = None;
+        assert!(matches!(
+            validate_block_body(&header, &proofless, &NativeCrypto),
+            Err(InvalidBlockBodyError::DependencyProofHashNotMatch)
+        ));
+        validate_block_body(&uncommitted, &proofless, &NativeCrypto)
+            .expect("a block with neither is consistent");
     }
 }

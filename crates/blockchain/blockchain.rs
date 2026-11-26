@@ -43,6 +43,7 @@
 //! ```
 
 pub mod constants;
+pub mod dependency_proof;
 pub mod dependency_witnesses;
 pub mod error;
 pub mod fork_choice;
@@ -61,6 +62,7 @@ use ::tracing::{error, info, instrument, warn};
 #[cfg(feature = "rayon")]
 use ::tracing::debug;
 use constants::{AMSTERDAM_MAX_INITCODE_SIZE, MAX_INITCODE_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
+use dependency_proof::validate_dependency_proof;
 use dependency_witnesses::validate_dependency_witnesses;
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
@@ -811,6 +813,7 @@ impl Blockchain {
         validate_block_pre_execution(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
         self.validate_l1_transaction_types(block)?;
         validate_dependency_witnesses(block, &chain_config)?;
+        validate_dependency_proof(block, &chain_config)?;
 
         let parent_timestamp = parent_header.timestamp;
         let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header)?;
@@ -906,6 +909,10 @@ impl Blockchain {
         // assembled from an engine payload, whose body commitments are derived and
         // so say nothing about whether the witnesses are valid.
         validate_dependency_witnesses(block, &chain_config)?;
+        // EIP-8288: from LStar one proof stands for those witnesses. It is checked
+        // against the block's dependencies on every path too, with the header's
+        // commitments to the proof and to the dependencies.
+        validate_dependency_proof(block, &chain_config)?;
         match body_check {
             BodyCheck::Verify => validate_block_body(&block.header, &block.body, &NativeCrypto)
                 .map_err(|e| ChainError::InvalidBlock(InvalidBlockError::InvalidBody(e)))?,
@@ -4231,16 +4238,19 @@ impl Blockchain {
         } else {
             POST_OSAKA_GAS_LIMIT_CAP
         };
-        if fork >= Fork::Osaka && tx.gas_limit() > total_gas_cap {
+        // A frame transaction has no gas limit field: its `max_gas` follows from
+        // the intrinsic gas, which is that of the fork (see `gas_limit_at`).
+        let tx_gas_limit = tx.gas_limit_at(fork);
+        if fork >= Fork::Osaka && tx_gas_limit > total_gas_cap {
             // https://eips.ethereum.org/EIPS/eip-7825, https://eips.ethereum.org/EIPS/eip-8037
             return Err(MempoolError::TxMaxGasLimitExceededError(
                 tx.hash(&NativeCrypto),
-                tx.gas_limit(),
+                tx_gas_limit,
             ));
         }
 
         // Check gas limit is less than header's gas limit
-        if header.gas_limit < tx.gas_limit() {
+        if header.gas_limit < tx_gas_limit {
             return Err(MempoolError::TxGasLimitExceededError);
         }
 
@@ -4290,7 +4300,7 @@ impl Blockchain {
         }
 
         // Check that the gas limit covers the gas needs for transaction metadata.
-        if tx.gas_limit() < mempool::transaction_intrinsic_gas(tx, sender, &header, &config)? {
+        if tx_gas_limit < mempool::transaction_intrinsic_gas(tx, sender, &header, &config)? {
             return Err(MempoolError::TxIntrinsicGasCostAboveLimitError);
         }
 

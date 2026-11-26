@@ -234,6 +234,7 @@ pub fn run(args: T8nArgs) -> Result<(), T8nError> {
         ommers: Vec::new(),
         withdrawals,
         dependency_witnesses: None,
+        dependency_proof: None,
     };
 
     let blockchain = Blockchain::new(

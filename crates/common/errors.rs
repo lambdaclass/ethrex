@@ -53,4 +53,14 @@ pub enum InvalidBlockError {
     DependencyWitnessesCountMismatch { expected: usize, found: usize },
     #[error("Dependency witness {0} does not satisfy its dependency")]
     DependencyNotSatisfied(usize),
+    #[error("Block carries dependency witnesses, which the dependency proof replaces")]
+    DependencyWitnessesPresent,
+    #[error("Block carries a dependency proof before its activation")]
+    DependencyProofPresent,
+    #[error("Block carries no dependency proof")]
+    DependencyProofNotPresent,
+    #[error("Block without dependencies carries a dependency proof of {0} bytes")]
+    DependencyProofNotEmpty(usize),
+    #[error("Dependency proof does not hold for the block's {0} dependencies")]
+    InvalidDependencyProof(usize),
 }

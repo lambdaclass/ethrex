@@ -258,6 +258,7 @@ mod tests {
                 ommers: Vec::new(),
                 withdrawals: Some(Vec::new()),
                 dependency_witnesses: Some(Vec::new()),
+                dependency_proof: None,
             },
         )
     }

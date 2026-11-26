@@ -19,6 +19,7 @@ mod eip8151_tests;
 mod eip8246_tests;
 mod eip8250_tests;
 mod eip8272_tests;
+mod eip8288_tests;
 mod eip8298_tests;
 pub(crate) mod eip8504_tests;
 mod frame_contract_deployment_tests;

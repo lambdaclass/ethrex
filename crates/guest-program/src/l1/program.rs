@@ -122,6 +122,7 @@ pub fn new_payload_request_to_block(
         ommers: vec![],
         withdrawals: Some(withdrawals),
         dependency_witnesses: None,
+        dependency_proof: None,
     };
 
     let mut header = BlockHeader {

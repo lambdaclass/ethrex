@@ -107,6 +107,7 @@ async fn add_blocks_with_transactions(
             ommers: Default::default(),
             withdrawals: Default::default(),
             dependency_witnesses: None,
+            dependency_proof: None,
         };
         let block_header = test_header(block_num);
         let block = Block::new(block_header.clone(), block_body);

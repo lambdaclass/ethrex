@@ -5,7 +5,6 @@ use ethrex_common::{
     types::{Block, BlockBody, BlockHash, BlockHeader, BlockNumber, Withdrawal},
 };
 use ethrex_crypto::NativeCrypto;
-use ethrex_rlp::encode::RLPEncode;
 
 use crate::utils::RpcErr;
 use serde::{Deserialize, Serialize};
@@ -45,6 +44,17 @@ pub struct FullBlockBody {
         with = "serde_utils::bytes::vec_opt"
     )]
     pub dependency_witnesses: Option<Vec<Bytes>>,
+    /// EIP-8288: the block's dependency proof, the one proof an LStar block
+    /// carries for its dependencies in place of their witnesses. Present from
+    /// LStar. The form with transaction hashes only leaves it out; the header's
+    /// `dependencyProofHash` commits to it either way.
+    #[serde(
+        rename = "dependencyProof",
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_utils::bytes::opt"
+    )]
+    pub dependency_proof: Option<Bytes>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -74,6 +84,7 @@ impl TryInto<Block> for RpcBlock {
                 ommers: Vec::new(),
                 withdrawals: Some(block_body.withdrawals),
                 dependency_witnesses: block_body.dependency_witnesses,
+                dependency_proof: block_body.dependency_proof,
             },
         })
     }
@@ -86,7 +97,8 @@ impl RpcBlock {
         hash: H256,
         full_transactions: bool,
     ) -> Result<RpcBlock, RpcErr> {
-        let size = Block::new(header.clone(), body.clone()).length();
+        // EIP-8288: the dependency proof is not part of the RLP block.
+        let size = Block::new(header.clone(), body.clone()).length_without_dependency_proof();
         let body_wrapper = if full_transactions {
             BlockBodyWrapper::Full(FullBlockBody::from_body(body, header.number, hash)?)
         } else {
@@ -130,6 +142,7 @@ impl FullBlockBody {
             uncles: body.ommers.iter().map(|ommer| ommer.hash()).collect(),
             withdrawals: body.withdrawals.unwrap_or_default(),
             dependency_witnesses: body.dependency_witnesses,
+            dependency_proof: body.dependency_proof,
         })
     }
 }
@@ -229,6 +242,7 @@ mod test {
             ommers: vec![],
             withdrawals: Some(vec![]),
             dependency_witnesses: None,
+            dependency_proof: None,
         };
         let hash = block_header.hash();
 
@@ -247,6 +261,7 @@ mod test {
             ommers: vec![],
             withdrawals: Some(vec![]),
             dependency_witnesses: Some(witnesses.clone()),
+            dependency_proof: None,
         };
 
         // With full transactions the witnesses are listed as hex strings and
@@ -268,6 +283,7 @@ mod test {
         assert!(json.get("dependencyWitnesses").is_none());
         let before = BlockBody {
             dependency_witnesses: None,
+            dependency_proof: None,
             ..body
         };
         let json =
