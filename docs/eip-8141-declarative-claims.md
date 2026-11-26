@@ -11,6 +11,10 @@ transactions described in [EIP-8141](./eip-8141.md) and is part of `Fork::Hegota
 with it. This branch started from an implementation of [EIP-8504](./eip-8504.md) and reuses its
 block field, its Engine API field and its pool storage for a different design.
 
+From `Fork::LStar` a block carries one aggregate proof in place of its leanSPHINCS witnesses.
+Everything up to [LStar](#lstar-one-proof-for-the-leansphincs-claims) describes the Hegotá
+block, and that section says what changes.
+
 ## Overview
 
 A frame transaction says what it needs proven and carries the proofs beside it.
@@ -288,7 +292,7 @@ Before the verifiers of rule 3 run, the gas of the block's claims is compared wi
 gas limit, which bounds the work of the check by one block's gas.
 
 The form of the byte string for a given version byte is decided in one function,
-`decode_claim_witnesses`, which rejects any version other than `0x00`.
+`decode_claim_witnesses_at`, which before LStar rejects any version other than `0x00`.
 
 The Engine API carries the field as `claimWitnesses`, one hex string, in the execution payload
 of `engine_newPayloadV5` and `engine_getPayloadV6` and in the payload bodies responses. The node
@@ -399,6 +403,127 @@ All under the `eip8141_claims_` prefix:
 | `eip8141_claims_admission_witness_verification_seconds` | Time verifying one transaction's protocol claims on admission |
 | `eip8141_claims_admitted_total`, `eip8141_claims_rejected_total{reason}` | Admissions, and rejections by the check that failed |
 
+## LStar: one proof for the leanSPHINCS claims
+
+The proposal leaves room for aggregation without defining it: "a future aggregation upgrade
+(such as EIP-8288) can introduce a new version byte (for example, `0x01`) for `claim_witnesses`
+to replace the raw witnesses of aggregatable protocol verifiers (such as `LEANSPHINCS_VERIFIER`)
+with a single recursive STARK while keeping unaggregated verifiers [...] as raw witnesses".
+ethrex does that from `Fork::LStar`, with leanVM's recursive aggregation as the proof system.
+Every choice the proposal leaves open is listed under
+[Decisions beyond the proposal](#the-lstar-block).
+
+Only the block changes:
+
+| | Hegotá | LStar |
+|---|---|---|
+| `tx_body`, `tx_hash`, signature hash, `HASCLAIM`, account code | | the same |
+| Pooled representation, RPC submission, gossip, what the pool verifies | | the same |
+| Gas of a claim | | the same |
+| Header field and Engine API field | `claim_witnesses_hash`, `claimWitnesses` | the same |
+| `claim_witnesses` of a block with dependencies | `0x00 \|\| rlp([witness, ...])` | `0x01 \|\| rlp([aggregate_proof, [witness, ...]])` |
+| A leanSPHINCS dependency is satisfied by | its 7,740-byte signature | the block's aggregate proof |
+| Any other dependency is satisfied by | its raw witness | its raw witness |
+
+To use it, schedule the fork. Nothing else changes for a node, for an account or for a sender:
+
+```json
+"config": { "hegotaTime": 0, "lstarTime": 1798761600 }
+```
+
+### The block
+
+- `claim_witnesses` is still the empty byte string when the block has no dependencies.
+  Otherwise it is `0x01 || rlp([aggregate_proof, [witness_0, witness_1, ...]])`.
+- `aggregate_proof` is one byte string that covers every entry of `block_dependencies(block)`
+  whose verifier is `LEANSPHINCS_VERIFIER`. It is the empty string when the block has none, and
+  at most `MAX_AGGREGATE_PROOF_BYTES` (1 MiB) long.
+- The list holds one raw witness for each of the other entries, in the order of
+  `block_dependencies(block)`: secp256k1, P-256 and custom verifiers.
+- Each fork has one version byte. `0x00` is not valid from LStar, and `0x01` is not valid before.
+- The header still commits to the whole byte string, `claim_witnesses_hash =
+  keccak256(claim_witnesses)`, and the Engine API still carries it as `claimWitnesses`. No header
+  field, payload field, storage table or peer-to-peer message is added.
+
+`verify_claim_witnesses` rejects an LStar block unless:
+
+1. `claim_witnesses` is at most `MAX_BLOCK_WITNESS_BYTES` (2 MiB) long;
+2. the header's `claim_witnesses_hash` is its Keccak-256 hash;
+3. it decodes to a proof within its bound and exactly one raw witness for each dependency that
+   is not a leanSPHINCS one, and each raw witness has its dependency's `witness_len` and is
+   accepted by its verifier, a custom one in the pure context against the block's pre-state;
+4. the proof is empty when the block has no leanSPHINCS dependency, and otherwise
+   `leansphincs_aggregate_verify(claims, aggregate_proof)` holds, where `claims` are the
+   `(key, msg)` pairs, resolved, of the block's leanSPHINCS dependencies.
+
+The proof states exactly the claims it was made for, in any order. A proof that misses one of
+the block's claims, covers another one in its place or covers one more does not verify, so the
+block is invalid. The claims come from the block's transactions, never from the proof.
+
+The gas of the block's claims is still compared with the block's gas limit before a verifier
+runs or the proof is read.
+
+### Gas
+
+Nothing changes. The proposal derives every charge from `tx_body` and says that a protocol
+witness "can later be discounted when replaced by an aggregate proof" without giving the
+discount. A leanSPHINCS claim therefore pays 13,200 + 4 × 7,740 gas and its metadata in an LStar
+block as in a Hegotá one, although the block does not carry its witness. A transaction signed
+before the fork costs the same when it is included after it.
+
+### Sizes
+
+A proof is about 200 KB for one signature and grows slowly: about 325 KB for 320. Measured by
+the tests, in bytes:
+
+| Block | `claim_witnesses` at Hegotá | `claim_witnesses` at LStar | of which proof |
+|---|---|---|---|
+| 1 transaction, 1 leanSPHINCS dependency | 7,747 | 202,626 | 202,616 |
+| 5 transactions, 4 leanSPHINCS dependencies and 2 others | 31,076 | 232,247 | 232,136 |
+| 5 transactions, 320 leanSPHINCS dependencies | 2,476,800 of witnesses: does not fit | 324,066 | 324,056 |
+
+With few leanSPHINCS dependencies the LStar block is the larger one: the proof of one signature
+takes the room of 26 raw witnesses. Above 270 of them, the most a Hegotá block holds, only an
+LStar block exists.
+
+### Mempool and block building
+
+The pool is the Hegotá pool: a transaction is submitted with the raw witness of every claim,
+the pool verifies each one natively and keeps them, and peers exchange the pooled
+representation.
+
+The builder takes the witnesses from the pool as before. From LStar:
+
+- it sets the leanSPHINCS witnesses aside and writes the raw witnesses of the other
+  dependencies;
+- once no transaction will be added, it aggregates the witnesses set aside into one proof
+  (`leansphincs_aggregate`), on a blocking thread, and writes the proof, the byte string and the
+  header's commitment. A payload that is rebuilt as transactions arrive is proven once, at the
+  end, not at each rebuild. A proof that cannot be made fails the build;
+- it prepares the prover when a build starts, so the first proof does not wait for it;
+- it counts the proof at `MAX_AGGREGATE_PROOF_BYTES` toward `MAX_BLOCK_WITNESS_BYTES` and toward
+  the block's RLP size from the first leanSPHINCS dependency on, since the proof's length is not
+  known until it is made, and counts nothing for the leanSPHINCS witnesses themselves. The
+  number of leanSPHINCS claims in a block is then bounded by the block's gas, not by 270
+  witnesses.
+
+### Stateless execution
+
+The verifier of the aggregate proof is linked with the leanSPHINCS verifier, by the same
+`leansphincs` feature. A build without it refuses an LStar block that has a
+`LEANSPHINCS_VERIFIER` claim, as it refuses a Hegotá one, and verifies every other block.
+
+### Files
+
+| Component | File | Key items |
+|---|---|---|
+| Proof system | `crates/common/crypto/leansphincs_aggregation.rs` | `leansphincs_aggregate`, `leansphincs_aggregate_verify`, `leansphincs_aggregation_setup` |
+| Encoding | `crates/common/types/transaction.rs` | `CLAIM_WITNESSES_VERSION_AGGREGATED`, `MAX_AGGREGATE_PROOF_BYTES`, `ClaimWitnesses`, `Dependency::is_aggregated`, `encode_aggregated_claim_witnesses`, `decode_claim_witnesses_at` |
+| Block check | `crates/vm/claims.rs`, `crates/vm/levm/src/claims.rs` | `verify_claim_witnesses`, `verify_aggregated_dependencies` |
+| Prover | `crates/blockchain/claim_witnesses.rs` | `aggregate_claim_witnesses`, `prepare_claim_aggregation` |
+| Builder | `crates/blockchain/payload.rs` | `finalize_payload`, `put_aggregate_proof`, `PayloadBuildResult::with_aggregate_proof`, `PayloadBuildContext::claim_witnesses_len_with`, `build_payload_loop` |
+| Tests | `test/tests/blockchain/eip8141_aggregation_tests.rs`, `test/tests/levm/eip8141_aggregation_tests.rs` | |
+
 ## Decisions beyond the proposal
 
 Each entry gives what the proposal says or leaves open, and then what ethrex does and why.
@@ -483,8 +608,8 @@ Each entry gives what the proposal says or leaves open, and then what ethrex doe
 20. **Block JSON.** Not in the proposal. `eth_getBlockBy*` returns `claimWitnessesHash` always
     and `claimWitnesses` when it returns full transactions.
 21. **Genesis.** A genesis at Hegotá commits to `keccak256("")` and has empty claim witnesses.
-22. **Version byte.** One function, `decode_claim_witnesses`, decides what the byte string means
-    for each version byte and accepts only `0x00`.
+22. **Version byte.** One function, `decode_claim_witnesses_at`, decides what the byte string
+    means for each version byte, and before LStar it accepts only `0x00`.
 
 ### Mempool and block building
 
@@ -569,6 +694,75 @@ Each entry gives what the proposal says or leaves open, and then what ethrex doe
 42. **Devnet network file.** `fixtures/networks/pq-el-devnet-0.yaml` is removed: it described a
     network for the design this branch started from.
 
+### The LStar block
+
+43. **Activation.** The proposal speaks of "a future aggregation upgrade" and names no fork.
+    ethrex activates it with `Fork::LStar` (`lstarTime`), the fork it lists after Hegotá, and
+    adds no switch of its own. LStar also activates EIP-8079 in ethrex, which is independent.
+44. **Encoding of version `0x01`.** The proposal names the version byte and what the byte
+    string carries, not how. ethrex encodes `0x01 || rlp([aggregate_proof, [witness, ...]])`:
+    the proof first, as one byte string, then the list of raw witnesses. A block without
+    dependencies keeps the empty byte string as its only form, as in decision 15: `0x01 ||
+    rlp(["", []])`, a list with any other number of items and bytes after the list are invalid.
+45. **One version byte per fork.** The proposal says an upgrade can introduce a version byte
+    and does not say what becomes of `0x00`. ethrex accepts `0x00` only before LStar and `0x01`
+    only from it, so a block has one valid form and no builder can leave leanSPHINCS witnesses
+    raw.
+46. **Which dependencies the proof covers.** The proposal says "aggregatable protocol verifiers
+    (such as `LEANSPHINCS_VERIFIER`)". ethrex aggregates the dependencies of
+    `LEANSPHINCS_VERIFIER`, all of them and no other. A leanSPHINCS witness in the raw list is
+    one witness too many.
+47. **Order of the raw witnesses.** The proposal's rule 3 pairs `witness_j` with
+    `block_dependencies(block)[j]`. With the leanSPHINCS dependencies taken out, the raw
+    witnesses follow the order of the entries that remain.
+48. **What the proof states.** The proposal says a dependency maps onto EIP-8288's triple and
+    stops there. EIP-8288 proves against a digest of the dependencies that the header commits
+    to, with a digest function it leaves to be determined. Here the proof system proves a list
+    of `(public key, message)` claims, so a node rebuilds that list from the block's
+    transactions, `(key, msg)` of each leanSPHINCS dependency, and verifies the proof against
+    it. The statement is the set of claims: their order is not part of it, a dependency that
+    two transactions share is in it once, and a proof of any other set does not verify. No
+    digest of the dependencies is added to the header.
+49. **Size of the proof.** The proposal bounds `claim_witnesses` and gives no bound for a proof.
+    ethrex applies both: the byte string is at most `MAX_BLOCK_WITNESS_BYTES`, checked first, and
+    the proof inside it at most EIP-8288's `MAX_DEPENDENCY_PROOF_BYTES`, 1 MiB
+    (`MAX_AGGREGATE_PROOF_BYTES`). The proof is part of `claim_witnesses` and so of the body:
+    it counts toward EIP-7934's limit on the block's RLP size, where EIP-8288 keeps its proof
+    out of the body.
+50. **Order of the checks and their errors.** After the length, the form and the commitment, as
+    in decision 17: the number of raw witnesses against the dependencies that take one
+    (`ClaimWitnessesCountMismatch`), a proof in a block without leanSPHINCS dependencies
+    (`UnexpectedAggregateProof`), the claims' gas, each raw witness in order
+    (`ClaimNotSatisfied(index)`, with the index of the dependency in `block_dependencies`),
+    then the proof (`InvalidAggregateProof`). An empty proof in a block with leanSPHINCS
+    dependencies fails the last check like any proof that does not hold.
+51. **Gas.** Unchanged, since the proposal defines no discount. Nothing is charged for the
+    proof itself, and the claims' gas that bounds the work of the check (decision 18) still
+    counts every leanSPHINCS claim, though no verifier runs for one.
+52. **The pool.** Unchanged. The check that a transaction's own witnesses fit a block
+    (decision 26) still measures them in the raw form: it cannot bind at either fork.
+53. **When the proof is made.** The proposal does not say who aggregates or when. The builder
+    does, once for each payload it hands out: at the end of the build loop, on a blocking
+    thread, and at once wherever a payload is sealed outside that loop (`finalize_payload`).
+    Only the rebuilds inside the loop are sealed without it: until the loop ends such a payload
+    has an empty proof and is not valid, and it never leaves the builder. A proof that fails,
+    or one over its bound, fails the build: there is no falling back to raw witnesses.
+54. **Room for the proof.** A builder has to keep `claim_witnesses` within its limit before the
+    proof exists. ethrex counts the proof at `MAX_AGGREGATE_PROOF_BYTES` as soon as the block
+    has a leanSPHINCS dependency. It is the only length the rules guarantee: whatever the
+    prover returns, a proof within its own bound fits the block that was built around it. The
+    proofs of this backend stay under 400,000 bytes, so the builder over-counts by about
+    650,000 bytes, which leaves 1 MiB for raw witnesses in a block that has leanSPHINCS claims
+    and 2 MiB in one that has none.
+55. **One feature for both verifiers.** The `leansphincs` feature of `ethrex-levm` links the
+    signature verifier and the proof verifier, so `LEANSPHINCS_VERIFIER_LINKED` answers for
+    both and stateless execution refuses what it cannot check at either fork (decision 38).
+56. **Metrics.** The same metrics. From LStar the witnesses counted are the raw ones, and the
+    bytes include the proof. The builder logs the proving time and the proof's size at debug
+    level.
+57. **Test-suite exception names.** The two errors of the proof are mapped to
+    `BlockException.INVALID_CLAIM_WITNESSES`, with the others of decision 40.
+
 ## Where the proposal is ambiguous or incomplete
 
 - **Custom verifiers and the block access list.** The text excludes protocol verifiers from
@@ -607,11 +801,40 @@ Each entry gives what the proposal says or leaves open, and then what ethrex doe
   See decision 36.
 - **Constants marked provisional.** `MAX_BLOCK_WITNESS_BYTES` and `WITNESS_BYTE_GAS` are
   provisional in the text, and are implemented with the values it gives.
+- **What becomes of version `0x00`.** The text introduces a new version byte for aggregation and
+  does not say whether the raw form stays valid beside it, nor who would choose between them.
+  See decision 45.
+- **What the aggregate proof commits to.** The text says a dependency maps onto EIP-8288's
+  triple, and describes the upgrade as a new version byte of `claim_witnesses` and nothing
+  more. EIP-8288's proof takes a digest of the dependencies as its public input and adds that
+  digest to the header. The text names no such field, and without one only a node that holds
+  the block's transactions can tell which claims a proof is for. A dependency here has five
+  fields and a triple three: `gas_limit` and `witness_len` are outside the statement. See
+  decision 48.
+- **The discount.** The text prices a protocol witness per byte so that it "can later be
+  discounted when replaced by an aggregate proof", and gives no rule. Without one a leanSPHINCS
+  claim pays 30,960 gas for 7,740 bytes the block does not carry, and nothing prices the proof:
+  the `claim_witnesses` of a block with one leanSPHINCS claim is 26 times as long as its raw
+  form, for the same gas. See decision 51.
+- **`MAX_BLOCK_WITNESS_BYTES` and a proof.** The limit is given for raw witnesses. The text
+  does not say whether a proof counts toward it, has a bound of its own, or counts toward
+  EIP-7934's limit, which EIP-8288 keeps its proof out of. See decision 49. A builder also has
+  to respect the limit before the proof exists; see decision 54.
+- **Who aggregates, and when.** The text describes the block that results. With the builder
+  as the only aggregator, proving sits between the last transaction and the release of the
+  payload and grows with the block. EIP-8288 aggregates in the mempool as well; the pooled
+  representation of this text carries one raw witness for each claim and defines no other
+  wrapper version. See decision 53.
+- **Pruning.** The text lets a node prune `claim_witnesses` from history. One hash commits to
+  the proof and the raw witnesses together, so they can only be pruned together.
 
 ## Not implemented
 
-- **Aggregation.** `claim_witnesses` has the raw form only. There is no proof of the witnesses,
-  no version byte other than `0x00`, and nothing that depends on a later fork.
+- **Aggregation beyond the block.** The block's leanSPHINCS witnesses are aggregated from
+  LStar, by its builder. There is no aggregation in the pool or between peers, no discount on a
+  claim's gas, no other aggregatable verifier and no proof of a custom verifier's execution.
+- **Verifying the aggregate proof in a zkVM guest.** A guest build links neither leanSPHINCS
+  verifier and refuses a block with such a claim.
 - **The consensus client.** Nothing outside the execution client changes. A consensus client
   has to carry `claim_witnesses` in the execution payload, bounded by
   `MAX_BLOCK_WITNESS_BYTES`, and pass it through the Engine API.
@@ -638,6 +861,7 @@ Each entry gives what the proposal says or leaves open, and then what ethrex doe
 
 ```sh
 cargo test --release -p ethrex-test -- eip8141_claims pooled_frame_tx frame_tx_validation
+cargo test --release -p ethrex-test -- eip8141_aggregation
 cargo test --release -p ethrex-common --lib -- claim dependencies pooled gas golden
 cargo test --release -p ethrex-rpc --lib -- claim_witnesses pooled
 cargo test --release --manifest-path tooling/Cargo.toml -p leansphincs_sender
@@ -682,6 +906,7 @@ independently of ethrex.
 - [EIP-8288](https://eips.ethereum.org/EIPS/eip-8288), the aggregation the block's
   `claim_witnesses` version byte leaves room for
 - leanEthereum/leanVM at `92a97c919b2f2d6fe09853090b6b23f781ecec07`, the `lean_sphincs` crate used
-  to verify and, in tests and tooling, to sign
+  to verify and, in tests and tooling, to sign, and the `lean_vm` crate used to aggregate
+  signatures into one proof and to verify it
 - [EIP-7594](https://eips.ethereum.org/EIPS/eip-7594), whose cell-proof sidecar a frame
   transaction with blobs carries
