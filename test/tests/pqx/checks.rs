@@ -39,6 +39,17 @@ macro_rules! harness {
     };
 }
 
+/// What names a transaction from its submission to its inclusion. A block may
+/// hold a frame transaction in another encoding than the submitted one, with an
+/// aggregate proof in place of the signatures it carried, and so under another
+/// hash. Its signature hash, which is what the sender signed, is the same.
+fn identity(tx: &Transaction) -> H256 {
+    match tx {
+        Transaction::FrameTransaction(tx) => tx.compute_sig_hash(),
+        other => other.hash(&NativeCrypto),
+    }
+}
+
 #[tokio::test]
 async fn every_supported_workload_goes_from_submission_to_import() {
     harness!(harness);
@@ -56,16 +67,11 @@ async fn every_supported_workload_goes_from_submission_to_import() {
         let block = &outcome.built.block;
 
         // The block holds exactly the transactions that were submitted.
-        let mut included: Vec<H256> = block
-            .body
-            .transactions
-            .iter()
-            .map(|tx| tx.hash(&NativeCrypto))
-            .collect();
+        let mut included: Vec<H256> = block.body.transactions.iter().map(identity).collect();
         let mut submitted: Vec<H256> = prepared
             .submissions
             .iter()
-            .map(|submission| submission.transaction.hash(&NativeCrypto))
+            .map(|submission| identity(&submission.transaction))
             .collect();
         included.sort_unstable();
         submitted.sort_unstable();
@@ -306,9 +312,9 @@ async fn externally_owned_account_migrates_and_sends_an_authorized_transaction()
         .body
         .transactions
         .iter()
-        .map(|tx| tx.hash(&NativeCrypto))
+        .map(identity)
         .collect();
-    assert_eq!(included, vec![submission.transaction.hash(&NativeCrypto)]);
+    assert_eq!(included, vec![identity(&submission.transaction)]);
     assert!(
         second.receipts[0].succeeded,
         "the authorized transaction must succeed: {:?}",
