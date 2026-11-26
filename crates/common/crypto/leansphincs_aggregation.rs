@@ -88,7 +88,9 @@ pub fn leansphincs_aggregate(
         ));
     }
     leansphincs_aggregation_setup();
-    let _one_proof_at_a_time = PROVER.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _one_proof_at_a_time = PROVER
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let proving = |error| LeanSphincsAggregationError::Proving(format!("{error}"));
 
     let mut level = Vec::with_capacity(signers.len().div_ceil(AGGREGATION_LEAF_SIGNATURES));
@@ -187,7 +189,10 @@ mod tests {
         let last = tampered.len() - 1;
         tampered[last] ^= 1;
         assert!(!leansphincs_aggregate_verify(&claims, &tampered));
-        assert!(!leansphincs_aggregate_verify(&claims, &proof[..proof.len() / 2]));
+        assert!(!leansphincs_aggregate_verify(
+            &claims,
+            &proof[..proof.len() / 2]
+        ));
         assert!(!leansphincs_aggregate_verify(&claims, &[]));
     }
 
