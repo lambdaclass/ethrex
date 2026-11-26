@@ -38,6 +38,8 @@ aws-lc-rs = { version = "1.17", optional = true }
 blst = { version = "0.3.16", optional = true }
 # leanSPHINCS verifier (EIP-8504). Native-only: zkVM guest builds omit it.
 lean_sphincs = { workspace = true, optional = true }
+# leanSPHINCS aggregation: leanVM's prover and the verifier of its proofs. Native-only.
+lean_vm = { workspace = true, optional = true }
 
 #[target.'cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))'.dependencies]
 tiny-keccak = { version = "2.0.2", features = ["keccak"] }
@@ -63,6 +65,8 @@ secp256k1 = ["dep:secp256k1", "std"]
 # Native leanSPHINCS signature verification (EIP-8504). Requires std; zkVM
 # guest builds omit it, so nothing they link depends on the verifier crate.
 leansphincs = ["dep:lean_sphincs", "std"]
+# Aggregation of leanSPHINCS signatures into one proof, and its verification.
+leansphincs-aggregation = ["leansphincs", "dep:lean_vm"]
 c-kzg = ["dep:c-kzg", "c-kzg/std", "c-kzg/ethereum_kzg_settings", "std"]
 kzg-rs = ["dep:kzg-rs"]
 

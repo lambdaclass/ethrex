@@ -146,6 +146,7 @@ spawned-concurrency = "0.5.0"
 spawned-rt = "0.5.0"
 lambdaworks-crypto = "0.13.0"
 lean_sphincs = { git = "https://github.com/leanEthereum/leanVM", rev = "92a97c919b2f2d6fe09853090b6b23f781ecec07" }
+lean_vm = { git = "https://github.com/leanEthereum/leanVM", rev = "92a97c919b2f2d6fe09853090b6b23f781ecec07", features = ["experimental_prover"] }
 tui-logger = { version = "0.17.3", features = ["tracing-support"] }
 crossbeam = "0.8.4"
 rayon = "1.10.0"
