@@ -1346,8 +1346,8 @@ fn validate_execution_requests(execution_requests: &[EncodedRequests]) -> Result
 }
 
 /// `fork` is the fork at the payload's timestamp. It decides how the payload's
-/// `dependencyWitnesses` (EIP-8504, from Hegota until LStar) and
-/// `dependencyProof` (EIP-8288, from LStar) fields are read.
+/// `dependencyWitnesses` (EIP-8504, from Hegota until IStar) and
+/// `dependencyProof` (EIP-8288, from IStar) fields are read.
 fn get_block_from_payload(
     payload: &ExecutionPayload,
     parent_beacon_block_root: Option<H256>,

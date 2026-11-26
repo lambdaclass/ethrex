@@ -1,8 +1,8 @@
 //! EIP-8288 dependency proof, from the pool to a block and its import.
 //!
 //! Accounts controlled by leanSPHINCS keys send `[VERIFY, SENDER]` transactions
-//! whose signature list declares their dependencies, as before LStar: each one
-//! is submitted with its signature and kept with it in the pool. From LStar the
+//! whose signature list declares their dependencies, as before IStar: each one
+//! is submitted with its signature and kept with it in the pool. From IStar the
 //! block does not carry the signatures.
 //! Its builder aggregates them into one proof, the header commits to the proof
 //! and to the dependencies it proves, and every node that imports the block
@@ -22,8 +22,8 @@ use ethrex_common::{
     Address, H160, H256, U256,
     errors::InvalidBlockError,
     types::{
-        Block, BlockHeader, DEFAULT_BUILDER_GAS_CEIL, Dependency, ELASTICITY_MULTIPLIER, Frame,
-        FrameMode, FrameTransaction, Genesis, GenesisAccount, InvalidBlockBodyError,
+        Block, BlockHeader, DEFAULT_BUILDER_GAS_CEIL, Dependency, ELASTICITY_MULTIPLIER, Fork,
+        Frame, FrameMode, FrameTransaction, Genesis, GenesisAccount, InvalidBlockBodyError,
         InvalidBlockHeaderError, LEANSPHINCS_SCHEME, LEANSPHINCS_SIGNATURE_SIZE,
         LEANSPHINCS_WITNESS_GAS, LEANSTARK_VERIFICATION_GAS, MAX_DEPENDENCY_PROOF_BYTES,
         ProofWrapper, Transaction, block_access_list::BlockAccessList, block_dependencies,
@@ -36,7 +36,7 @@ use ethrex_p2p::rlpx::{
     eth::blocks::{BlockBodies, GetBlockBodies},
     message::RLPxMessage,
 };
-use ethrex_rlp::encode::RLPEncode;
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_rpc::{
     engine::payload::{GetPayloadV6Request, NewPayloadV5Request},
     rpc::RpcHandler,
@@ -82,15 +82,34 @@ fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
 }
 
+/// When the two forks after Hegota activate on a chain of these tests, in
+/// seconds after genesis. `None` is a fork the chain does not schedule.
+#[derive(Clone, Copy)]
+struct Forks {
+    istar_after: Option<u64>,
+    lstar_after: Option<u64>,
+}
+
+impl Forks {
+    /// IStar `seconds` after genesis, and no LStar.
+    const fn istar_after(seconds: u64) -> Self {
+        Forks {
+            istar_after: Some(seconds),
+            lstar_after: None,
+        }
+    }
+}
+
 /// `l1-hegota.json` (every fork through Hegota active at genesis) with each
-/// key's account funded and running the validation code for that key. LStar
-/// activates `lstar_after` seconds after genesis, or never when it is `None`.
-async fn setup_store(keys: &[&Key], lstar_after: Option<u64>) -> (Store, u64) {
+/// key's account funded and running the validation code for that key, and
+/// with IStar and LStar scheduled as `forks` says.
+async fn setup_store(keys: &[&Key], forks: Forks) -> (Store, u64) {
     let file = File::open(workspace_root().join("fixtures/genesis/l1-hegota.json"))
         .expect("open l1-hegota genesis");
     let mut genesis: Genesis =
         serde_json::from_reader(BufReader::new(file)).expect("parse l1-hegota genesis");
-    genesis.config.lstar_time = lstar_after.map(|seconds| genesis.timestamp + seconds);
+    genesis.config.istar_time = forks.istar_after.map(|seconds| genesis.timestamp + seconds);
+    genesis.config.lstar_time = forks.lstar_after.map(|seconds| genesis.timestamp + seconds);
     for key in keys {
         genesis.alloc.insert(
             key.account,
@@ -111,8 +130,21 @@ async fn setup_store(keys: &[&Key], lstar_after: Option<u64>) -> (Store, u64) {
     (store, chain_id)
 }
 
-/// LStar from the first block on: the genesis block is the only Hegota block.
-const LSTAR_AT_FIRST_BLOCK: Option<u64> = Some(BLOCK_TIME);
+/// Hegota for good: neither IStar nor LStar activates.
+const HEGOTA_ONLY: Forks = Forks {
+    istar_after: None,
+    lstar_after: None,
+};
+
+/// IStar from the first block on, and no LStar: the genesis block is the only
+/// Hegota block.
+const ISTAR_AT_FIRST_BLOCK: Forks = Forks::istar_after(BLOCK_TIME);
+
+/// IStar and LStar from the first block on.
+const ISTAR_AND_LSTAR_AT_FIRST_BLOCK: Forks = Forks {
+    istar_after: Some(BLOCK_TIME),
+    lstar_after: Some(BLOCK_TIME),
+};
 
 fn blockchain(store: Store) -> Blockchain {
     Blockchain::new(
@@ -245,11 +277,11 @@ async fn import(
     block: &Block,
     bal: &BlockAccessList,
     keys: &[&Key],
-    lstar_after: Option<u64>,
+    forks: Forks,
 ) -> [Result<(), ChainError>; 2] {
-    let (store, _) = setup_store(keys, lstar_after).await;
+    let (store, _) = setup_store(keys, forks).await;
     let plain = blockchain(store).add_block(block.clone());
-    let (store, _) = setup_store(keys, lstar_after).await;
+    let (store, _) = setup_store(keys, forks).await;
     let pipeline = blockchain(store).add_block_pipeline(block.clone(), Some(Arc::new(bal.clone())));
     [plain, pipeline]
 }
@@ -268,17 +300,17 @@ macro_rules! assert_rejected {
 }
 
 /// A node with two dependency transactions in its pool, from `first` and from
-/// `second`, and the LStar block it builds from them: two dependencies, one for
+/// `second`, and the IStar block it builds from them: two dependencies, one for
 /// each transaction's signature hash.
-struct LStarBlock {
+struct IStarBlock {
     block: Block,
     bal: BlockAccessList,
     /// The signature hashes of the two transactions, in the order of the keys.
     messages: [H256; 2],
 }
 
-async fn lstar_block(first: &Key, second: &Key) -> LStarBlock {
-    let (store, chain_id) = setup_store(&[first, second], LSTAR_AT_FIRST_BLOCK).await;
+async fn istar_block(first: &Key, second: &Key) -> IStarBlock {
+    let (store, chain_id) = setup_store(&[first, second], ISTAR_AT_FIRST_BLOCK).await;
     let blockchain = blockchain(store.clone());
     let mut messages = [H256::zero(); 2];
     for (index, sender) in [first, second].into_iter().enumerate() {
@@ -292,21 +324,21 @@ async fn lstar_block(first: &Key, second: &Key) -> LStarBlock {
     let built = build_block(&store, &blockchain, &genesis_header(&store));
     assert_eq!(built.payload.body.transactions.len(), 2);
     assert!(built.receipts.iter().all(|receipt| receipt.succeeded));
-    LStarBlock {
+    IStarBlock {
         block: built.payload,
-        bal: built.block_access_list.expect("an LStar block has a BAL"),
+        bal: built.block_access_list.expect("an IStar block has a BAL"),
         messages,
     }
 }
 
 #[tokio::test]
-async fn lstar_block_carries_one_proof_for_its_dependencies_and_imports() {
+async fn istar_block_carries_one_proof_for_its_dependencies_and_imports() {
     let first = key(0x61);
     let second = key(0x62);
     let third = key(0x63);
     let shared = key(0x64);
     let keys = [&first, &second, &third];
-    let (store, chain_id) = setup_store(&keys, LSTAR_AT_FIRST_BLOCK).await;
+    let (store, chain_id) = setup_store(&keys, ISTAR_AT_FIRST_BLOCK).await;
     let blockchain = blockchain(store.clone());
 
     // The first two transactions also depend on a signature of the same message
@@ -350,7 +382,7 @@ async fn lstar_block_carries_one_proof_for_its_dependencies_and_imports() {
         .body
         .dependency_proof
         .clone()
-        .expect("an LStar block has a dependency proof");
+        .expect("an IStar block has a dependency proof");
     assert!(!proof.is_empty());
     assert!(proof.len() <= MAX_DEPENDENCY_PROOF_BYTES);
     assert!(built.unproven_dependencies.is_empty());
@@ -377,14 +409,14 @@ async fn lstar_block_carries_one_proof_for_its_dependencies_and_imports() {
     }
 
     // It imports on every path.
-    let bal = built.block_access_list.expect("an LStar block has a BAL");
-    for result in import(&block, &bal, &keys, LSTAR_AT_FIRST_BLOCK).await {
+    let bal = built.block_access_list.expect("an IStar block has a BAL");
+    for result in import(&block, &bal, &keys, ISTAR_AT_FIRST_BLOCK).await {
         result.expect("the block imports");
     }
 
-    // The same transactions in a Hegota block, on a chain without LStar: the
+    // The same transactions in a Hegota block, on a chain without IStar: the
     // block carries a witness for each dependency.
-    let (hegota_store, _) = setup_store(&keys, None).await;
+    let (hegota_store, _) = setup_store(&keys, HEGOTA_ONLY).await;
     let hegota_blockchain = self::blockchain(hegota_store.clone());
     for wrapper in &wrappers {
         hegota_blockchain
@@ -416,7 +448,7 @@ async fn lstar_block_carries_one_proof_for_its_dependencies_and_imports() {
     );
     // The proof is not part of the RLP block; the witnesses are.
     println!(
-        "LStar block: {} bytes of RLP block and {} bytes of dependency proof, {} gas used. \
+        "IStar block: {} bytes of RLP block and {} bytes of dependency proof, {} gas used. \
          Hegota block with the same transactions: {} bytes of RLP block, of which {} bytes \
          are witnesses, {} gas used.",
         block.length_without_dependency_proof(),
@@ -434,11 +466,11 @@ async fn dependency_proof_is_stored_and_served_with_the_block_body() {
     let first = key(0x7f);
     let second = key(0x80);
     let keys = [&first, &second];
-    let built = lstar_block(&first, &second).await;
+    let built = istar_block(&first, &second).await;
     let proof = built.block.body.dependency_proof.clone().unwrap();
 
     // A node that imports the block keeps the proof with the block's body.
-    let (store, _) = setup_store(&keys, LSTAR_AT_FIRST_BLOCK).await;
+    let (store, _) = setup_store(&keys, ISTAR_AT_FIRST_BLOCK).await;
     blockchain(store.clone())
         .add_block(built.block.clone())
         .expect("the block imports");
@@ -480,7 +512,7 @@ async fn block_whose_proof_misses_a_dependency_is_rejected() {
     let first = key(0x65);
     let second = key(0x66);
     let keys = [&first, &second];
-    let built = lstar_block(&first, &second).await;
+    let built = istar_block(&first, &second).await;
 
     // A proof that the first transaction's dependency is satisfied says nothing
     // about the second's.
@@ -489,7 +521,7 @@ async fn block_whose_proof_misses_a_dependency_is_rejected() {
         &with_proof(built.block, partial),
         &built.bal,
         &keys,
-        LSTAR_AT_FIRST_BLOCK,
+        ISTAR_AT_FIRST_BLOCK,
     )
     .await;
     assert_rejected!(results, InvalidBlockError::InvalidDependencyProof(2));
@@ -501,7 +533,7 @@ async fn block_whose_proof_is_for_another_message_or_key_is_rejected() {
     let second = key(0x68);
     let other = key(0x69);
     let keys = [&first, &second];
-    let built = lstar_block(&first, &second).await;
+    let built = istar_block(&first, &second).await;
 
     // The first key signed another message than the transaction's signature hash.
     let another_message = proof_of(&[
@@ -512,7 +544,7 @@ async fn block_whose_proof_is_for_another_message_or_key_is_rejected() {
         &with_proof(built.block.clone(), another_message),
         &built.bal,
         &keys,
-        LSTAR_AT_FIRST_BLOCK,
+        ISTAR_AT_FIRST_BLOCK,
     )
     .await;
     assert_rejected!(results, InvalidBlockError::InvalidDependencyProof(2));
@@ -523,7 +555,7 @@ async fn block_whose_proof_is_for_another_message_or_key_is_rejected() {
         &with_proof(built.block.clone(), another_key),
         &built.bal,
         &keys,
-        LSTAR_AT_FIRST_BLOCK,
+        ISTAR_AT_FIRST_BLOCK,
     )
     .await;
     assert_rejected!(results, InvalidBlockError::InvalidDependencyProof(2));
@@ -539,7 +571,7 @@ async fn block_whose_proof_is_for_another_message_or_key_is_rejected() {
         &with_proof(built.block, one_more),
         &built.bal,
         &keys,
-        LSTAR_AT_FIRST_BLOCK,
+        ISTAR_AT_FIRST_BLOCK,
     )
     .await;
     assert_rejected!(results, InvalidBlockError::InvalidDependencyProof(2));
@@ -550,7 +582,7 @@ async fn block_with_a_damaged_or_missing_proof_is_rejected() {
     let first = key(0x6a);
     let second = key(0x6b);
     let keys = [&first, &second];
-    let built = lstar_block(&first, &second).await;
+    let built = istar_block(&first, &second).await;
     let proof = built.block.body.dependency_proof.clone().unwrap();
 
     // One byte flipped.
@@ -565,7 +597,7 @@ async fn block_with_a_damaged_or_missing_proof_is_rejected() {
             &with_proof(built.block.clone(), damaged),
             &built.bal,
             &keys,
-            LSTAR_AT_FIRST_BLOCK,
+            ISTAR_AT_FIRST_BLOCK,
         )
         .await;
         assert_rejected!(results, InvalidBlockError::InvalidDependencyProof(2));
@@ -576,7 +608,7 @@ async fn block_with_a_damaged_or_missing_proof_is_rejected() {
         &with_proof(built.block.clone(), Bytes::new()),
         &built.bal,
         &keys,
-        LSTAR_AT_FIRST_BLOCK,
+        ISTAR_AT_FIRST_BLOCK,
     )
     .await;
     assert_rejected!(results, InvalidBlockError::InvalidDependencyProof(2));
@@ -584,7 +616,7 @@ async fn block_with_a_damaged_or_missing_proof_is_rejected() {
     // No proof at all, with the header still committing to one.
     let mut proofless = built.block;
     proofless.body.dependency_proof = None;
-    let results = import(&proofless, &built.bal, &keys, LSTAR_AT_FIRST_BLOCK).await;
+    let results = import(&proofless, &built.bal, &keys, ISTAR_AT_FIRST_BLOCK).await;
     assert_rejected!(results, InvalidBlockError::DependencyProofNotPresent);
 }
 
@@ -594,15 +626,15 @@ async fn block_without_dependencies_must_carry_an_empty_proof() {
     let second = key(0x6d);
     let keys = [&first, &second];
     // A valid proof, of the dependencies of another block.
-    let other = lstar_block(&first, &second).await;
+    let other = istar_block(&first, &second).await;
     let proof = other.block.body.dependency_proof.unwrap();
 
-    // An LStar block without transactions: its proof is empty, and the header
+    // An IStar block without transactions: its proof is empty, and the header
     // commits to the empty proof and to the empty list of dependencies.
-    let (store, _) = setup_store(&keys, LSTAR_AT_FIRST_BLOCK).await;
+    let (store, _) = setup_store(&keys, ISTAR_AT_FIRST_BLOCK).await;
     let built = build_block(&store, &blockchain(store.clone()), &genesis_header(&store));
     let block = built.payload;
-    let bal = built.block_access_list.expect("an LStar block has a BAL");
+    let bal = built.block_access_list.expect("an IStar block has a BAL");
     assert!(block.body.transactions.is_empty());
     assert_eq!(block.body.dependency_proof, Some(Bytes::new()));
     assert_eq!(block.body.dependency_witnesses, None);
@@ -614,14 +646,14 @@ async fn block_without_dependencies_must_carry_an_empty_proof() {
         block.header.block_deps_hash,
         Some(compute_deps_hash(&[], &NativeCrypto))
     );
-    for result in import(&block, &bal, &keys, LSTAR_AT_FIRST_BLOCK).await {
+    for result in import(&block, &bal, &keys, ISTAR_AT_FIRST_BLOCK).await {
         result.expect("the block imports");
     }
 
     // With a proof it has nothing to prove, it is invalid, however valid the
     // proof is for other dependencies.
     let proof_len = proof.len();
-    let results = import(&with_proof(block, proof), &bal, &keys, LSTAR_AT_FIRST_BLOCK).await;
+    let results = import(&with_proof(block, proof), &bal, &keys, ISTAR_AT_FIRST_BLOCK).await;
     for result in results {
         assert!(
             matches!(
@@ -639,14 +671,14 @@ async fn block_whose_header_does_not_commit_to_its_proof_and_dependencies_is_rej
     let first = key(0x6e);
     let second = key(0x6f);
     let keys = [&first, &second];
-    let built = lstar_block(&first, &second).await;
+    let built = istar_block(&first, &second).await;
 
     // A wrong `dependency_proof_hash`: the proof is the right one, the header
     // commits to another.
     let mut wrong_proof_hash = built.block.clone();
     wrong_proof_hash.header.dependency_proof_hash = Some(H256::repeat_byte(0xab));
     wrong_proof_hash.header.hash = Default::default();
-    let results = import(&wrong_proof_hash, &built.bal, &keys, LSTAR_AT_FIRST_BLOCK).await;
+    let results = import(&wrong_proof_hash, &built.bal, &keys, ISTAR_AT_FIRST_BLOCK).await;
     assert_rejected!(
         results,
         InvalidBlockError::InvalidBody(InvalidBlockBodyError::DependencyProofHashNotMatch)
@@ -659,7 +691,7 @@ async fn block_whose_header_does_not_commit_to_its_proof_and_dependencies_is_rej
     let mut wrong_deps_hash = built.block.clone();
     wrong_deps_hash.header.block_deps_hash = Some(compute_deps_hash(&reversed, &NativeCrypto));
     wrong_deps_hash.header.hash = Default::default();
-    let results = import(&wrong_deps_hash, &built.bal, &keys, LSTAR_AT_FIRST_BLOCK).await;
+    let results = import(&wrong_deps_hash, &built.bal, &keys, ISTAR_AT_FIRST_BLOCK).await;
     assert_rejected!(
         results,
         InvalidBlockError::InvalidBody(InvalidBlockBodyError::BlockDepsHashNotMatch)
@@ -669,7 +701,7 @@ async fn block_whose_header_does_not_commit_to_its_proof_and_dependencies_is_rej
     let mut without_deps_hash = built.block.clone();
     without_deps_hash.header.block_deps_hash = None;
     without_deps_hash.header.hash = Default::default();
-    let results = import(&without_deps_hash, &built.bal, &keys, LSTAR_AT_FIRST_BLOCK).await;
+    let results = import(&without_deps_hash, &built.bal, &keys, ISTAR_AT_FIRST_BLOCK).await;
     assert_rejected!(
         results,
         InvalidBlockError::InvalidHeader(InvalidBlockHeaderError::BlockDepsHashNotPresent)
@@ -677,7 +709,7 @@ async fn block_whose_header_does_not_commit_to_its_proof_and_dependencies_is_rej
     let mut without_proof_hash = built.block;
     without_proof_hash.header.dependency_proof_hash = None;
     without_proof_hash.header.hash = Default::default();
-    let results = import(&without_proof_hash, &built.bal, &keys, LSTAR_AT_FIRST_BLOCK).await;
+    let results = import(&without_proof_hash, &built.bal, &keys, ISTAR_AT_FIRST_BLOCK).await;
     assert_rejected!(
         results,
         InvalidBlockError::InvalidHeader(InvalidBlockHeaderError::DependencyProofHashNotPresent)
@@ -689,7 +721,7 @@ async fn block_with_a_proof_over_the_size_bound_is_rejected() {
     let first = key(0x70);
     let second = key(0x71);
     let keys = [&first, &second];
-    let built = lstar_block(&first, &second).await;
+    let built = istar_block(&first, &second).await;
     let proof = built.block.body.dependency_proof.clone().unwrap();
 
     // The valid proof followed by padding up to one byte over the bound. The
@@ -700,7 +732,7 @@ async fn block_with_a_proof_over_the_size_bound_is_rejected() {
         &with_proof(built.block.clone(), Bytes::from(oversized)),
         &built.bal,
         &keys,
-        LSTAR_AT_FIRST_BLOCK,
+        ISTAR_AT_FIRST_BLOCK,
     )
     .await;
     for result in results {
@@ -722,18 +754,18 @@ async fn block_with_a_proof_over_the_size_bound_is_rejected() {
         &with_proof(built.block, Bytes::from(at_the_bound)),
         &built.bal,
         &keys,
-        LSTAR_AT_FIRST_BLOCK,
+        ISTAR_AT_FIRST_BLOCK,
     )
     .await;
     assert_rejected!(results, InvalidBlockError::InvalidDependencyProof(2));
 }
 
 #[tokio::test]
-async fn lstar_block_with_a_witness_list_is_rejected() {
+async fn istar_block_with_a_witness_list_is_rejected() {
     let first = key(0x72);
     let second = key(0x73);
     let keys = [&first, &second];
-    let built = lstar_block(&first, &second).await;
+    let built = istar_block(&first, &second).await;
     // The witnesses a Hegota block would carry for these transactions.
     let witnesses = vec![
         sign(&first, built.messages[0]),
@@ -743,14 +775,14 @@ async fn lstar_block_with_a_witness_list_is_rejected() {
     // The list beside the proof, without the header committing to it.
     let mut with_list = built.block.clone();
     with_list.body.dependency_witnesses = Some(witnesses.clone());
-    let results = import(&with_list, &built.bal, &keys, LSTAR_AT_FIRST_BLOCK).await;
+    let results = import(&with_list, &built.bal, &keys, ISTAR_AT_FIRST_BLOCK).await;
     assert_rejected!(results, InvalidBlockError::DependencyWitnessesPresent);
 
     // An empty list is still a list. A list a block carries is held to the
     // block's dependencies first, and this one has none of their witnesses.
     let mut with_empty_list = built.block;
     with_empty_list.body.dependency_witnesses = Some(Vec::new());
-    let results = import(&with_empty_list, &built.bal, &keys, LSTAR_AT_FIRST_BLOCK).await;
+    let results = import(&with_empty_list, &built.bal, &keys, ISTAR_AT_FIRST_BLOCK).await;
     assert_rejected!(
         results,
         InvalidBlockError::DependencyWitnessesCountMismatch {
@@ -764,7 +796,7 @@ async fn lstar_block_with_a_witness_list_is_rejected() {
     committed.header.dependency_witnesses_hash =
         Some(compute_dependency_witnesses_hash(&witnesses, &NativeCrypto));
     committed.header.hash = Default::default();
-    let results = import(&committed, &built.bal, &keys, LSTAR_AT_FIRST_BLOCK).await;
+    let results = import(&committed, &built.bal, &keys, ISTAR_AT_FIRST_BLOCK).await;
     assert_rejected!(
         results,
         InvalidBlockError::InvalidHeader(InvalidBlockHeaderError::DependencyWitnessesHashPresent)
@@ -777,7 +809,7 @@ async fn lstar_block_with_a_witness_list_is_rejected() {
     hegota_shaped.header.dependency_proof_hash = None;
     hegota_shaped.header.block_deps_hash = None;
     hegota_shaped.header.hash = Default::default();
-    let results = import(&hegota_shaped, &built.bal, &keys, LSTAR_AT_FIRST_BLOCK).await;
+    let results = import(&hegota_shaped, &built.bal, &keys, ISTAR_AT_FIRST_BLOCK).await;
     assert_rejected!(
         results,
         InvalidBlockError::InvalidHeader(InvalidBlockHeaderError::DependencyWitnessesHashPresent)
@@ -789,8 +821,8 @@ async fn hegota_block_with_a_dependency_proof_is_rejected() {
     let first = key(0x74);
     let second = key(0x75);
     let keys = [&first, &second];
-    // On this chain LStar never activates: the first block is a Hegota block.
-    let (store, chain_id) = setup_store(&keys, None).await;
+    // On this chain IStar never activates: the first block is a Hegota block.
+    let (store, chain_id) = setup_store(&keys, HEGOTA_ONLY).await;
     let blockchain = blockchain(store.clone());
     let mut messages = Vec::new();
     for sender in keys {
@@ -808,7 +840,7 @@ async fn hegota_block_with_a_dependency_proof_is_rejected() {
     assert_eq!(block.body.dependency_proof, None);
     assert_eq!(block.header.dependency_proof_hash, None);
     assert_eq!(block.header.block_deps_hash, None);
-    for result in import(&block, &bal, &keys, None).await {
+    for result in import(&block, &bal, &keys, HEGOTA_ONLY).await {
         result.expect("the Hegota block imports with its witnesses");
     }
 
@@ -816,7 +848,7 @@ async fn hegota_block_with_a_dependency_proof_is_rejected() {
     let proof = proof_of(&[(&first, messages[0]), (&second, messages[1])]);
     let mut with_proof_only = block.clone();
     with_proof_only.body.dependency_proof = Some(proof.clone());
-    let results = import(&with_proof_only, &bal, &keys, None).await;
+    let results = import(&with_proof_only, &bal, &keys, HEGOTA_ONLY).await;
     assert_rejected!(results, InvalidBlockError::DependencyProofPresent);
 
     // The proof with its commitments in the header.
@@ -828,18 +860,18 @@ async fn hegota_block_with_a_dependency_proof_is_rejected() {
         &NativeCrypto,
     ));
     committed.header.hash = Default::default();
-    let results = import(&committed, &bal, &keys, None).await;
+    let results = import(&committed, &bal, &keys, HEGOTA_ONLY).await;
     assert_rejected!(
         results,
         InvalidBlockError::InvalidHeader(InvalidBlockHeaderError::DependencyProofHashPresent)
     );
 
-    // The block as LStar would have it: the proof in place of the witnesses.
-    let mut lstar_shaped = committed;
-    lstar_shaped.body.dependency_witnesses = None;
-    lstar_shaped.header.dependency_witnesses_hash = None;
-    lstar_shaped.header.hash = Default::default();
-    let results = import(&lstar_shaped, &bal, &keys, None).await;
+    // The block as IStar would have it: the proof in place of the witnesses.
+    let mut istar_shaped = committed;
+    istar_shaped.body.dependency_witnesses = None;
+    istar_shaped.header.dependency_witnesses_hash = None;
+    istar_shaped.header.hash = Default::default();
+    let results = import(&istar_shaped, &bal, &keys, HEGOTA_ONLY).await;
     assert_rejected!(
         results,
         InvalidBlockError::InvalidHeader(
@@ -852,9 +884,9 @@ async fn hegota_block_with_a_dependency_proof_is_rejected() {
 async fn account_keeps_authorizing_with_the_same_key_across_the_fork() {
     let key = key(0x76);
     let keys = [&key];
-    // Hegota at genesis and for the first block; LStar from the second block on.
-    let lstar_after = Some(2 * BLOCK_TIME);
-    let (store, chain_id) = setup_store(&keys, lstar_after).await;
+    // Hegota at genesis and for the first block; IStar from the second block on.
+    let forks = Forks::istar_after(2 * BLOCK_TIME);
+    let (store, chain_id) = setup_store(&keys, forks).await;
     let blockchain = blockchain(store.clone());
     let genesis = genesis_header(&store);
     let account_at_genesis = store
@@ -895,7 +927,7 @@ async fn account_keeps_authorizing_with_the_same_key_across_the_fork() {
     assert!(
         !store
             .get_chain_config()
-            .is_lstar_activated(first_block.header.timestamp)
+            .is_istar_activated(first_block.header.timestamp)
     );
     let second_tx = dependency_transaction(chain_id, &key, 1, &[]);
     let second_message = second_tx.compute_sig_hash();
@@ -904,9 +936,9 @@ async fn account_keeps_authorizing_with_the_same_key_across_the_fork() {
     let second_hash = blockchain
         .add_dependency_transaction_to_pool(second_wrapper)
         .await
-        .expect("the dependency transaction enters the pool before LStar");
+        .expect("the dependency transaction enters the pool before IStar");
 
-    // The chain crosses LStar. The block that includes the transaction proves the
+    // The chain crosses IStar. The block that includes the transaction proves the
     // signature the pool holds, the one made before the fork, and does not carry
     // it.
     assert_eq!(
@@ -921,7 +953,7 @@ async fn account_keeps_authorizing_with_the_same_key_across_the_fork() {
     assert!(
         store
             .get_chain_config()
-            .is_lstar_activated(second_block.header.timestamp)
+            .is_istar_activated(second_block.header.timestamp)
     );
     assert_eq!(second_block.body.transactions.len(), 1);
     assert_eq!(
@@ -935,7 +967,7 @@ async fn account_keeps_authorizing_with_the_same_key_across_the_fork() {
         .body
         .dependency_proof
         .clone()
-        .expect("the LStar block has a dependency proof");
+        .expect("the IStar block has a dependency proof");
     assert_eq!(
         block_dependencies(&second_block.body.transactions),
         vec![dependency(&key, second_message)]
@@ -943,7 +975,7 @@ async fn account_keeps_authorizing_with_the_same_key_across_the_fork() {
     assert!(!proof.is_empty());
     blockchain
         .add_block(second_block.clone())
-        .expect("the LStar block imports");
+        .expect("the IStar block imports");
     apply_fork_choice(
         &store,
         second_block.hash(),
@@ -952,7 +984,7 @@ async fn account_keeps_authorizing_with_the_same_key_across_the_fork() {
         None,
     )
     .await
-    .expect("the LStar block becomes the head");
+    .expect("the IStar block becomes the head");
 
     // The account is the one of the genesis state: same code, same storage. Only
     // its nonce and its balance moved.
@@ -968,15 +1000,15 @@ async fn account_keeps_authorizing_with_the_same_key_across_the_fork() {
     }
 
     // Another node imports the two blocks, one of each fork, on both paths.
-    let (other_store, _) = setup_store(&keys, lstar_after).await;
+    let (other_store, _) = setup_store(&keys, forks).await;
     let other = self::blockchain(other_store);
     other
         .add_block(first_block.clone())
         .expect("plain import of the Hegota block");
     other
         .add_block(second_block.clone())
-        .expect("plain import of the LStar block");
-    let (other_store, _) = setup_store(&keys, lstar_after).await;
+        .expect("plain import of the IStar block");
+    let (other_store, _) = setup_store(&keys, forks).await;
     let other = self::blockchain(other_store);
     other
         .add_block_pipeline(
@@ -989,16 +1021,16 @@ async fn account_keeps_authorizing_with_the_same_key_across_the_fork() {
             second_block.clone(),
             second_built.block_access_list.map(Arc::new),
         )
-        .expect("pipeline import of the LStar block");
+        .expect("pipeline import of the IStar block");
 
     // The two transactions do the same work. What they paid differs by the
-    // charge for the dependency: a witness before LStar, a share of the proof
+    // charge for the dependency: a witness before IStar, a share of the proof
     // from it.
     let gas_before = first_built.receipts[0].cumulative_gas_used;
     let gas_after = second_built.receipts[0].cumulative_gas_used;
     println!(
         "Gas of the transaction in the Hegota block: {gas_before}. \
-         Gas of the transaction in the LStar block: {gas_after}."
+         Gas of the transaction in the IStar block: {gas_after}."
     );
     assert_eq!(first_block.header.gas_used, gas_before);
     assert_eq!(second_block.header.gas_used, gas_after);
@@ -1008,12 +1040,264 @@ async fn account_keeps_authorizing_with_the_same_key_across_the_fork() {
     );
 }
 
+/// Asserts that the block and its header read back from their RLP encoding as
+/// they were written, under the same block hash.
+fn assert_reads_back(block: &Block) {
+    let header = BlockHeader::decode(&block.header.encode_to_vec()).expect("the header decodes");
+    assert_eq!(header, block.header);
+    assert_eq!(header.compute_block_hash(&NativeCrypto), block.hash());
+    let encoded = block.encode_to_vec();
+    let decoded = Block::decode(&encoded).expect("the block decodes");
+    assert_eq!(decoded.header, block.header);
+    assert_eq!(
+        decoded.body.dependency_witnesses,
+        block.body.dependency_witnesses
+    );
+    assert_eq!(decoded.body.dependency_proof, block.body.dependency_proof);
+    assert_eq!(decoded.encode_to_vec(), encoded);
+}
+
+#[tokio::test]
+async fn istar_block_on_a_chain_without_lstar_has_no_burned_fees() {
+    let first = key(0x81);
+    let second = key(0x82);
+    let built = istar_block(&first, &second).await;
+    let header = &built.block.header;
+
+    // The header ends with the two commitments of EIP-8288. `burned_fees`
+    // (EIP-8079) is a field of LStar, which this chain does not schedule.
+    assert!(header.dependency_proof_hash.is_some());
+    assert!(header.block_deps_hash.is_some());
+    assert_eq!(header.dependency_witnesses_hash, None);
+    assert_eq!(header.burned_fees, None);
+    assert_reads_back(&built.block);
+
+    // The payload of the Engine API has no `burnedFees` either.
+    let payload = payload_json(built.block, &built.bal);
+    assert!(payload.get("dependencyProof").is_some());
+    assert!(payload.get("burnedFees").is_none());
+}
+
+#[tokio::test]
+async fn lstar_block_carries_the_dependency_proof_and_burned_fees() {
+    let first = key(0x83);
+    let second = key(0x84);
+    let keys = [&first, &second];
+    let forks = ISTAR_AND_LSTAR_AT_FIRST_BLOCK;
+    let (store, chain_id) = setup_store(&keys, forks).await;
+    let blockchain = blockchain(store.clone());
+    let mut messages = Vec::new();
+    for sender in keys {
+        let tx = dependency_transaction(chain_id, sender, 0, &[]);
+        messages.push(tx.compute_sig_hash());
+        blockchain
+            .add_dependency_transaction_to_pool(wrapper(tx, &[sender]))
+            .await
+            .expect("the dependency transaction enters the pool");
+    }
+    let built = build_block(&store, &blockchain, &genesis_header(&store));
+    let block = built.payload;
+    assert_eq!(
+        store.get_chain_config().fork(block.header.timestamp),
+        Fork::LStar
+    );
+    assert_eq!(block.body.transactions.len(), 2);
+    assert!(built.receipts.iter().all(|receipt| receipt.succeeded));
+
+    // The block has what IStar gives it: the proof in place of the witnesses, and
+    // the header's commitments to the proof and to the dependencies.
+    let proof = block
+        .body
+        .dependency_proof
+        .clone()
+        .expect("an LStar block has a dependency proof");
+    assert!(!proof.is_empty());
+    assert!(built.unproven_dependencies.is_empty());
+    assert_eq!(block.body.dependency_witnesses, None);
+    assert_eq!(block.header.dependency_witnesses_hash, None);
+    assert_eq!(
+        block.header.dependency_proof_hash,
+        Some(compute_dependency_proof_hash(&proof, &NativeCrypto))
+    );
+    assert_eq!(
+        block.header.block_deps_hash,
+        Some(compute_deps_hash(
+            &block_dependencies(&block.body.transactions),
+            &NativeCrypto
+        ))
+    );
+    // And what LStar adds to it: `burned_fees` (EIP-8079), here the base fee over
+    // the gas the two transactions paid for.
+    let gas_spent = built.receipts[1].cumulative_gas_used;
+    assert_eq!(
+        block.header.burned_fees,
+        Some(block.header.base_fee_per_gas.unwrap() * gas_spent)
+    );
+    assert!(block.header.burned_fees > Some(0));
+    assert_reads_back(&block);
+
+    // The gas of a dependency is the one of IStar: a share of the proof.
+    let istar = istar_block(&first, &second).await;
+    assert_eq!(block.header.gas_used, istar.block.header.gas_used);
+
+    // It imports on every path, and through the Engine API, whose payload has
+    // the two fields together.
+    let bal = built.block_access_list.expect("an LStar block has a BAL");
+    for result in import(&block, &bal, &keys, forks).await {
+        result.expect("the block imports");
+    }
+    let payload = payload_json(block.clone(), &bal);
+    assert!(payload.get("dependencyProof").is_some());
+    assert!(payload.get("burnedFees").is_some());
+    assert!(payload.get("dependencyWitnesses").is_none());
+    let status = new_payload(payload, &keys, forks).await;
+    assert_eq!(status["status"], "VALID", "got {status:?}");
+
+    // The proof is checked as in an IStar block: one that misses a dependency
+    // makes the block invalid.
+    let partial = proof_of(&[(&first, messages[0])]);
+    let results = import(&with_proof(block, partial), &bal, &keys, forks).await;
+    assert_rejected!(results, InvalidBlockError::InvalidDependencyProof(2));
+}
+
+#[tokio::test]
+async fn chain_crosses_istar_and_then_lstar() {
+    let key = key(0x85);
+    let keys = [&key];
+    // Hegota at genesis and for the first block, IStar for the second block,
+    // LStar from the third block on.
+    let forks = Forks {
+        istar_after: Some(2 * BLOCK_TIME),
+        lstar_after: Some(3 * BLOCK_TIME),
+    };
+    let (store, chain_id) = setup_store(&keys, forks).await;
+    let blockchain = blockchain(store.clone());
+    let chain_config = store.get_chain_config();
+
+    // The account sends one transaction in each block.
+    let mut parent = genesis_header(&store);
+    let mut built_blocks = Vec::new();
+    for nonce in 0..3 {
+        blockchain
+            .add_dependency_transaction_to_pool(wrapper(
+                dependency_transaction(chain_id, &key, nonce, &[]),
+                &keys,
+            ))
+            .await
+            .expect("the dependency transaction enters the pool");
+        let built = build_block(&store, &blockchain, &parent);
+        let block = built.payload.clone();
+        assert_eq!(block.body.transactions.len(), 1);
+        assert!(built.receipts[0].succeeded);
+        blockchain
+            .add_block(block.clone())
+            .expect("the block imports");
+        apply_fork_choice(&store, block.hash(), H256::zero(), H256::zero(), None)
+            .await
+            .expect("the block becomes the head");
+        blockchain
+            .remove_block_transactions_from_pool(&block)
+            .unwrap();
+        parent = block.header.clone();
+        built_blocks.push(built);
+    }
+    let forks_of_the_blocks: Vec<Fork> = built_blocks
+        .iter()
+        .map(|built| chain_config.fork(built.payload.header.timestamp))
+        .collect();
+    assert_eq!(
+        forks_of_the_blocks,
+        vec![Fork::Hegota, Fork::IStar, Fork::LStar]
+    );
+    let hegota = &built_blocks[0].payload;
+    let istar = &built_blocks[1].payload;
+    let lstar = &built_blocks[2].payload;
+
+    // The Hegota block carries the witness, and its header the commitment to
+    // the list.
+    assert_eq!(
+        hegota.body.dependency_witnesses.as_ref().map(Vec::len),
+        Some(1)
+    );
+    assert!(hegota.header.dependency_witnesses_hash.is_some());
+    assert_eq!(hegota.body.dependency_proof, None);
+    assert_eq!(hegota.header.dependency_proof_hash, None);
+    assert_eq!(hegota.header.block_deps_hash, None);
+    assert_eq!(hegota.header.burned_fees, None);
+
+    // The IStar block and the LStar block carry the proof, and their headers the
+    // two commitments of the proof.
+    for block in [istar, lstar] {
+        assert_eq!(block.body.dependency_witnesses, None);
+        assert_eq!(block.header.dependency_witnesses_hash, None);
+        let proof = block
+            .body
+            .dependency_proof
+            .as_ref()
+            .expect("the block has a dependency proof");
+        assert!(!proof.is_empty());
+        assert_eq!(
+            block.header.dependency_proof_hash,
+            Some(compute_dependency_proof_hash(proof, &NativeCrypto))
+        );
+        assert_eq!(
+            block.header.block_deps_hash,
+            Some(compute_deps_hash(
+                &block_dependencies(&block.body.transactions),
+                &NativeCrypto
+            ))
+        );
+    }
+    // The IStar header has no `burned_fees`. The LStar header has it (EIP-8079):
+    // the base fee over the gas its transaction paid for.
+    assert_eq!(istar.header.burned_fees, None);
+    assert_eq!(
+        lstar.header.burned_fees,
+        Some(
+            lstar.header.base_fee_per_gas.unwrap()
+                * built_blocks[2].receipts[0].cumulative_gas_used
+        )
+    );
+
+    // Each of the three headers reads back as it was written.
+    for block in [hegota, istar, lstar] {
+        assert_reads_back(block);
+    }
+
+    // The transaction pays for a witness in Hegota and for its share of the
+    // proof from IStar. LStar does not change what it pays.
+    assert_eq!(
+        hegota.header.gas_used - istar.header.gas_used,
+        LEANSPHINCS_WITNESS_GAS - LEANSTARK_VERIFICATION_GAS
+    );
+    assert_eq!(istar.header.gas_used, lstar.header.gas_used);
+
+    // Another node imports the three blocks on both paths.
+    let (other_store, _) = setup_store(&keys, forks).await;
+    let other = self::blockchain(other_store);
+    for built in &built_blocks {
+        other
+            .add_block(built.payload.clone())
+            .expect("plain import of the block");
+    }
+    let (other_store, _) = setup_store(&keys, forks).await;
+    let other = self::blockchain(other_store);
+    for built in &built_blocks {
+        other
+            .add_block_pipeline(
+                built.payload.clone(),
+                built.block_access_list.clone().map(Arc::new),
+            )
+            .expect("pipeline import of the block");
+    }
+}
+
 #[tokio::test]
 async fn payload_build_loop_proves_the_payload_it_returns() {
     let first = key(0x77);
     let second = key(0x78);
     let keys = [&first, &second];
-    let (store, chain_id) = setup_store(&keys, LSTAR_AT_FIRST_BLOCK).await;
+    let (store, chain_id) = setup_store(&keys, ISTAR_AT_FIRST_BLOCK).await;
     let blockchain = Arc::new(blockchain(store.clone()));
     for sender in keys {
         blockchain
@@ -1053,8 +1337,8 @@ async fn payload_build_loop_proves_the_payload_it_returns() {
         block.header.dependency_proof_hash,
         Some(compute_dependency_proof_hash(&proof, &NativeCrypto))
     );
-    let bal = built.block_access_list.expect("an LStar block has a BAL");
-    for result in import(&block, &bal, &keys, LSTAR_AT_FIRST_BLOCK).await {
+    let bal = built.block_access_list.expect("an IStar block has a BAL");
+    for result in import(&block, &bal, &keys, ISTAR_AT_FIRST_BLOCK).await {
         result.expect("the block imports");
     }
 }
@@ -1065,8 +1349,8 @@ fn new_payload_params(payload: Value) -> Option<Vec<Value>> {
     Some(vec![payload, json!([]), json!(H256::zero()), json!([])])
 }
 
-async fn new_payload(payload: Value, keys: &[&Key], lstar_after: Option<u64>) -> Value {
-    let (store, _) = setup_store(keys, lstar_after).await;
+async fn new_payload(payload: Value, keys: &[&Key], forks: Forks) -> Value {
+    let (store, _) = setup_store(keys, forks).await;
     let context = default_context_with_storage(store).await;
     NewPayloadV5Request::parse(&new_payload_params(payload))
         .expect("well-formed newPayloadV5 params")
@@ -1086,7 +1370,7 @@ async fn dependency_proof_travels_through_get_payload_and_new_payload() {
     let first = key(0x79);
     let second = key(0x7a);
     let keys = [&first, &second];
-    let (store, chain_id) = setup_store(&keys, LSTAR_AT_FIRST_BLOCK).await;
+    let (store, chain_id) = setup_store(&keys, ISTAR_AT_FIRST_BLOCK).await;
     let builder = default_context_with_storage(store.clone()).await;
     for sender in keys {
         builder
@@ -1128,20 +1412,20 @@ async fn dependency_proof_travels_through_get_payload_and_new_payload() {
     assert!(payload.get("blockDepsHash").is_none());
 
     // `engine_newPayloadV5` on another node accepts it.
-    let status = new_payload(payload.clone(), &keys, LSTAR_AT_FIRST_BLOCK).await;
+    let status = new_payload(payload.clone(), &keys, ISTAR_AT_FIRST_BLOCK).await;
     assert_eq!(status["status"], "VALID", "got {status:?}");
     assert_eq!(status["latestValidHash"], payload["blockHash"]);
 
     // The same payload with another proof is not the block its hash names.
     let mut other_proof = payload.clone();
     other_proof["dependencyProof"] = json!(format!("{proof}00"));
-    let status = new_payload(other_proof, &keys, LSTAR_AT_FIRST_BLOCK).await;
+    let status = new_payload(other_proof, &keys, ISTAR_AT_FIRST_BLOCK).await;
     assert_eq!(status["status"], "INVALID", "got {status:?}");
 
     // Nor is it with the witnesses a Hegota payload carries.
     let mut with_witnesses = payload;
     with_witnesses["dependencyWitnesses"] = json!(["0x01"]);
-    let status = new_payload(with_witnesses, &keys, LSTAR_AT_FIRST_BLOCK).await;
+    let status = new_payload(with_witnesses, &keys, ISTAR_AT_FIRST_BLOCK).await;
     assert_eq!(status["status"], "INVALID", "got {status:?}");
 }
 
@@ -1150,14 +1434,14 @@ async fn engine_answers_invalid_to_a_payload_whose_dependency_proof_does_not_hol
     let first = key(0x7b);
     let second = key(0x7c);
     let keys = [&first, &second];
-    let built = lstar_block(&first, &second).await;
+    let built = istar_block(&first, &second).await;
     let proof = built.block.body.dependency_proof.clone().unwrap();
 
     // The block as built is valid.
     let status = new_payload(
         payload_json(built.block.clone(), &built.bal),
         &keys,
-        LSTAR_AT_FIRST_BLOCK,
+        ISTAR_AT_FIRST_BLOCK,
     )
     .await;
     assert_eq!(status["status"], "VALID", "got {status:?}");
@@ -1182,25 +1466,25 @@ async fn engine_answers_invalid_to_a_payload_whose_dependency_proof_does_not_hol
     for invalid_proof in invalid_proofs {
         let block = with_proof(built.block.clone(), invalid_proof);
         let status =
-            new_payload(payload_json(block, &built.bal), &keys, LSTAR_AT_FIRST_BLOCK).await;
+            new_payload(payload_json(block, &built.bal), &keys, ISTAR_AT_FIRST_BLOCK).await;
         assert_eq!(status["status"], "INVALID", "got {status:?}");
     }
 
     // A proof in a block without dependencies.
-    let (store, _) = setup_store(&keys, LSTAR_AT_FIRST_BLOCK).await;
+    let (store, _) = setup_store(&keys, ISTAR_AT_FIRST_BLOCK).await;
     let empty = build_block(&store, &blockchain(store.clone()), &genesis_header(&store));
-    let empty_bal = empty.block_access_list.expect("an LStar block has a BAL");
+    let empty_bal = empty.block_access_list.expect("an IStar block has a BAL");
     let status = new_payload(
         payload_json(empty.payload.clone(), &empty_bal),
         &keys,
-        LSTAR_AT_FIRST_BLOCK,
+        ISTAR_AT_FIRST_BLOCK,
     )
     .await;
     assert_eq!(status["status"], "VALID", "got {status:?}");
     let status = new_payload(
         payload_json(with_proof(empty.payload, proof), &empty_bal),
         &keys,
-        LSTAR_AT_FIRST_BLOCK,
+        ISTAR_AT_FIRST_BLOCK,
     )
     .await;
     assert_eq!(status["status"], "INVALID", "got {status:?}");
@@ -1213,7 +1497,7 @@ async fn engine_reads_the_dependency_fields_of_a_payload_under_its_fork() {
     let keys = [&first, &second];
 
     // A Hegota payload carries witnesses and no proof.
-    let (store, chain_id) = setup_store(&keys, None).await;
+    let (store, chain_id) = setup_store(&keys, HEGOTA_ONLY).await;
     let blockchain = blockchain(store.clone());
     let mut messages = Vec::new();
     for sender in keys {
@@ -1232,17 +1516,17 @@ async fn engine_reads_the_dependency_fields_of_a_payload_under_its_fork() {
         Some(2)
     );
     assert!(payload.get("dependencyProof").is_none());
-    let status = new_payload(payload.clone(), &keys, None).await;
+    let status = new_payload(payload.clone(), &keys, HEGOTA_ONLY).await;
     assert_eq!(status["status"], "VALID", "got {status:?}");
 
-    // An empty proof is no proof before LStar; a proof makes the payload invalid.
+    // An empty proof is no proof before IStar; a proof makes the payload invalid.
     let mut with_empty_proof = payload.clone();
     with_empty_proof["dependencyProof"] = json!("0x");
-    let status = new_payload(with_empty_proof, &keys, None).await;
+    let status = new_payload(with_empty_proof, &keys, HEGOTA_ONLY).await;
     assert_eq!(status["status"], "VALID", "got {status:?}");
     let proof = proof_of(&[(&first, messages[0]), (&second, messages[1])]);
     let mut with_a_proof = payload;
     with_a_proof["dependencyProof"] = json!(format!("0x{}", hex::encode(&proof)));
-    let status = new_payload(with_a_proof, &keys, None).await;
+    let status = new_payload(with_a_proof, &keys, HEGOTA_ONLY).await;
     assert_eq!(status["status"], "INVALID", "got {status:?}");
 }

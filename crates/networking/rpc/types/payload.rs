@@ -87,10 +87,10 @@ pub struct ExecutionPayload {
         default
     )]
     pub dependency_witnesses: Option<Vec<Bytes>>,
-    // dependencyProof (EIP-8288, LStar+): the proof the block carries for the
+    // dependencyProof (EIP-8288, IStar+): the proof the block carries for the
     // dependencies of its transactions, in place of their witnesses; empty when
     // the block has none. The header commits to it, so it must survive the
-    // getPayload → newPayload round-trip. `None` for pre-LStar payloads (skipped
+    // getPayload → newPayload round-trip. `None` for pre-IStar payloads (skipped
     // in serialization).
     #[serde(
         skip_serializing_if = "Option::is_none",
@@ -227,7 +227,7 @@ impl ExecutionPayload {
     }
 
     /// EIP-8288: reads `dependencyProof` under the rules of the payload's
-    /// timestamp, before the payload becomes a block. From LStar the block always
+    /// timestamp, before the payload becomes a block. From IStar the block always
     /// has a dependency proof, so an absent field is the empty proof. Before that
     /// the block has none: an absent or empty field is no proof, and a non-empty
     /// one is kept so the header rules reject the block.
@@ -643,7 +643,7 @@ mod test {
         assert_eq!(block.header.dependency_witnesses_hash, None);
     }
 
-    // EIP-8288: from LStar the payload carries the block's dependency proof.
+    // EIP-8288: from IStar the payload carries the block's dependency proof.
 
     fn payload_with_proof(dependency_proof: Option<Bytes>) -> ExecutionPayload {
         let mut payload = payload_with_witnesses(None);

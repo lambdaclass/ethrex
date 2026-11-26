@@ -2575,7 +2575,7 @@ const FRAME_TX_TOTAL_COST_FLOOR_PER_TOKEN: u64 = 16;
 pub const LEANSPHINCS_WITNESS_GAS: u64 = LEANSPHINCS_SIGNATURE_SIZE as u64
     * FRAME_TX_STANDARD_TOKEN_COST
     * FRAME_TX_TOTAL_COST_FLOOR_PER_TOKEN;
-/// EIP-8288 `LEANSTARK_VERIFICATION_GAS`: gas a transaction pays, from LStar,
+/// EIP-8288 `LEANSTARK_VERIFICATION_GAS`: gas a transaction pays, from IStar,
 /// for each LEANSPHINCS entry of its signature list, as its share of the
 /// dependency proof the block carries in place of the witnesses.
 pub const LEANSTARK_VERIFICATION_GAS: u64 = 30_000;
@@ -3109,10 +3109,10 @@ impl FrameTransaction {
     }
 
     /// What the transaction pays for its dependencies under the rules of `fork`:
-    /// before LStar a witness for each of them (EIP-8504), and from LStar its share
+    /// before IStar a witness for each of them (EIP-8504), and from IStar its share
     /// of the proof that stands for the witnesses of the whole block (EIP-8288).
     pub fn dependency_gas(&self, fork: Fork) -> u64 {
-        if fork >= Fork::LStar {
+        if fork >= Fork::IStar {
             self.dependency_proof_gas()
         } else {
             self.dependency_witness_gas()
@@ -7704,13 +7704,13 @@ mod tests {
     }
 
     #[test]
-    fn dependencies_cost_a_witness_each_before_lstar_and_a_share_of_the_proof_per_entry_from_it() {
+    fn dependencies_cost_a_witness_each_before_istar_and_a_share_of_the_proof_per_entry_from_it() {
         assert_eq!(LEANSTARK_VERIFICATION_GAS, 30_000);
 
         let key = H256::repeat_byte(0xAA);
         let plain = make_test_frame_tx();
         assert_eq!(plain.dependency_proof_gas(), 0);
-        assert_eq!(plain.dependency_gas(Fork::LStar), 0);
+        assert_eq!(plain.dependency_gas(Fork::IStar), 0);
 
         // Three entries that declare one dependency and one that declares
         // another: two dependencies.
@@ -7729,10 +7729,10 @@ mod tests {
             plain.signature_verification_cost() + 4 * LEANSPHINCS_VERIFICATION_GAS
         );
 
-        // Before LStar the charge is the witness gas of each dependency; from
-        // LStar it is the proof gas of each declaration.
-        for fork in [Fork::Hegota, Fork::LStar] {
-            let expected = if fork == Fork::LStar {
+        // Before IStar the charge is the witness gas of each dependency; from
+        // IStar it is the proof gas of each declaration, and LStar keeps it.
+        for fork in [Fork::Hegota, Fork::IStar, Fork::LStar] {
+            let expected = if fork >= Fork::IStar {
                 4 * LEANSTARK_VERIFICATION_GAS
             } else {
                 2 * LEANSPHINCS_WITNESS_GAS

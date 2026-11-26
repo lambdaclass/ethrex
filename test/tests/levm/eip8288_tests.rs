@@ -1,4 +1,4 @@
-//! EIP-8288 gas of a dependency transaction. From LStar a block carries one proof
+//! EIP-8288 gas of a dependency transaction. From IStar a block carries one proof
 //! for the dependencies of its transactions, and a transaction pays
 //! `LEANSTARK_VERIFICATION_GAS` for every LEANSPHINCS entry of its signature
 //! list, in place of the witness gas charged for each dependency before. The
@@ -120,7 +120,7 @@ fn run(fork: Fork, key: H256, tx: FrameTransaction) -> ExecutionReport {
 }
 
 #[test]
-fn intrinsic_gas_of_a_dependency_transaction_before_and_after_lstar() {
+fn intrinsic_gas_of_a_dependency_transaction_before_and_after_istar() {
     let key = H256::repeat_byte(0x5A);
     let tx = transfer(dependency_entries(&[(H256::zero(), key)]));
     assert_eq!(tx.dependencies().len(), 1);
@@ -133,49 +133,65 @@ fn intrinsic_gas_of_a_dependency_transaction_before_and_after_lstar() {
     let data = tx.data_cost();
     assert_eq!(data, 672);
 
-    // Before LStar the transaction pays for the witness the block carries for its
+    // Before IStar the transaction pays for the witness the block carries for its
     // dependency: 7,740 bytes at the calldata floor of 64 gas per byte.
     assert_eq!(LEANSPHINCS_WITNESS_GAS, 495_360);
     assert_eq!(tx.dependency_gas(Fork::Hegota), 495_360);
     assert_eq!(tx.mandatory_gas_at(Fork::Hegota), fixed + 495_360);
     assert_eq!(tx.mandatory_gas_at(Fork::Hegota) + data, 511_982);
 
-    // From LStar it pays its share of the block's dependency proof instead.
+    // From IStar it pays its share of the block's dependency proof instead.
     assert_eq!(LEANSTARK_VERIFICATION_GAS, 30_000);
-    assert_eq!(tx.dependency_gas(Fork::LStar), 30_000);
-    assert_eq!(tx.mandatory_gas_at(Fork::LStar), fixed + 30_000);
-    assert_eq!(tx.mandatory_gas_at(Fork::LStar) + data, 46_622);
+    assert_eq!(tx.dependency_gas(Fork::IStar), 30_000);
+    assert_eq!(tx.mandatory_gas_at(Fork::IStar), fixed + 30_000);
+    assert_eq!(tx.mandatory_gas_at(Fork::IStar) + data, 46_622);
 
     // Both sides of `max_gas` move by the same amount, so `max_gas` does too.
-    for (at_hegota, at_lstar) in [
+    for (at_hegota, at_istar) in [
         (
             tx.standard_gas_limit_at(Fork::Hegota),
-            tx.standard_gas_limit_at(Fork::LStar),
+            tx.standard_gas_limit_at(Fork::IStar),
         ),
         (
             tx.calldata_floor_total_at(Fork::Hegota),
-            tx.calldata_floor_total_at(Fork::LStar),
+            tx.calldata_floor_total_at(Fork::IStar),
         ),
-        (tx.max_gas_at(Fork::Hegota), tx.max_gas_at(Fork::LStar)),
+        (tx.max_gas_at(Fork::Hegota), tx.max_gas_at(Fork::IStar)),
     ] {
-        assert_eq!(at_hegota - at_lstar, 495_360 - 30_000);
+        assert_eq!(at_hegota - at_istar, 495_360 - 30_000);
     }
+
+    // LStar keeps the quantities of IStar.
+    assert_eq!(tx.dependency_gas(Fork::LStar), 30_000);
+    assert_eq!(
+        tx.mandatory_gas_at(Fork::LStar),
+        tx.mandatory_gas_at(Fork::IStar)
+    );
+    assert_eq!(
+        tx.standard_gas_limit_at(Fork::LStar),
+        tx.standard_gas_limit_at(Fork::IStar)
+    );
+    assert_eq!(
+        tx.calldata_floor_total_at(Fork::LStar),
+        tx.calldata_floor_total_at(Fork::IStar)
+    );
+    assert_eq!(tx.max_gas_at(Fork::LStar), tx.max_gas_at(Fork::IStar));
 
     // The quantities without a fork are those of Hegota, where frame
     // transactions start.
     assert_eq!(tx.mandatory_gas(), tx.mandatory_gas_at(Fork::Hegota));
     assert_eq!(tx.max_gas(), tx.max_gas_at(Fork::Hegota));
     assert_eq!(
-        Transaction::FrameTransaction(tx.clone()).gas_limit_at(Fork::LStar),
-        tx.max_gas_at(Fork::LStar)
+        Transaction::FrameTransaction(tx.clone()).gas_limit_at(Fork::IStar),
+        tx.max_gas_at(Fork::IStar)
     );
 }
 
 #[test]
-fn execution_charges_the_proof_gas_in_place_of_the_witness_gas_from_lstar() {
+fn execution_charges_the_proof_gas_in_place_of_the_witness_gas_from_istar() {
     let key = H256::repeat_byte(0x5A);
     let tx = transfer(dependency_entries(&[(H256::zero(), key)]));
-    // The entry's verification cost is the same under both forks: it is a
+    // The entry's verification cost is the same under every fork: it is a
     // function of the signature list alone.
     assert_eq!(
         tx.signature_verification_cost(),
@@ -183,20 +199,24 @@ fn execution_charges_the_proof_gas_in_place_of_the_witness_gas_from_lstar() {
     );
 
     let at_hegota = run(Fork::Hegota, key, tx.clone());
+    let at_istar = run(Fork::IStar, key, tx.clone());
     let at_lstar = run(Fork::LStar, key, tx);
     assert!(at_hegota.is_success(), "{at_hegota:?}");
+    assert!(at_istar.is_success(), "{at_istar:?}");
     assert!(at_lstar.is_success(), "{at_lstar:?}");
 
-    // The frames do the same work under both forks, so what the transaction uses
-    // differs by the two charges alone.
+    // The frames do the same work under the three forks, so what the transaction
+    // uses differs by the two charges alone, and not at all from IStar to LStar.
     assert_eq!(
-        at_hegota.gas_used - at_lstar.gas_used,
+        at_hegota.gas_used - at_istar.gas_used,
         LEANSPHINCS_WITNESS_GAS - LEANSTARK_VERIFICATION_GAS
     );
+    assert_eq!(at_istar.gas_used, at_lstar.gas_used);
 
-    // An entry is not a frame: under both forks the transaction has the receipts
+    // An entry is not a frame: under every fork the transaction has the receipts
     // of its two frames, and each frame uses the same gas.
     let frames_at_hegota = at_hegota.frame_results.expect("frame results present");
+    let frames_at_istar = at_istar.frame_results.expect("frame results present");
     let frames_at_lstar = at_lstar.frame_results.expect("frame results present");
     assert_eq!(frames_at_hegota.len(), 2);
     assert!(
@@ -204,7 +224,8 @@ fn execution_charges_the_proof_gas_in_place_of_the_witness_gas_from_lstar() {
             .iter()
             .all(|frame| frame.0 == FRAME_RECEIPT_STATUS_SUCCESS)
     );
-    assert_eq!(frames_at_hegota, frames_at_lstar);
+    assert_eq!(frames_at_hegota, frames_at_istar);
+    assert_eq!(frames_at_istar, frames_at_lstar);
 }
 
 #[test]
@@ -212,7 +233,7 @@ fn proof_gas_is_charged_for_every_leansphincs_entry() {
     let key = H256::repeat_byte(0x5A);
     let other_key = H256::repeat_byte(0x5B);
 
-    // The same entry twice is one dependency: one witness before LStar, two
+    // The same entry twice is one dependency: one witness before IStar, two
     // declarations from it.
     let twice = transfer(dependency_entries(&[
         (H256::zero(), key),
@@ -221,7 +242,7 @@ fn proof_gas_is_charged_for_every_leansphincs_entry() {
     assert_eq!(twice.dependencies().len(), 1);
     assert_eq!(twice.dependency_gas(Fork::Hegota), LEANSPHINCS_WITNESS_GAS);
     assert_eq!(
-        twice.dependency_gas(Fork::LStar),
+        twice.dependency_gas(Fork::IStar),
         2 * LEANSTARK_VERIFICATION_GAS
     );
 
@@ -238,7 +259,7 @@ fn proof_gas_is_charged_for_every_leansphincs_entry() {
         2 * LEANSPHINCS_WITNESS_GAS
     );
     assert_eq!(
-        three.dependency_gas(Fork::LStar),
+        three.dependency_gas(Fork::IStar),
         3 * LEANSTARK_VERIFICATION_GAS
     );
 
@@ -254,7 +275,7 @@ fn proof_gas_is_charged_for_every_leansphincs_entry() {
     });
     assert_eq!(mixed.dependency_gas(Fork::Hegota), LEANSPHINCS_WITNESS_GAS);
     assert_eq!(
-        mixed.dependency_gas(Fork::LStar),
+        mixed.dependency_gas(Fork::IStar),
         LEANSTARK_VERIFICATION_GAS
     );
 
@@ -263,22 +284,22 @@ fn proof_gas_is_charged_for_every_leansphincs_entry() {
     plain.signatures.remove(0);
     assert!(!plain.has_dependencies());
     assert_eq!(plain.dependency_gas(Fork::Hegota), 0);
-    assert_eq!(plain.dependency_gas(Fork::LStar), 0);
+    assert_eq!(plain.dependency_gas(Fork::IStar), 0);
 
     // The VM charges what the transaction declares. These transactions do little
     // work, so each one uses its calldata floor: the mandatory costs, the proof gas
     // among them, and 64 gas for each byte of data.
     let once = transfer(dependency_entries(&[(H256::zero(), key)]));
-    let used_once = run(Fork::LStar, key, once.clone());
-    let used_twice = run(Fork::LStar, key, twice.clone());
+    let used_once = run(Fork::IStar, key, once.clone());
+    let used_twice = run(Fork::IStar, key, twice.clone());
     assert!(used_twice.is_success(), "{used_twice:?}");
     assert_eq!(
         used_once.gas_used,
-        once.calldata_floor_total_at(Fork::LStar)
+        once.calldata_floor_total_at(Fork::IStar)
     );
     assert_eq!(
         used_twice.gas_used,
-        twice.calldata_floor_total_at(Fork::LStar)
+        twice.calldata_floor_total_at(Fork::IStar)
     );
     // One entry more costs its share of the proof, its verification cost and the
     // 32 bytes of its signer.
