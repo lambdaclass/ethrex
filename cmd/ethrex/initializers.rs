@@ -22,7 +22,7 @@ use ethrex_p2p::{
     peer_table::{PeerTable, PeerTableServer},
     sync::{BackfillConfig, HistoryChain, SyncMode},
     sync_manager::SyncManager,
-    types::{LocalNode, NetworkConfig, Node, NodeRecord, SharedLocalNode},
+    types::{LocalNode, NetworkConfig, Node, NodeRecord, SharedLocalNode, seq_from_clock},
     utils::public_key_from_signing_key,
 };
 use ethrex_storage::{
@@ -718,25 +718,48 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> (Node, NetworkC
     (node, network_config)
 }
 
+/// The record this node starts serving from, at a `seq` above every one it
+/// served before: peers only fetch a record again once its `seq` grows.
+///
+/// See [`starting_enr_seq`] for how that `seq` is chosen. A `node_config.json`
+/// that exists but cannot be read is reported and treated as absent, which
+/// leaves the clock as the only floor.
 pub fn get_local_node_record(
     datadir: &Path,
     local_p2p_node: &Node,
     signer: &SecretKey,
 ) -> NodeRecord {
-    match read_node_config_file(datadir) {
-        Ok(Some(ref mut config)) => {
-            NodeRecord::from_node(local_p2p_node, config.node_record.seq + 1, signer)
-                .expect("Node record could not be created from local node")
+    let saved_seq = match read_node_config_file(datadir) {
+        Ok(config) => config.map(|config| config.node_record.seq),
+        Err(err) => {
+            warn!(%err, "Could not read the saved node record; the ENR seq starts from the clock");
+            None
         }
-        _ => {
-            let timestamp = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            NodeRecord::from_node(local_p2p_node, timestamp, signer)
-                .expect("Node record could not be created from local node")
-        }
-    }
+    };
+    let seq = starting_enr_seq(saved_seq, seq_from_clock());
+    NodeRecord::from_node(local_p2p_node, seq, signer)
+        .expect("Node record could not be created from local node")
+}
+
+/// The `seq` a starting node's record takes: the larger of the `seq` saved at
+/// the last clean shutdown plus one and the current time in milliseconds.
+///
+/// The saved `seq` covers a clean restart, including one after the clock
+/// stepped back. An abrupt exit (a crash, `docker restart -t 0`) skips that
+/// save and leaves an older `seq` on disk, so the clock is the floor: a run
+/// that started from the clock would have had to change its record more than
+/// once per millisecond of uptime to get past it.
+///
+/// The two do not cover each other's gap. A run that started from the saved
+/// `seq` because the clock was behind it, and then exited abruptly, can be
+/// followed by one serving a `seq` no higher than its last, since neither the
+/// disk nor the clock saw the edits it made.
+///
+/// A saved `seq` at `u64::MAX` (only a corrupted or hand-edited file holds
+/// one) starts there: the first edit, which adds the local entries, then finds
+/// it exhausted and resets the record at a `seq` from the clock, with an error.
+fn starting_enr_seq(saved_seq: Option<u64>, now_ms: u64) -> u64 {
+    saved_seq.map_or(0, |seq| seq.saturating_add(1)).max(now_ms)
 }
 
 pub fn get_authrpc_socket_addr(opts: &Options) -> SocketAddr {
@@ -1524,7 +1547,7 @@ mod interrupted_batch_recovery_tests {
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_p2p_endpoints, validate_rpc_addrs};
+    use super::{resolve_p2p_endpoints, starting_enr_seq, validate_rpc_addrs};
     use std::net::{IpAddr, SocketAddr};
 
     fn ip(s: &str) -> IpAddr {
@@ -1678,5 +1701,29 @@ mod tests {
         let (bind, ext) = resolve_p2p_endpoints(None, None, Some(docker_ip), None);
         assert_eq!(bind, docker_ip);
         assert_eq!(ext, docker_ip, "private IP must be announced, not 0.0.0.0");
+    }
+
+    const NOW_MS: u64 = 1_793_310_171_057;
+
+    /// A first boot, or one whose saved record could not be read, starts at the clock.
+    #[test]
+    fn a_record_with_nothing_saved_starts_at_the_clock() {
+        assert_eq!(starting_enr_seq(None, NOW_MS), NOW_MS);
+    }
+
+    /// The usual restart: the saved `seq` is behind the clock, so the clock wins.
+    #[test]
+    fn a_saved_seq_behind_the_clock_starts_at_the_clock() {
+        assert_eq!(starting_enr_seq(Some(NOW_MS - 60_000), NOW_MS), NOW_MS);
+        // A record saved before `seq` moved to milliseconds counts as behind too.
+        assert_eq!(starting_enr_seq(Some(1_793_310_171), NOW_MS), NOW_MS);
+    }
+
+    /// A clock stepped back since a clean shutdown must not take `seq` back
+    /// with it.
+    #[test]
+    fn a_saved_seq_ahead_of_the_clock_is_passed_by_one() {
+        let saved = NOW_MS + 3_600_000;
+        assert_eq!(starting_enr_seq(Some(saved), NOW_MS), saved + 1);
     }
 }

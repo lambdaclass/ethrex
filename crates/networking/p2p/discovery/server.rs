@@ -9,7 +9,7 @@ use crate::{
         server::{Discv5Message, Discv5State, update_local_ip},
     },
     peer_filter::PeerFilter,
-    types::{Node, NodeRecord, SharedLocalNode},
+    types::{Node, NodeRecord, SharedLocalNode, edit_local_record},
 };
 use bytes::BytesMut;
 use ethrex_common::H256;
@@ -732,7 +732,9 @@ impl DiscoveryServer {
         };
         let updated = self.local_node.update(|current| {
             let mut next = current.clone();
-            next.record.set_fork_id(fork_id.clone(), &self.signer)?;
+            edit_local_record(&mut next.record, &self.signer, |pairs| {
+                pairs.eth = Some(fork_id.clone());
+            })?;
             Ok(next)
         });
         match updated {

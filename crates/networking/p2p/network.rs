@@ -14,9 +14,7 @@ use crate::{
         p2p::SUPPORTED_SNAP_CAPABILITIES,
     },
     tx_broadcaster::{TxBroadcaster, TxBroadcasterError},
-    types::{
-        INITIAL_ENR_SEQ, LocalNode, NetworkConfig, Node, NodeError, NodeRecord, SharedLocalNode,
-    },
+    types::{LocalRecordEdit, NetworkConfig, Node, NodeError, SharedLocalNode},
 };
 use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
@@ -132,8 +130,15 @@ pub enum NetworkError {
     LocalNodeRecordError(#[from] NodeError),
 }
 
-/// The ENR this node publishes: whatever `local_node` advertises, plus our own
-/// EIP-2124 fork id and the `snap` entry.
+/// Adds what this node announces about itself to the record in `local_node`:
+/// our own EIP-2124 fork id and the `snap` entry, on top of whatever the record
+/// already advertises.
+///
+/// The record is edited in place rather than rebuilt, so it keeps the `seq` the
+/// caller started it at. ethrex starts it above every `seq` it served before;
+/// a record rebuilt here would restart at [`INITIAL_ENR_SEQ`](crate::types::INITIAL_ENR_SEQ)
+/// on every boot, behind the copy peers already cached, and they would not
+/// fetch it again.
 ///
 /// Built here rather than inside discovery, which has no say in what this node
 /// announces about itself.
@@ -143,16 +148,30 @@ pub enum NetworkError {
 /// `eth` simply passes us over until we republish with it. A record we cannot
 /// sign is different, and is reported.
 ///
-/// Also returns the fork id the record was built with, so the refresh channel can
-/// be seeded with the exact value the ENR advertises: seeding from a second
-/// storage read could straddle a fork crossing, and a seed the ENR never carried
-/// is a change the refresh would never see.
-async fn build_local_node_record(
+/// Returns the fork id the record was built with, so the refresh channel can be
+/// seeded with the exact value the ENR advertises: seeding from a second storage
+/// read could straddle a fork crossing, and a seed the ENR never carried is a
+/// change the refresh would never see.
+async fn announce_local_entries(
     context: &P2PContext,
-) -> Result<(NodeRecord, Option<ForkId>), NodeError> {
+    local_node: &SharedLocalNode,
+) -> Result<Option<ForkId>, NodeError> {
     let fork_id = context.storage.get_fork_id().await.ok();
-    let record = local_node_record(&context.local_node, fork_id.clone(), &context.signer)?;
-    Ok((record, fork_id))
+    announce_entries(local_node, &context.signer, fork_id.clone())?;
+    Ok(fork_id)
+}
+
+/// The edit [`announce_local_entries`] makes, once it has the fork id: one
+/// `seq` bump on top of the record the slot holds.
+fn announce_entries(
+    local_node: &SharedLocalNode,
+    signer: &SecretKey,
+    fork_id: Option<ForkId>,
+) -> Result<(), NodeError> {
+    local_node.edit_record(signer, |entries| {
+        add_local_entries(entries, fork_id.clone())
+    })?;
+    Ok(())
 }
 
 /// Every connection offers snap (see
@@ -160,19 +179,17 @@ async fn build_local_node_record(
 /// so the record always carries the `snap` entry, listing the served versions
 /// (ethereum/devp2p#286). DNS discovery lists such as the EIP-1459 `snap.*` trees
 /// select snap servers by this entry.
-pub(crate) fn local_node_record(
-    node: &Node,
-    fork_id: Option<ForkId>,
-    signer: &SecretKey,
-) -> Result<NodeRecord, NodeError> {
-    let mut record = NodeRecord::from_node(node, INITIAL_ENR_SEQ, signer)?;
-    record.edit(signer, |pairs| {
-        pairs.eth = fork_id;
-        pairs.snap = Some(vec![1, 2]);
-    })?;
-    Ok(record)
+pub(crate) fn add_local_entries(entries: &mut LocalRecordEdit<'_>, fork_id: Option<ForkId>) {
+    entries.set_eth(fork_id);
+    entries.set_snap(Some(vec![1, 2]));
 }
 
+/// Starts discovery, the RLPx listener and the tasks around them.
+///
+/// `shared_local_node` must already hold this node's record, for
+/// `context.local_node` and signed by `context.signer`, at the `seq` it should
+/// start from: the local entries are added on top of it with one more bump,
+/// and discovery serves it from then on.
 pub async fn start_network(
     context: P2PContext,
     bootnodes: Vec<Node>,
@@ -185,13 +202,7 @@ pub async fn start_network(
             .map_err(NetworkError::UdpSocketError)?,
     );
 
-    let (local_node_record, initial_fork_id) = build_local_node_record(&context).await?;
-    // Discovery serves straight from the shared slot, so this is the record
-    // peers get, and the one RPC and shutdown read back.
-    shared_local_node.replace(LocalNode {
-        node: context.local_node.clone(),
-        record: local_node_record,
-    });
+    let initial_fork_id = announce_local_entries(&context, &shared_local_node).await?;
 
     // The ENR's `eth` entry is only correct for the fork the chain is on. Nothing
     // recomputed it after startup, so once the chain crossed a fork we kept
@@ -943,4 +954,48 @@ fn spawn_fork_id_publisher(
         }
     });
     rx
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{LocalNode, NodeRecord};
+    use crate::utils::public_key_from_signing_key;
+    use ethrex_common::H32;
+    use std::net::{IpAddr, Ipv4Addr};
+
+    /// Regression: `start_network` used to rebuild the record from
+    /// `INITIAL_ENR_SEQ`, so every boot served `seq` 2, behind the copy peers
+    /// cached during the previous run. The entries must land on the record the
+    /// caller started, with one bump and nothing else lost.
+    #[test]
+    fn announcing_builds_on_the_record_the_slot_holds() {
+        let signer = SecretKey::new(&mut rand::rngs::OsRng);
+        let pubkey = public_key_from_signing_key(&signer);
+        let ip = Ipv4Addr::new(203, 0, 113, 7);
+        let node = Node::new(IpAddr::V4(ip), 30303, 30303, pubkey);
+        let started_at = 1_793_310_171_057;
+        let mut record = NodeRecord::from_node(&node, started_at, &signer).unwrap();
+        record
+            .edit(&signer, |pairs| {
+                pairs.set_extra(b"marker", vec![1u8]);
+            })
+            .unwrap();
+        let local_node = SharedLocalNode::new(LocalNode { node, record });
+        let fork_id = ForkId {
+            fork_hash: H32::from_low_u64_be(0xdead_beef),
+            fork_next: 0,
+        };
+
+        announce_entries(&local_node, &signer, Some(fork_id.clone())).unwrap();
+
+        let announced = local_node.load();
+        let pairs = announced.record.pairs();
+        assert_eq!(announced.record.seq, started_at + 2, "one bump on top");
+        assert_eq!(pairs.eth, Some(fork_id));
+        assert_eq!(pairs.snap, Some(vec![1, 2]));
+        assert_eq!(pairs.extra(b"marker"), Some(vec![1u8].into()));
+        assert_eq!(pairs.ip, Some(ip));
+        assert!(announced.record.verify_signature());
+    }
 }
