@@ -1897,6 +1897,30 @@ pub async fn measure_configuration(
     let prepared = prepare(workload, offered).await;
     let empty = empty_block_bytes(harness, &prepared.chain).await;
     let expect_all = matches!(size, BlockSize::Exactly(_));
+    // A fixed size the block cannot hold is recorded as not fitting, with what
+    // the builder included, instead of being measured: the `max` size measures
+    // the fullest block. Which limit stops it differs between alternatives, so
+    // the builder is asked rather than the gas limit.
+    if expect_all {
+        let included = pass(harness, &prepared, false)
+            .await
+            .built
+            .block
+            .body
+            .transactions
+            .len();
+        if included < offered {
+            println!(
+                "pqx: {} {} n={label}: does not fit, the builder included {included} of {offered}",
+                adapter::ALTERNATIVE,
+                workload.name()
+            );
+            fields.insert("fits".to_string(), json!(false));
+            fields.insert("offered".to_string(), json!(offered));
+            fields.insert("included".to_string(), json!(included));
+            return record;
+        }
+    }
 
     let warmup = env_usize("PQX_WARMUP", 3);
     for _ in 0..warmup {
