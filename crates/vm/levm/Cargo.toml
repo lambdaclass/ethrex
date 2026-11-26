@@ -39,9 +39,11 @@ risc0 = ["c-kzg"]
 zisk = []
 rayon = ["dep:rayon"]
 secp256k1 = []
-# Links the native leanSPHINCS verifier behind EIP-8141's `LEANSPHINCS_VERIFIER`
-# claims. Without it every such claim is treated as unsatisfied.
-leansphincs = ["ethrex-crypto/leansphincs"]
+# Links the native leanSPHINCS verifiers behind EIP-8141's `LEANSPHINCS_VERIFIER`
+# claims: the signature verifier, and the verifier of the aggregate proof that
+# stands for those signatures in a block from LStar. Without it every such claim
+# is treated as unsatisfied.
+leansphincs = ["ethrex-crypto/leansphincs", "ethrex-crypto/leansphincs-aggregation"]
 
 [lints.rust]
 unsafe_code = "warn"

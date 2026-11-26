@@ -346,9 +346,12 @@ pub struct BlockBody {
     /// empty when the block's transactions have no dependencies; otherwise it is
     /// a version byte followed by the RLP list of one witness for each entry of
     /// `block_dependencies` over the transactions, in the same order (see
-    /// [`encode_claim_witnesses`](super::encode_claim_witnesses)). The witnesses
-    /// are not part of any transaction. `Some`, possibly empty, from Hegota on;
-    /// `None` before.
+    /// [`encode_claim_witnesses`](super::encode_claim_witnesses)). From LStar the
+    /// version byte is followed by one aggregate proof for the leanSPHINCS
+    /// dependencies and by the list of the witnesses of the others (see
+    /// [`encode_aggregated_claim_witnesses`](super::encode_aggregated_claim_witnesses)).
+    /// The witnesses are not part of any transaction. `Some`, possibly empty,
+    /// from Hegota on; `None` before.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",

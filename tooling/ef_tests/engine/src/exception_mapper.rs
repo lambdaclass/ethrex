@@ -154,9 +154,11 @@ const PATTERNS: &[Entry] = &[
     Entry { canonical: "BlockException.INVALID_BAL_HASH", kind: Kind::Re,
         text: r"BAL validation failed" },
     // EIP-8141 §Block Witnesses: claim witnesses that are not one valid witness
-    // per dependency, and a header commitment that does not match them.
+    // per dependency, or from LStar one valid aggregate proof and one valid
+    // witness per dependency it does not cover, and a header commitment that
+    // does not match them.
     Entry { canonical: "BlockException.INVALID_CLAIM_WITNESSES", kind: Kind::Re,
-        text: r"Invalid claim witnesses: .*|Block carries \d+ claim witnesses for its \d+ dependencies|Claim witness \d+ does not satisfy its dependency|A frame transaction declares a claim with a malformed key or msg" },
+        text: r"Invalid claim witnesses: .*|Block carries \d+ claim witnesses for its \d+ dependencies|Claim witness \d+ does not satisfy its dependency|A frame transaction declares a claim with a malformed key or msg|The aggregate proof does not prove the block's \d+ leanSPHINCS dependencies|The aggregate proof is \d+ bytes long in a block without leanSPHINCS dependencies" },
     Entry { canonical: "BlockException.INVALID_CLAIM_WITNESSES_HASH", kind: Kind::Re,
         text: r"Claim witnesses do not (match|hash to) the header" },
     Entry { canonical: "BlockException.INVALID_BLOCK_ACCESS_LIST", kind: Kind::Re,

@@ -59,6 +59,10 @@ pub enum InvalidBlockError {
     ClaimWitnessesCountMismatch { expected: usize, found: usize },
     #[error("Claim witness {0} does not satisfy its dependency")]
     ClaimNotSatisfied(usize),
+    #[error("The aggregate proof does not prove the block's {0} leanSPHINCS dependencies")]
+    InvalidAggregateProof(usize),
+    #[error("The aggregate proof is {0} bytes long in a block without leanSPHINCS dependencies")]
+    UnexpectedAggregateProof(usize),
     #[error(
         "Gas allowance exceeded: the block's claims take {claim_gas} gas, over its gas limit {gas_limit}"
     )]

@@ -11,6 +11,7 @@ mod eip7702_revert_authority_tests;
 mod eip7702_zero_transfer_tests;
 mod eip8037_block_gate_tests;
 mod eip8070_kzg_tests;
+mod eip8141_aggregation_tests;
 pub(crate) mod eip8141_claims_tests;
 mod eip8253_tests;
 mod eip8298_tests;

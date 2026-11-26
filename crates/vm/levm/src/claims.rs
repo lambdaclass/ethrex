@@ -174,6 +174,44 @@ pub fn leansphincs_verifier(input: &[u8]) -> bool {
     }
 }
 
+/// Whether `aggregate_proof` proves that every dependency of `dependencies`,
+/// all of `LEANSPHINCS_VERIFIER`, has a valid signature: that the key of each
+/// signed its message. It is how a block satisfies those dependencies from LStar
+/// on, with one proof in place of their witnesses (EIP-8141 §Aggregation and
+/// EIP-8288 compatibility).
+///
+/// The proof is one for exactly these dependencies: it does not hold for a list
+/// with one dependency more, one fewer or another one. It never holds for an
+/// empty list, nor for a list with a dependency of any other verifier.
+///
+/// The proof's verifier is linked with the signature verifier (the `leansphincs`
+/// feature). A build without it returns `false` on every input (see
+/// [`LEANSPHINCS_VERIFIER_LINKED`]).
+pub fn verify_aggregated_dependencies(dependencies: &[Dependency], aggregate_proof: &[u8]) -> bool {
+    if dependencies
+        .iter()
+        .any(|dependency| dependency.protocol_verifier() != Some(ProtocolVerifier::LeanSphincs))
+    {
+        return false;
+    }
+    #[cfg(feature = "leansphincs")]
+    {
+        let claims: Vec<_> = dependencies
+            .iter()
+            .map(|dependency| (dependency.key.0, dependency.msg.0))
+            .collect();
+        ethrex_crypto::leansphincs_aggregation::leansphincs_aggregate_verify(
+            &claims,
+            aggregate_proof,
+        )
+    }
+    #[cfg(not(feature = "leansphincs"))]
+    {
+        let _ = aggregate_proof;
+        false
+    }
+}
+
 /// Verifies `witness` against a dependency that names a protocol verifier, with
 /// the verifier's native function and without reading any state. `None` when the
 /// dependency names any other verifier.

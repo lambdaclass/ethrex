@@ -14,6 +14,7 @@ mod eip7928_tests;
 mod eip8037_reservoir_tests;
 mod eip8037_tests;
 mod eip8038_tests;
+mod eip8141_aggregation_tests;
 pub(crate) mod eip8141_claims_tests;
 mod eip8141_tests;
 mod eip8151_tests;

@@ -16,13 +16,14 @@ use ethrex_common::{
     },
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, Dependency, Fork, MAX_BLOCK_WITNESS_BYTES, MempoolTransaction, Receipt,
-        Transaction, TxType, Withdrawal,
+        ChainConfig, Dependency, Fork, MAX_AGGREGATE_PROOF_BYTES, MAX_BLOCK_WITNESS_BYTES,
+        MempoolTransaction, Receipt, Transaction, TxType, Withdrawal,
+        aggregated_claim_witnesses_len,
         block_access_list::BlockAccessList,
         block_dependencies, bloom_from_logs, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
         calculate_base_fee_per_gas, claim_witnesses_len_for_payload, compute_claim_witnesses_hash,
         compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
-        encode_claim_witnesses,
+        decode_claim_witnesses_at, encode_aggregated_claim_witnesses, encode_claim_witnesses,
         requests::{EncodedRequests, compute_requests_hash},
     },
 };
@@ -44,6 +45,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     Blockchain, BlockchainType, MAX_PAYLOADS,
+    claim_witnesses::{aggregate_claim_witnesses, prepare_claim_aggregation},
     constants::{GAS_LIMIT_BOUND_DIVISOR, MIN_GAS_LIMIT, TX_GAS_COST},
     error::{ChainError, InvalidBlockError},
     mempool::PendingTxFilter,
@@ -277,9 +279,20 @@ pub struct PayloadBuildContext {
     /// EIP-8141: the witness of each dependency of the transactions added so far.
     /// A dependency shared by several transactions keeps the witness of the first.
     pub claim_witnesses: BTreeMap<Dependency, Bytes>,
-    /// The bytes the witnesses in `claim_witnesses` take as items of an RLP list,
-    /// from which the length of the block's `claim_witnesses` follows.
+    /// The bytes the witnesses in `claim_witnesses` that the block carries raw
+    /// take as items of an RLP list, from which the length of the block's
+    /// `claim_witnesses` follows. Before LStar that is every witness; from LStar
+    /// the witnesses of the aggregated dependencies are left out of it.
     pub claim_witnesses_payload_len: usize,
+    /// From LStar, the number of dependencies in `claim_witnesses` whose
+    /// witnesses the block does not carry: its aggregate proof stands for them.
+    /// Zero before LStar.
+    pub aggregated_dependencies: usize,
+    /// From LStar, the aggregated dependencies of a block sealed without its
+    /// aggregate proof, each with its witness, in the order of
+    /// `block_dependencies`: what the proof is made from. Empty before LStar and
+    /// once the proof is in the block.
+    pub unaggregated_claim_witnesses: Vec<(Dependency, Bytes)>,
 }
 
 impl PayloadBuildContext {
@@ -361,6 +374,8 @@ impl PayloadBuildContext {
             explicit_build: false,
             claim_witnesses: BTreeMap::new(),
             claim_witnesses_payload_len: 0,
+            aggregated_dependencies: 0,
+            unaggregated_claim_witnesses: Vec::new(),
         })
     }
 
@@ -387,6 +402,43 @@ impl PayloadBuildContext {
         self.store.get_chain_config()
     }
 
+    /// The fork of the block being built.
+    fn fork(&self) -> Fork {
+        self.chain_config().fork(self.payload.header.timestamp)
+    }
+
+    /// The length in bytes the block's `claim_witnesses` will have at most, with
+    /// the witnesses of the transactions added so far and `new_witnesses`.
+    ///
+    /// Before LStar every witness is carried raw and the length is exact. From
+    /// LStar the aggregated dependencies bring no witness into the block, only
+    /// one proof for all of them, which is made when the payload is finished.
+    /// Its length is not known before, so as soon as the block has one such
+    /// dependency the proof is counted at `MAX_AGGREGATE_PROOF_BYTES`, the
+    /// longest a valid block may carry: whatever the prover returns then fits
+    /// `MAX_BLOCK_WITNESS_BYTES` with the raw witnesses already taken.
+    fn claim_witnesses_len_with(&self, new_witnesses: &[(Dependency, Bytes)]) -> usize {
+        let fork = self.fork();
+        let mut payload_len = self.claim_witnesses_payload_len;
+        let mut aggregated_dependencies = self.aggregated_dependencies;
+        for (dependency, witness) in new_witnesses {
+            if dependency.is_aggregated(fork) {
+                aggregated_dependencies += 1;
+            } else {
+                payload_len += witness.length();
+            }
+        }
+        if fork < Fork::LStar {
+            return claim_witnesses_len_for_payload(payload_len);
+        }
+        let aggregate_proof_len = if aggregated_dependencies == 0 {
+            0
+        } else {
+            MAX_AGGREGATE_PROOF_BYTES
+        };
+        aggregated_claim_witnesses_len(aggregate_proof_len, payload_len)
+    }
+
     fn base_fee_per_gas(&self) -> Option<u64> {
         self.payload.header.base_fee_per_gas
     }
@@ -411,6 +463,13 @@ pub struct PayloadBuildResult {
     pub payload: Block,
     /// Block Access List for EIP-7928
     pub block_access_list: Option<BlockAccessList>,
+    /// EIP-8141, from LStar: the block's aggregated dependencies, each with its
+    /// witness, that the aggregate proof is still to be made from. While it is
+    /// not empty the block's `claim_witnesses` has an empty proof in place of the
+    /// real one and the block is not valid. Empty before LStar, for a block
+    /// without such dependencies, and once [`Self::with_aggregate_proof`] has put
+    /// the proof in the block.
+    pub unaggregated_claim_witnesses: Vec<(Dependency, Bytes)>,
 }
 
 impl From<PayloadBuildContext> for PayloadBuildResult {
@@ -423,6 +482,7 @@ impl From<PayloadBuildContext> for PayloadBuildResult {
             account_updates,
             payload,
             block_access_list,
+            unaggregated_claim_witnesses,
             ..
         } = value;
 
@@ -434,8 +494,75 @@ impl From<PayloadBuildContext> for PayloadBuildResult {
             account_updates,
             payload,
             block_access_list,
+            unaggregated_claim_witnesses,
         }
     }
+}
+
+impl PayloadBuildResult {
+    /// EIP-8141, from LStar: puts the aggregate proof in a block that was sealed
+    /// without it ([`put_aggregate_proof`]). Nothing changes for a block that has
+    /// no dependency left to aggregate.
+    pub fn with_aggregate_proof(mut self) -> Result<Self, ChainError> {
+        put_aggregate_proof(&mut self.payload, &mut self.unaggregated_claim_witnesses)?;
+        Ok(self)
+    }
+}
+
+/// EIP-8141, from LStar: makes the aggregate proof of a block's aggregated
+/// dependencies from `unaggregated_claim_witnesses`, each of them with its
+/// witness, and puts it in the block's `claim_witnesses`, beside the raw
+/// witnesses already there, with the header's commitment to the whole. The list
+/// is left empty. Nothing changes when it is empty already.
+///
+/// Proving takes from a tenth of a second to several seconds, so a payload is
+/// proven once, when no transaction will be added to it any more, and not each
+/// time it is rebuilt. The witnesses were copied out of the pool as the
+/// transactions were added, so no lock is held meanwhile. A proof that cannot be
+/// made fails the build: the block cannot fall back to the raw witnesses.
+fn put_aggregate_proof(
+    payload: &mut Block,
+    unaggregated_claim_witnesses: &mut Vec<(Dependency, Bytes)>,
+) -> Result<(), ChainError> {
+    if unaggregated_claim_witnesses.is_empty() {
+        return Ok(());
+    }
+    let since = Instant::now();
+    let aggregate_proof =
+        aggregate_claim_witnesses(unaggregated_claim_witnesses).map_err(|error| {
+            ChainError::Custom(format!(
+                "Failed to aggregate the claim witnesses of the payload: {error}"
+            ))
+        })?;
+    debug!(
+        "Aggregated {} claim witnesses in {} ms, proof of {} bytes",
+        unaggregated_claim_witnesses.len(),
+        since.elapsed().as_millis(),
+        aggregate_proof.len()
+    );
+    // The block was sealed with its raw witnesses and an empty proof.
+    let raw_witnesses = decode_claim_witnesses_at(
+        Fork::LStar,
+        payload.body.claim_witnesses.as_deref().unwrap_or_default(),
+    )
+    .map_err(|error| ChainError::Custom(format!("Invalid claim witnesses: {error}")))?
+    .witnesses;
+    let claim_witnesses = encode_aggregated_claim_witnesses(&aggregate_proof, &raw_witnesses);
+    if claim_witnesses.len() > MAX_BLOCK_WITNESS_BYTES {
+        return Err(ChainError::Custom(format!(
+            "The claim witnesses of the payload take {} bytes, more than MAX_BLOCK_WITNESS_BYTES",
+            claim_witnesses.len()
+        )));
+    }
+    payload.header.claim_witnesses_hash = Some(compute_claim_witnesses_hash(
+        &claim_witnesses,
+        &NativeCrypto,
+    ));
+    // The header changed: drop a block hash computed before the proof.
+    let _ = payload.header.hash.take();
+    payload.body.claim_witnesses = Some(claim_witnesses);
+    unaggregated_claim_witnesses.clear();
+    Ok(())
 }
 
 impl Blockchain {
@@ -469,6 +596,17 @@ impl Blockchain {
         // provider, so it holds complete blob data for every blob tx it may include.
         // Inert unless blob sampling is enabled.
         self.mempool.latch_eager_provider();
+        // EIP-8141: the payload of an LStar block gets its aggregate proof when it
+        // is handed out. The prover is prepared now, off this thread, so that the
+        // proof does not wait for it. It is done once in the process.
+        if self
+            .storage
+            .get_chain_config()
+            .fork(payload.header.timestamp)
+            >= Fork::LStar
+        {
+            tokio::task::spawn_blocking(prepare_claim_aggregation);
+        }
         let self_clone = self.clone();
         let cancel_token = CancellationToken::new();
         let cancel_token_clone = cancel_token.clone();
@@ -561,6 +699,17 @@ impl Blockchain {
             }
         }
 
+        // EIP-8141, from LStar: the aggregate proof is made here, once, for the
+        // payload the loop ends with, and not for each rebuild. It runs on a
+        // blocking thread: proving is CPU-bound and takes up to several seconds.
+        if !res.unaggregated_claim_witnesses.is_empty() {
+            res = tokio::task::spawn_blocking(move || res.with_aggregate_proof())
+                .await
+                .map_err(|_| {
+                    ChainError::Custom("Failed to join the claim aggregation task".to_string())
+                })??;
+        }
+
         self.log_glamsterdam_banner_if_first_amsterdam_block(&res.payload.header);
 
         Ok(res)
@@ -625,11 +774,15 @@ impl Blockchain {
     /// Completes the payload building process, return the block value.
     /// Transactions are pulled from the mempool.
     pub fn build_payload(&self, payload: Block) -> Result<PayloadBuildResult, ChainError> {
-        self.build_payload_inner(payload, None, None)
+        self.build_payload_inner(payload, None, None)?
+            .with_aggregate_proof()
     }
 
     /// Same as `build_payload`, but once `stop` is cancelled it stops adding
-    /// transactions and seals the block with the ones it already has.
+    /// transactions and seals the block with the ones it already has. From LStar
+    /// the block is left without its aggregate proof (EIP-8141):
+    /// `build_payload_loop` calls this for every rebuild and proves the payload
+    /// it ends with.
     fn build_payload_until(
         &self,
         payload: Block,
@@ -647,7 +800,8 @@ impl Blockchain {
         payload: Block,
         transactions: Vec<Transaction>,
     ) -> Result<PayloadBuildResult, ChainError> {
-        self.build_payload_inner(payload, Some(transactions), None)
+        self.build_payload_inner(payload, Some(transactions), None)?
+            .with_aggregate_proof()
     }
 
     /// Builds a payload for the t8n tool from an explicit, ordered list of
@@ -807,7 +961,9 @@ impl Blockchain {
 
     /// Shared block-building pipeline. When `explicit_transactions` is `None` the
     /// payload is filled from the mempool, stopping early once `stop` is
-    /// cancelled; otherwise the provided transactions are applied verbatim.
+    /// cancelled; otherwise the provided transactions are applied verbatim. From
+    /// LStar the result is still to get its aggregate proof
+    /// ([`PayloadBuildResult::with_aggregate_proof`]).
     fn build_payload_inner(
         &self,
         payload: Block,
@@ -846,7 +1002,8 @@ impl Blockchain {
         }
         self.extract_requests(&mut context)?;
         self.apply_withdrawals(&mut context)?;
-        self.finalize_payload(&mut context)?;
+        // The caller decides when the aggregate proof is made (EIP-8141, LStar).
+        self.finalize_payload_without_aggregate_proof(&mut context)?;
 
         let interval = Instant::now().duration_since(since).as_millis();
 
@@ -1031,16 +1188,10 @@ impl Blockchain {
             };
             // EIP-8141 §Block Witnesses: the block's `claim_witnesses` is at most
             // `MAX_BLOCK_WITNESS_BYTES` long. A transaction whose witnesses do not
-            // fit is left for a later block.
-            let claim_witnesses_len =
-                claim_witnesses_len_for_payload(context.claim_witnesses_payload_len);
-            let potential_claim_witnesses_len = claim_witnesses_len_for_payload(
-                context.claim_witnesses_payload_len
-                    + new_witnesses
-                        .iter()
-                        .map(|(_, witness)| witness.length())
-                        .sum::<usize>(),
-            );
+            // fit is left for a later block. From LStar the witnesses the block's
+            // aggregate proof stands for take no room of their own.
+            let claim_witnesses_len = context.claim_witnesses_len_with(&[]);
+            let potential_claim_witnesses_len = context.claim_witnesses_len_with(&new_witnesses);
             if potential_claim_witnesses_len > MAX_BLOCK_WITNESS_BYTES {
                 debug!(
                     "Skipping transaction: {}, its claim witnesses do not fit the block",
@@ -1300,8 +1451,13 @@ impl Blockchain {
             }
             _ => apply_plain_transaction(head, context),
         }?;
+        let fork = context.fork();
         for (dependency, witness) in new_witnesses {
-            context.claim_witnesses_payload_len += witness.length();
+            if dependency.is_aggregated(fork) {
+                context.aggregated_dependencies += 1;
+            } else {
+                context.claim_witnesses_payload_len += witness.length();
+            }
             context.claim_witnesses.insert(dependency, witness);
         }
         Ok(receipt)
@@ -1456,7 +1612,25 @@ impl Blockchain {
         Ok(())
     }
 
+    /// Seals the payload: sets the header's roots and totals from what was
+    /// executed and, from LStar, puts the aggregate proof of the block's claim
+    /// witnesses in it (EIP-8141), so the block it leaves in `context` is whole.
     pub fn finalize_payload(&self, context: &mut PayloadBuildContext) -> Result<(), ChainError> {
+        self.finalize_payload_without_aggregate_proof(context)?;
+        put_aggregate_proof(
+            &mut context.payload,
+            &mut context.unaggregated_claim_witnesses,
+        )
+    }
+
+    /// [`Self::finalize_payload`] short of the aggregate proof. From LStar the
+    /// block is left with an empty proof, and `context.unaggregated_claim_witnesses`
+    /// holds what the proof is to be made from. A payload that is built over and
+    /// over is sealed this way each time, and proven once at the end.
+    fn finalize_payload_without_aggregate_proof(
+        &self,
+        context: &mut PayloadBuildContext,
+    ) -> Result<(), ChainError> {
         // Take BAL from VM before getting state transitions (which clears state)
         let block_access_list = context.vm.take_bal();
 
@@ -1476,27 +1650,40 @@ impl Blockchain {
             compute_receipts_root(&context.receipts, &NativeCrypto);
         // EIP-8141: the body carries one witness for each of the block's
         // dependencies, in their order, as one byte string the header commits to.
+        // From LStar the witnesses of the aggregated dependencies are set aside:
+        // one proof stands for them in the block. It is made after this, from
+        // the witnesses gathered here; until then the block has an empty proof
+        // beside its raw witnesses.
         if context.payload.body.claim_witnesses.is_some() {
-            let witnesses = block_dependencies(&context.payload.body.transactions)
-                .ok_or_else(|| {
+            let fork = context.fork();
+            let dependencies =
+                block_dependencies(&context.payload.body.transactions).ok_or_else(|| {
                     ChainError::Custom(
                         "a frame transaction of the block has a malformed claim".to_string(),
                     )
-                })?
-                .iter()
-                .map(|dependency| {
-                    context
-                        .claim_witnesses
-                        .get(dependency)
-                        .cloned()
-                        .ok_or_else(|| {
-                            ChainError::Custom(
-                                "a dependency of the block has no witness".to_string(),
-                            )
-                        })
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            context.payload.body.claim_witnesses = Some(encode_claim_witnesses(&witnesses));
+                })?;
+            let mut witnesses = Vec::new();
+            let mut unaggregated_claim_witnesses = Vec::new();
+            for dependency in dependencies {
+                let witness = context
+                    .claim_witnesses
+                    .get(&dependency)
+                    .cloned()
+                    .ok_or_else(|| {
+                        ChainError::Custom("a dependency of the block has no witness".to_string())
+                    })?;
+                if dependency.is_aggregated(fork) {
+                    unaggregated_claim_witnesses.push((dependency, witness));
+                } else {
+                    witnesses.push(witness);
+                }
+            }
+            context.payload.body.claim_witnesses = Some(if fork >= Fork::LStar {
+                encode_aggregated_claim_witnesses(&[], &witnesses)
+            } else {
+                encode_claim_witnesses(&witnesses)
+            });
+            context.unaggregated_claim_witnesses = unaggregated_claim_witnesses;
         }
         context.payload.header.claim_witnesses_hash = context
             .payload
@@ -1987,6 +2174,123 @@ mod burned_fees_payload_tests {
         assert_eq!(
             block.header.burned_fees, None,
             "Amsterdam (pre-LStar): burned_fees must be None"
+        );
+    }
+}
+
+/// Tests for the room the builder counts for a block's `claim_witnesses`
+/// (EIP-8141) before and from LStar.
+#[cfg(test)]
+mod claim_witnesses_room_tests {
+    use super::*;
+    use ethrex_common::types::{
+        DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER, Genesis, LEANSPHINCS_SIGNATURE_SIZE,
+        LEANSPHINCS_VERIFIER, SECP256K1_VERIFIER,
+    };
+    use ethrex_storage::EngineType;
+    use std::path::Path;
+
+    /// The build context of the first block of a chain that starts in Hegota,
+    /// or in LStar when `lstar` is set.
+    async fn context_of_first_block(lstar: bool) -> PayloadBuildContext {
+        let path = Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/genesis/l1-hegota.json"
+        ));
+        let mut genesis = Genesis::try_from(path).expect("Failed to load l1-hegota genesis");
+        genesis.config.lstar_time = lstar.then_some(0);
+        let mut store =
+            Store::new("store.db", EngineType::InMemory).expect("Failed to create in-memory store");
+        store
+            .add_initial_state(genesis)
+            .await
+            .expect("Failed to add genesis");
+        let genesis_header = store.get_block_header(0).unwrap().unwrap();
+        let args = BuildPayloadArgs {
+            parent: genesis_header.hash(),
+            timestamp: genesis_header.timestamp + 12,
+            fee_recipient: Address::zero(),
+            random: H256::zero(),
+            withdrawals: Some(Vec::new()),
+            beacon_root: Some(H256::zero()),
+            slot_number: Some(1),
+            version: 1,
+            elasticity_multiplier: ELASTICITY_MULTIPLIER,
+            gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+        };
+        let payload = create_payload(&args, &store, Bytes::new()).expect("create_payload failed");
+        PayloadBuildContext::new(payload, &store, &BlockchainType::L1).expect("build context")
+    }
+
+    fn witness_of(verifier: Address, index: u64, witness_len: usize) -> (Dependency, Bytes) {
+        let dependency = Dependency {
+            verifier,
+            key: H256::from_low_u64_be(index + 1),
+            msg: H256::repeat_byte(0x01),
+            gas_limit: 0,
+            witness_len: witness_len as u64,
+        };
+        (dependency, Bytes::from(vec![0xEE; witness_len]))
+    }
+
+    /// Before LStar a block carries every witness, so each one takes its bytes
+    /// of `MAX_BLOCK_WITNESS_BYTES`. From LStar the leanSPHINCS witnesses leave
+    /// the block for one proof: the builder counts the longest proof a valid
+    /// block may carry as soon as there is one of them, and nothing more for
+    /// the next ones.
+    #[tokio::test]
+    async fn leansphincs_witnesses_take_room_in_the_block_only_before_lstar() {
+        let leansphincs = witness_of(LEANSPHINCS_VERIFIER, 0, LEANSPHINCS_SIGNATURE_SIZE);
+        let secp256k1 = witness_of(SECP256K1_VERIFIER, 0, 65);
+        // More leanSPHINCS witnesses than the block limit holds raw.
+        let many: Vec<_> = (0..MAX_BLOCK_WITNESS_BYTES / LEANSPHINCS_SIGNATURE_SIZE + 1)
+            .map(|index| {
+                witness_of(
+                    LEANSPHINCS_VERIFIER,
+                    index as u64,
+                    LEANSPHINCS_SIGNATURE_SIZE,
+                )
+            })
+            .collect();
+        let bytes_of = |witnesses: &[(Dependency, Bytes)]| -> Vec<Bytes> {
+            witnesses
+                .iter()
+                .map(|(_, witness)| witness.clone())
+                .collect()
+        };
+
+        let hegota = context_of_first_block(false).await;
+        assert_eq!(hegota.fork(), Fork::Hegota);
+        assert_eq!(hegota.claim_witnesses_len_with(&[]), 0);
+        let both = [secp256k1.clone(), leansphincs.clone()];
+        assert_eq!(
+            hegota.claim_witnesses_len_with(&both),
+            encode_claim_witnesses(&bytes_of(&both)).len()
+        );
+        assert!(hegota.claim_witnesses_len_with(&many) > MAX_BLOCK_WITNESS_BYTES);
+
+        let lstar = context_of_first_block(true).await;
+        assert_eq!(lstar.fork(), Fork::LStar);
+        assert_eq!(lstar.claim_witnesses_len_with(&[]), 0);
+        // Raw witnesses alone take their bytes, beside an empty proof.
+        assert_eq!(
+            lstar.claim_witnesses_len_with(std::slice::from_ref(&secp256k1)),
+            encode_aggregated_claim_witnesses(&[], std::slice::from_ref(&secp256k1.1)).len()
+        );
+        // One leanSPHINCS dependency reserves the longest proof, and so do many.
+        let longest_proof = vec![0xFF; MAX_AGGREGATE_PROOF_BYTES];
+        let reserved = encode_aggregated_claim_witnesses(&longest_proof, &[]).len();
+        assert_eq!(
+            lstar.claim_witnesses_len_with(std::slice::from_ref(&leansphincs)),
+            reserved
+        );
+        assert_eq!(lstar.claim_witnesses_len_with(&many), reserved);
+        assert!(reserved <= MAX_BLOCK_WITNESS_BYTES);
+        // The raw witnesses of the other dependencies come on top of it.
+        assert_eq!(
+            lstar.claim_witnesses_len_with(&both),
+            encode_aggregated_claim_witnesses(&longest_proof, std::slice::from_ref(&secp256k1.1))
+                .len()
         );
     }
 }

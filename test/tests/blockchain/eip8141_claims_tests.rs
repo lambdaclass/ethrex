@@ -58,7 +58,7 @@ pub(crate) fn key(seed: u8) -> Key {
     }
 }
 
-fn sign(key: &Key, message: H256) -> Bytes {
+pub(crate) fn sign(key: &Key, message: H256) -> Bytes {
     Bytes::from(
         lean_sphincs::sign(&key.secret, message.as_fixed_bytes())
             .to_bytes()
@@ -70,7 +70,7 @@ fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
 }
 
-fn funded(code: Vec<u8>) -> GenesisAccount {
+pub(crate) fn funded(code: Vec<u8>) -> GenesisAccount {
     GenesisAccount {
         code: Bytes::from(code),
         storage: BTreeMap::new(),
@@ -127,7 +127,7 @@ pub(crate) fn blockchain(store: Store) -> Blockchain {
 
 /// A claim that the leanSPHINCS key signed `msg`, or the transaction's own
 /// signature hash when `msg` is `None`.
-fn leansphincs_claim(key: &Key, msg: Option<H256>) -> Claim {
+pub(crate) fn leansphincs_claim(key: &Key, msg: Option<H256>) -> Claim {
     Claim {
         verifier: LEANSPHINCS_VERIFIER,
         key: Bytes::copy_from_slice(key.public.as_bytes()),
@@ -138,7 +138,11 @@ fn leansphincs_claim(key: &Key, msg: Option<H256>) -> Claim {
 
 /// `[VERIFY, SENDER]` from `sender` with `claims`: the sender's validation frame
 /// and a call to `RECIPIENT`.
-fn frame_transaction(chain_id: u64, sender: Address, claims: Vec<Claim>) -> FrameTransaction {
+pub(crate) fn frame_transaction(
+    chain_id: u64,
+    sender: Address,
+    claims: Vec<Claim>,
+) -> FrameTransaction {
     let mut tx = FrameTransaction {
         chain_id,
         sender,
@@ -208,7 +212,7 @@ pub(crate) fn pooled(tx: FrameTransaction, keys: &[&Key]) -> PooledFrameTransact
     }
 }
 
-fn tx_hash(tx: &FrameTransaction) -> H256 {
+pub(crate) fn tx_hash(tx: &FrameTransaction) -> H256 {
     Transaction::FrameTransaction(tx.clone()).hash(&NativeCrypto)
 }
 
@@ -241,7 +245,7 @@ fn build_block(store: &Store, blockchain: &Blockchain) -> PayloadBuildResult {
 /// The block with its claim witnesses replaced by `claim_witnesses` and the
 /// header committing to them, so only the witnesses themselves can make it
 /// invalid.
-fn with_claim_witnesses(mut block: Block, claim_witnesses: Bytes) -> Block {
+pub(crate) fn with_claim_witnesses(mut block: Block, claim_witnesses: Bytes) -> Block {
     block.header.claim_witnesses_hash = Some(compute_claim_witnesses_hash(
         &claim_witnesses,
         &NativeCrypto,
@@ -257,7 +261,7 @@ fn with_witnesses(block: Block, witnesses: &[Bytes]) -> Block {
 /// Imports `block` on two fresh nodes built by `fresh_store`, one through each
 /// import path, and returns what each of them answered: `add_block` first, then
 /// `add_block_pipeline`.
-async fn import_on_both_paths<F, Fut>(
+pub(crate) async fn import_on_both_paths<F, Fut>(
     block: &Block,
     bal: &Arc<BlockAccessList>,
     fresh_store: F,
@@ -274,7 +278,7 @@ where
 
 /// Asserts that both import paths reject `block` with an invalid-block error
 /// that `expected` recognizes.
-async fn assert_rejected_on_both_paths<F, Fut>(
+pub(crate) async fn assert_rejected_on_both_paths<F, Fut>(
     block: Block,
     bal: &Arc<BlockAccessList>,
     fresh_store: F,
@@ -984,16 +988,16 @@ const FACTORY: Address = H160([0xFA; 20]);
 /// `CALLDATACOPY(0, 0, CALLDATASIZE); CREATE(0, 0, CALLDATASIZE); STOP`
 const FACTORY_CODE: &[u8] = &[0x36, 0x5f, 0x5f, 0x37, 0x36, 0x5f, 0x5f, 0xf0, 0x00];
 /// An account that approves on a claim its custom verifier checks.
-const CUSTOM_ACCOUNT: Address = H160([0xC5; 20]);
+pub(crate) const CUSTOM_ACCOUNT: Address = H160([0xC5; 20]);
 /// The key of that account's claim, as its verifier receives it.
-const CUSTOM_KEY: H256 = H256([0x0b; 32]);
+pub(crate) const CUSTOM_KEY: H256 = H256([0x0b; 32]);
 /// The only witness the custom verifier accepts.
-const CUSTOM_WITNESS: H256 = H256([0xD7; 32]);
+pub(crate) const CUSTOM_WITNESS: H256 = H256([0xD7; 32]);
 const CUSTOM_CLAIM_GAS: u64 = 5_000;
 
 /// Runtime code of a verifier that succeeds if and only if its witness, the 32
 /// bytes after `key || msg`, is `CUSTOM_WITNESS`.
-fn custom_verifier_code() -> Vec<u8> {
+pub(crate) fn custom_verifier_code() -> Vec<u8> {
     // PUSH1 0x40, CALLDATALOAD, PUSH32 witness, EQ
     let mut code = vec![0x60, 0x40, 0x35];
     code.extend_from_slice(&push32(CUSTOM_WITNESS));
@@ -1013,7 +1017,7 @@ fn init_code(runtime: &[u8]) -> Vec<u8> {
     code
 }
 
-fn custom_claim(verifier: Address) -> Claim {
+pub(crate) fn custom_claim(verifier: Address) -> Claim {
     Claim {
         verifier,
         key: Bytes::copy_from_slice(CUSTOM_KEY.as_bytes()),
@@ -1023,7 +1027,7 @@ fn custom_claim(verifier: Address) -> Claim {
     }
 }
 
-fn custom_pooled(tx: FrameTransaction, witness: H256) -> PooledFrameTransaction {
+pub(crate) fn custom_pooled(tx: FrameTransaction, witness: H256) -> PooledFrameTransaction {
     PooledFrameTransaction {
         tx,
         witnesses: vec![Bytes::copy_from_slice(witness.as_bytes())],
@@ -1032,7 +1036,7 @@ fn custom_pooled(tx: FrameTransaction, witness: H256) -> PooledFrameTransaction 
 }
 
 /// Makes `block` the canonical head, as a fork choice update does.
-async fn make_head(store: &Store, block: &Block) {
+pub(crate) async fn make_head(store: &Store, block: &Block) {
     store
         .forkchoice_update(
             vec![],

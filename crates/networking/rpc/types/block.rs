@@ -36,7 +36,8 @@ pub struct FullBlockBody {
     pub withdrawals: Vec<Withdrawal>,
     /// EIP-8141: the block's claim witnesses as one byte string, the version
     /// byte followed by one witness for each entry of `block_dependencies`, in
-    /// order, or empty when the block has none. Present from Hegota on. The form
+    /// order, or from LStar by one aggregate proof and the witnesses it does not
+    /// stand for, or empty when the block has none. Present from Hegota on. The form
     /// with transaction hashes only leaves it out; the header's
     /// `claimWitnessesHash` commits to it either way.
     #[serde(

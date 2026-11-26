@@ -2487,6 +2487,15 @@ pub const WITNESS_BYTE_GAS: u64 = 4;
 /// EIP-8141 `CLAIM_WITNESSES_VERSION_RAW`: the version byte that opens a block's
 /// `claim_witnesses` when it lists raw witnesses.
 pub const CLAIM_WITNESSES_VERSION_RAW: u8 = 0x00;
+/// The version byte that opens a block's `claim_witnesses` from LStar on, when
+/// one aggregate proof stands for the witnesses of the block's
+/// `LEANSPHINCS_VERIFIER` dependencies and the other witnesses stay raw. EIP-8141
+/// §Block Witnesses leaves the byte to the aggregation upgrade and gives `0x01`
+/// as its example.
+pub const CLAIM_WITNESSES_VERSION_AGGREGATED: u8 = 0x01;
+/// EIP-8288 `MAX_DEPENDENCY_PROOF_BYTES`: the longest aggregate proof a block's
+/// `claim_witnesses` may carry.
+pub const MAX_AGGREGATE_PROOF_BYTES: usize = 1_048_576;
 /// EIP-8141 `POOLED_WRAPPER_VERSION`: the only wrapper version of the pooled
 /// representation of a frame transaction.
 pub const POOLED_WRAPPER_VERSION: u8 = 0;
@@ -2746,6 +2755,16 @@ impl Dependency {
         ProtocolVerifier::from_address(&self.verifier)
     }
 
+    /// Whether a block at `fork` carries the witness of this dependency inside
+    /// the aggregate proof of its `claim_witnesses` instead of raw. From LStar
+    /// that is every `LEANSPHINCS_VERIFIER` dependency, the aggregatable protocol
+    /// verifier of EIP-8141 §Aggregation and EIP-8288 compatibility; the
+    /// dependencies of every other verifier keep a raw witness. Before LStar no
+    /// dependency is aggregated.
+    pub fn is_aggregated(&self, fork: super::Fork) -> bool {
+        fork >= super::Fork::LStar && self.verifier == LEANSPHINCS_VERIFIER
+    }
+
     /// The input a verifier receives: `key || msg || witness`.
     pub fn verifier_input(&self, witness: &[u8]) -> Vec<u8> {
         let mut input = Vec::with_capacity(64 + witness.len());
@@ -2814,41 +2833,152 @@ pub const fn claim_witnesses_len_for_payload(payload_len: usize) -> usize {
     1 + ethrex_rlp::encode::list_length(payload_len)
 }
 
+/// The byte string a block carries as `claim_witnesses` from LStar on, for the
+/// aggregate proof of its aggregated dependencies and one raw witness for each
+/// of the others, in the order of `block_dependencies`
+/// ([`Dependency::is_aggregated`]): empty when there is neither a proof nor a
+/// witness, which is a block without dependencies, otherwise the aggregated
+/// version byte followed by `rlp([aggregate_proof, [witness, ...]])`.
+pub fn encode_aggregated_claim_witnesses(aggregate_proof: &[u8], witnesses: &[Bytes]) -> Bytes {
+    if aggregate_proof.is_empty() && witnesses.is_empty() {
+        return Bytes::new();
+    }
+    // The RLP list of the raw witnesses: its header, then the items one after
+    // another.
+    let mut witnesses_payload = Vec::new();
+    for witness in witnesses {
+        witness.encode(&mut witnesses_payload);
+    }
+    let mut witness_list = Vec::new();
+    ethrex_rlp::encode::encode_length(witnesses_payload.len(), &mut witness_list);
+    witness_list.extend_from_slice(&witnesses_payload);
+    let mut encoded = vec![CLAIM_WITNESSES_VERSION_AGGREGATED];
+    Encoder::new(&mut encoded)
+        .encode_bytes(aggregate_proof)
+        .encode_raw(&witness_list)
+        .finish();
+    Bytes::from(encoded)
+}
+
+/// The length in bytes of the `claim_witnesses` byte string that carries an
+/// aggregate proof of `aggregate_proof_len` bytes and raw witnesses that, each
+/// RLP-encoded as a byte string, add up to `payload_len` bytes
+/// ([`encode_aggregated_claim_witnesses`]), without building it. A one-byte
+/// proof is counted with a header, which it has only when its byte is above
+/// `0x7f`.
+pub const fn aggregated_claim_witnesses_len(
+    aggregate_proof_len: usize,
+    payload_len: usize,
+) -> usize {
+    if aggregate_proof_len == 0 && payload_len == 0 {
+        return 0;
+    }
+    1 + ethrex_rlp::encode::list_length(
+        ethrex_rlp::encode::bytes_length(aggregate_proof_len, 0xff)
+            + ethrex_rlp::encode::list_length(payload_len),
+    )
+}
+
 /// Why a block's `claim_witnesses` byte string does not decode.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ClaimWitnessesDecodeError {
     #[error("claim witnesses are {0} bytes, more than MAX_BLOCK_WITNESS_BYTES")]
     TooLong(usize),
-    #[error("unknown claim witnesses version {0:#04x}")]
+    /// The version byte is not the one the block's fork defines: `0x00` before
+    /// LStar and `0x01` from LStar on.
+    #[error("claim witnesses version {0:#04x} is not the one the block's fork defines")]
     UnknownVersion(u8),
     #[error("claim witnesses are not a list of byte strings: {0}")]
     Malformed(String),
     #[error("claim witnesses hold an empty list, which is encoded as the empty byte string")]
     EmptyList,
+    #[error(
+        "claim witnesses hold no aggregate proof and no witness, which is encoded as the empty byte string"
+    )]
+    NothingCarried,
+    #[error("the aggregate proof is {0} bytes, more than MAX_AGGREGATE_PROOF_BYTES")]
+    AggregateProofTooLong(usize),
 }
 
-/// Decodes a block's `claim_witnesses` byte string into its witnesses. The empty
-/// byte string holds none. Anything else is the raw version byte followed by the
-/// RLP list of at least one witness, with nothing after it; an empty list has
-/// the empty byte string as its only encoding.
+/// What a block's `claim_witnesses` byte string holds.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ClaimWitnesses {
+    /// One proof for all the dependencies of the block that are aggregated
+    /// ([`Dependency::is_aggregated`]). Empty when the block has none, which is
+    /// always the case before LStar.
+    pub aggregate_proof: Bytes,
+    /// One raw witness for each of the block's other dependencies, in the order
+    /// of `block_dependencies`.
+    pub witnesses: Vec<Bytes>,
+}
+
+/// Decodes a block's `claim_witnesses` byte string into its witnesses under the
+/// rules that hold before LStar ([`decode_claim_witnesses_at`]). The empty byte
+/// string holds none. Anything else is the raw version byte followed by the RLP
+/// list of at least one witness, with nothing after it; an empty list has the
+/// empty byte string as its only encoding.
 pub fn decode_claim_witnesses(
     claim_witnesses: &[u8],
 ) -> Result<Vec<Bytes>, ClaimWitnessesDecodeError> {
+    decode_claim_witnesses_at(super::Fork::Hegota, claim_witnesses)
+        .map(|claim_witnesses| claim_witnesses.witnesses)
+}
+
+/// Decodes a block's `claim_witnesses` byte string under the rules of the fork
+/// the block belongs to. It is the one place that reads the version byte.
+///
+/// The empty byte string holds nothing, at every fork, and is the only encoding
+/// of a block without dependencies. Anything else opens with the version byte
+/// its fork defines, and with no other:
+///
+/// - before LStar, [`CLAIM_WITNESSES_VERSION_RAW`] followed by the RLP list of
+///   at least one witness (EIP-8141 §Block Witnesses);
+/// - from LStar, [`CLAIM_WITNESSES_VERSION_AGGREGATED`] followed by
+///   `rlp([aggregate_proof, [witness, ...]])`, where the proof is at most
+///   [`MAX_AGGREGATE_PROOF_BYTES`] long and the proof and the list are not both
+///   empty.
+///
+/// Nothing follows the RLP item in either form.
+pub fn decode_claim_witnesses_at(
+    fork: super::Fork,
+    claim_witnesses: &[u8],
+) -> Result<ClaimWitnesses, ClaimWitnessesDecodeError> {
     if claim_witnesses.len() > MAX_BLOCK_WITNESS_BYTES {
         return Err(ClaimWitnessesDecodeError::TooLong(claim_witnesses.len()));
     }
     let Some((version, encoded)) = claim_witnesses.split_first() else {
-        return Ok(Vec::new());
+        return Ok(ClaimWitnesses::default());
     };
-    if *version != CLAIM_WITNESSES_VERSION_RAW {
-        return Err(ClaimWitnessesDecodeError::UnknownVersion(*version));
+    let malformed = |error: RLPDecodeError| ClaimWitnessesDecodeError::Malformed(error.to_string());
+    match (*version, fork >= super::Fork::LStar) {
+        (CLAIM_WITNESSES_VERSION_RAW, false) => {
+            let witnesses = Vec::<Bytes>::decode(encoded).map_err(malformed)?;
+            if witnesses.is_empty() {
+                return Err(ClaimWitnessesDecodeError::EmptyList);
+            }
+            Ok(ClaimWitnesses {
+                aggregate_proof: Bytes::new(),
+                witnesses,
+            })
+        }
+        (CLAIM_WITNESSES_VERSION_AGGREGATED, true) => {
+            let (aggregate_proof, witnesses) =
+                <(Bytes, Vec<Bytes>)>::decode(encoded).map_err(malformed)?;
+            if aggregate_proof.len() > MAX_AGGREGATE_PROOF_BYTES {
+                return Err(ClaimWitnessesDecodeError::AggregateProofTooLong(
+                    aggregate_proof.len(),
+                ));
+            }
+            if aggregate_proof.is_empty() && witnesses.is_empty() {
+                return Err(ClaimWitnessesDecodeError::NothingCarried);
+            }
+            Ok(ClaimWitnesses {
+                aggregate_proof,
+                witnesses,
+            })
+        }
+        (version, _) => Err(ClaimWitnessesDecodeError::UnknownVersion(version)),
     }
-    let witnesses = Vec::<Bytes>::decode(encoded)
-        .map_err(|error| ClaimWitnessesDecodeError::Malformed(error.to_string()))?;
-    if witnesses.is_empty() {
-        return Err(ClaimWitnessesDecodeError::EmptyList);
-    }
-    Ok(witnesses)
 }
 
 impl FrameTransaction {
@@ -8249,5 +8379,216 @@ mod tests {
         let at_limit = encode_claim_witnesses(std::slice::from_ref(&witness));
         assert_eq!(at_limit.len(), MAX_BLOCK_WITNESS_BYTES);
         assert_eq!(decode_claim_witnesses(&at_limit), Ok(vec![witness]));
+    }
+
+    // From LStar one aggregate proof stands for the witnesses of the leanSPHINCS
+    // dependencies (EIP-8141 §Aggregation and EIP-8288 compatibility): only
+    // those are aggregated, and only from that fork.
+    #[test]
+    fn leansphincs_dependencies_are_aggregated_from_lstar() {
+        use crate::types::Fork;
+        let dependency = |verifier: Address| Dependency {
+            verifier,
+            key: H256::repeat_byte(0x01),
+            msg: H256::repeat_byte(0x02),
+            gas_limit: 0,
+            witness_len: 0,
+        };
+        for fork in [Fork::Amsterdam, Fork::Hegota] {
+            for verifier in [SECP256K1_VERIFIER, P256_VERIFIER, LEANSPHINCS_VERIFIER] {
+                assert!(!dependency(verifier).is_aggregated(fork));
+            }
+        }
+        assert!(dependency(LEANSPHINCS_VERIFIER).is_aggregated(Fork::LStar));
+        for verifier in [
+            SECP256K1_VERIFIER,
+            P256_VERIFIER,
+            Address::repeat_byte(0x7E),
+        ] {
+            assert!(!dependency(verifier).is_aggregated(Fork::LStar));
+        }
+    }
+
+    #[test]
+    fn aggregated_claim_witnesses_are_empty_or_a_version_byte_a_proof_and_a_list() {
+        use crate::types::Fork;
+        // A block without dependencies has neither a proof nor a witness.
+        assert_eq!(encode_aggregated_claim_witnesses(&[], &[]), Bytes::new());
+        assert_eq!(
+            decode_claim_witnesses_at(Fork::LStar, &[]),
+            Ok(ClaimWitnesses::default())
+        );
+        assert_eq!(aggregated_claim_witnesses_len(0, 0), 0);
+
+        let proof = Bytes::from(vec![0x5A; 200_000]);
+        let witnesses = vec![
+            Bytes::from(vec![0xCD; SECP256K1_WITNESS_SIZE]),
+            Bytes::from(vec![0x05]),
+            Bytes::new(),
+        ];
+        // A proof and witnesses, a proof alone, and witnesses alone.
+        for (proof, witnesses) in [
+            (proof.clone(), witnesses.clone()),
+            (proof, Vec::new()),
+            (Bytes::new(), witnesses),
+        ] {
+            let encoded = encode_aggregated_claim_witnesses(&proof, &witnesses);
+            assert_eq!(encoded[0], CLAIM_WITNESSES_VERSION_AGGREGATED);
+            assert_eq!(
+                &encoded[1..],
+                (proof.clone(), witnesses.clone())
+                    .encode_to_vec()
+                    .as_slice()
+            );
+            assert_eq!(
+                decode_claim_witnesses_at(Fork::LStar, &encoded),
+                Ok(ClaimWitnesses {
+                    aggregate_proof: proof.clone(),
+                    witnesses: witnesses.clone(),
+                })
+            );
+            assert_eq!(
+                aggregated_claim_witnesses_len(
+                    proof.len(),
+                    witnesses.iter().map(Bytes::length).sum()
+                ),
+                encoded.len()
+            );
+        }
+
+        // A proof and no witness encodes its empty list, and the other way round.
+        assert_eq!(
+            encode_aggregated_claim_witnesses(&[0xAA, 0xBB], &[]).as_ref(),
+            [0x01, 0xc4, 0x82, 0xAA, 0xBB, 0xc0]
+        );
+        assert_eq!(
+            encode_aggregated_claim_witnesses(&[], &[Bytes::from(vec![0xAA, 0xBB])]).as_ref(),
+            [0x01, 0xc5, 0x80, 0xc3, 0x82, 0xAA, 0xBB]
+        );
+    }
+
+    // Each fork defines one version byte: raw witnesses before LStar, and the
+    // aggregate proof with the remaining raw witnesses from LStar.
+    #[test]
+    fn claim_witnesses_decode_only_under_the_version_of_their_fork() {
+        use crate::types::Fork;
+        let witnesses = vec![Bytes::from(vec![0xAB; 65])];
+        let raw = encode_claim_witnesses(&witnesses);
+        let aggregated = encode_aggregated_claim_witnesses(&[0x5A; 300], &witnesses);
+
+        assert_eq!(
+            decode_claim_witnesses_at(Fork::Hegota, &raw).map(|decoded| decoded.witnesses),
+            Ok(witnesses.clone())
+        );
+        assert_eq!(
+            decode_claim_witnesses_at(Fork::LStar, &aggregated).map(|decoded| decoded.witnesses),
+            Ok(witnesses)
+        );
+        // The raw form in an LStar block, and the aggregated form before LStar.
+        assert_eq!(
+            decode_claim_witnesses_at(Fork::LStar, &raw),
+            Err(ClaimWitnessesDecodeError::UnknownVersion(0x00))
+        );
+        assert_eq!(
+            decode_claim_witnesses_at(Fork::Hegota, &aggregated),
+            Err(ClaimWitnessesDecodeError::UnknownVersion(0x01))
+        );
+        // A version byte no fork defines.
+        let mut unknown = aggregated.to_vec();
+        unknown[0] = 0x02;
+        for fork in [Fork::Hegota, Fork::LStar] {
+            assert_eq!(
+                decode_claim_witnesses_at(fork, &unknown),
+                Err(ClaimWitnessesDecodeError::UnknownVersion(0x02))
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_aggregated_claim_witnesses_do_not_decode() {
+        use crate::types::Fork;
+        let decode = |bytes: &[u8]| decode_claim_witnesses_at(Fork::LStar, bytes);
+        let encoded =
+            encode_aggregated_claim_witnesses(&[0x5A; 300], &[Bytes::from(vec![0xAB; 65])])
+                .to_vec();
+
+        // The version byte alone.
+        assert!(matches!(
+            decode(&[0x01]),
+            Err(ClaimWitnessesDecodeError::Malformed(_))
+        ));
+        // An empty proof with an empty list: a block without dependencies has
+        // the empty byte string as its only encoding.
+        assert_eq!(
+            decode(&[0x01, 0xc2, 0x80, 0xc0]),
+            Err(ClaimWitnessesDecodeError::NothingCarried)
+        );
+        // Bytes after the list, and a truncated list.
+        let mut trailing = encoded.clone();
+        trailing.push(0x00);
+        assert!(matches!(
+            decode(&trailing),
+            Err(ClaimWitnessesDecodeError::Malformed(_))
+        ));
+        assert!(matches!(
+            decode(&encoded[..encoded.len() - 1]),
+            Err(ClaimWitnessesDecodeError::Malformed(_))
+        ));
+        for malformed in [
+            // The list of raw witnesses of version 0x00 under the new byte.
+            &[0x01, 0xc3, 0x82, 0xAA, 0xBB][..],
+            // A proof alone, without the list of witnesses.
+            &[0x01, 0xc1, 0x80],
+            // A third item.
+            &[0x01, 0xc3, 0x80, 0xc0, 0x80],
+            // A proof that is a list, and witnesses that are a byte string.
+            &[0x01, 0xc2, 0xc0, 0xc0],
+            &[0x01, 0xc2, 0x80, 0x80],
+            // A witness that is itself a list.
+            &[0x01, 0xc3, 0x80, 0xc1, 0xc0],
+            // A byte string instead of the outer list.
+            &[0x01, 0x82, 0x01, 0x02],
+        ] {
+            assert!(
+                matches!(
+                    decode(malformed),
+                    Err(ClaimWitnessesDecodeError::Malformed(_))
+                ),
+                "{malformed:02x?} decoded as {:?}",
+                decode(malformed)
+            );
+        }
+    }
+
+    // EIP-8288 `MAX_DEPENDENCY_PROOF_BYTES` bounds the aggregate proof, and
+    // `MAX_BLOCK_WITNESS_BYTES` still bounds the whole byte string.
+    #[test]
+    fn aggregated_claim_witnesses_are_bounded_by_the_proof_and_block_limits() {
+        use crate::types::Fork;
+        let proof_at_limit = vec![0x5A; MAX_AGGREGATE_PROOF_BYTES];
+        let encoded = encode_aggregated_claim_witnesses(&proof_at_limit, &[]);
+        assert_eq!(
+            decode_claim_witnesses_at(Fork::LStar, &encoded).map(|decoded| decoded.aggregate_proof),
+            Ok(Bytes::from(proof_at_limit))
+        );
+        let encoded =
+            encode_aggregated_claim_witnesses(&[0x5A; MAX_AGGREGATE_PROOF_BYTES + 1], &[]);
+        assert!(encoded.len() <= MAX_BLOCK_WITNESS_BYTES);
+        assert_eq!(
+            decode_claim_witnesses_at(Fork::LStar, &encoded),
+            Err(ClaimWitnessesDecodeError::AggregateProofTooLong(
+                MAX_AGGREGATE_PROOF_BYTES + 1
+            ))
+        );
+
+        // A proof within its own limit beside raw witnesses that take the byte
+        // string over the block's.
+        let witness = Bytes::from(vec![0xEE; MAX_CLAIM_WITNESS_BYTES as usize]);
+        let over = encode_aggregated_claim_witnesses(&[0x5A; 300], &[witness.clone(), witness]);
+        assert!(over.len() > MAX_BLOCK_WITNESS_BYTES);
+        assert_eq!(
+            decode_claim_witnesses_at(Fork::LStar, &over),
+            Err(ClaimWitnessesDecodeError::TooLong(over.len()))
+        );
     }
 }

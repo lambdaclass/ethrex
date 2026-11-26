@@ -4,12 +4,11 @@
 
 use std::sync::Arc;
 
-use bytes::Bytes;
 use ethrex_common::{
     H256, InvalidBlockError,
     types::{
-        Block, BlockHeader, Dependency, Fork, Transaction, block_dependencies,
-        decode_claim_witnesses,
+        Block, BlockHeader, ClaimWitnesses, Dependency, Fork, Transaction, block_dependencies,
+        decode_claim_witnesses_at,
     },
 };
 use ethrex_crypto::Crypto;
@@ -63,15 +62,25 @@ pub fn verify_dependency(
 ///    in the same order, and each witness satisfies its dependency against the
 ///    block's pre-state, which `store` exposes.
 ///
-/// What the byte string looks like for a given version byte is decided in one
-/// place, [`decode_claim_witnesses`].
+/// From LStar the byte string has the form the EIP reserves for aggregation
+/// (§Block Witnesses, §Aggregation and EIP-8288 compatibility), and rule 3 reads:
+/// one aggregate proof satisfies every dependency of `LEANSPHINCS_VERIFIER`, and
+/// the byte string holds exactly one raw witness for each of the other entries
+/// of `block_dependencies(block)`, in the same order, each satisfying its
+/// dependency as before. The proof is empty when the block has no
+/// `LEANSPHINCS_VERIFIER` dependency, and otherwise proves exactly those the
+/// block has: a block whose proof misses one of them, proves another one in its
+/// place or proves one more is invalid.
+///
+/// What the byte string looks like for a given version byte, and which version
+/// byte a fork accepts, is decided in one place, [`decode_claim_witnesses_at`].
 ///
 /// Before any verifier runs, the gas of the block's claims is compared with the
 /// block's gas limit, which bounds the work of rule 3 by one block's gas.
 ///
 /// Frame transactions exist from Hegota on. Before it a block has no claims and
 /// no `claim_witnesses`, since the header rules reject its commitment, so there
-/// is nothing to check. Hegota is resolved through the fork ordinal, exactly as
+/// is nothing to check. The fork is resolved through its ordinal, exactly as
 /// execution resolves it: the rule that lets frames rely on claims and the rule
 /// that requires their witnesses must come from the same test.
 ///
@@ -84,12 +93,16 @@ pub fn verify_claim_witnesses(
     crypto: &dyn Crypto,
 ) -> Result<(), ClaimWitnessesError> {
     let chain_config = store.get_chain_config().map_err(EvmError::from)?;
-    if chain_config.fork(block.header.timestamp) < Fork::Hegota {
+    let fork = chain_config.fork(block.header.timestamp);
+    if fork < Fork::Hegota {
         return Ok(());
     }
     let claim_witnesses: &[u8] = block.body.claim_witnesses.as_deref().unwrap_or_default();
-    // Rule 1, and the form of the byte string.
-    let witnesses: Vec<Bytes> = decode_claim_witnesses(claim_witnesses)
+    // Rule 1, and the form of the byte string at the block's fork.
+    let ClaimWitnesses {
+        aggregate_proof,
+        witnesses,
+    } = decode_claim_witnesses_at(fork, claim_witnesses)
         .map_err(|error| InvalidBlockError::InvalidClaimWitnesses(error.to_string()))?;
     // Rule 2. The body check compares the same commitment where a caller runs
     // it, but not every import path does, and a block must not reach execution
@@ -97,15 +110,25 @@ pub fn verify_claim_witnesses(
     if block.header.claim_witnesses_hash != Some(H256(crypto.keccak256(claim_witnesses))) {
         return Err(InvalidBlockError::ClaimWitnessesHashMismatch.into());
     }
-    // Rule 3.
+    // Rule 3. The dependencies the aggregate proof stands for carry no witness
+    // of their own; before LStar there are none, and every dependency has one.
+    // A dependency keeps its index in `block_dependencies`, which is what an
+    // unsatisfied claim is reported by.
     let dependencies =
         block_dependencies(&block.body.transactions).ok_or(InvalidBlockError::MalformedClaim)?;
-    if witnesses.len() != dependencies.len() {
+    let (aggregated, raw): (Vec<_>, Vec<_>) = dependencies
+        .iter()
+        .enumerate()
+        .partition(|(_, dependency)| dependency.is_aggregated(fork));
+    if witnesses.len() != raw.len() {
         return Err(InvalidBlockError::ClaimWitnessesCountMismatch {
-            expected: dependencies.len(),
+            expected: raw.len(),
             found: witnesses.len(),
         }
         .into());
+    }
+    if aggregated.is_empty() && !aggregate_proof.is_empty() {
+        return Err(InvalidBlockError::UnexpectedAggregateProof(aggregate_proof.len()).into());
     }
     // A claim's gas is part of its transaction's intrinsic gas, so a valid block's
     // claims take at most the block's gas limit. Execution enforces that limit,
@@ -129,13 +152,25 @@ pub fn verify_claim_witnesses(
     }
     let config = EVMConfig::new_from_chain_config(&chain_config, &block.header);
     let mut db = GeneralizedDatabase::new(store);
-    for (index, (dependency, witness)) in dependencies.iter().zip(&witnesses).enumerate() {
+    for ((index, dependency), witness) in raw.into_iter().zip(&witnesses) {
         let satisfied = ethrex_levm::claims::verify_dependency(
             dependency, witness, &mut db, config, vm_type, crypto,
         )
         .map_err(EvmError::from)?;
         if !satisfied {
             return Err(InvalidBlockError::ClaimNotSatisfied(index).into());
+        }
+    }
+    // The proof is checked against the dependencies this node derived from the
+    // block's transactions, so it cannot stand for any other set of them. An
+    // empty proof proves nothing.
+    if !aggregated.is_empty() {
+        let aggregated: Vec<Dependency> = aggregated
+            .into_iter()
+            .map(|(_, dependency)| *dependency)
+            .collect();
+        if !ethrex_levm::claims::verify_aggregated_dependencies(&aggregated, &aggregate_proof) {
+            return Err(InvalidBlockError::InvalidAggregateProof(aggregated.len()).into());
         }
     }
     Ok(())
