@@ -22,8 +22,8 @@ use ethrex_common::{
     types::{
         Block, Claim, DEFAULT_BUILDER_GAS_CEIL, Dependency, ELASTICITY_MULTIPLIER, Frame,
         FrameMode, FrameTransaction, Genesis, GenesisAccount, LEANSPHINCS_SIGNATURE_SIZE,
-        LEANSPHINCS_VERIFIER, MAX_BLOCK_WITNESS_BYTES, MAX_CLAIM_WITNESS_BYTES, P2PTransaction,
-        PooledFrameTransaction, SECP256K1_VERIFIER, Transaction,
+        LEANSPHINCS_VERIFIER, MAX_BLOCK_WITNESS_BYTES, MAX_CLAIM_WITNESS_BYTES, MAX_TX_SIZE,
+        P2PTransaction, PooledFrameTransaction, SECP256K1_VERIFIER, Transaction,
         block_access_list::BlockAccessList, block_dependencies, compute_claim_witnesses_hash,
         decode_claim_witnesses, encode_claim_witnesses,
     },
@@ -804,6 +804,61 @@ async fn the_pool_counts_every_claim_toward_the_validation_gas_budget() {
         .add_frame_transaction_to_pool(pooled_tx)
         .await
         .expect("two claims are within the default budget");
+}
+
+// The pooled representation is held to a size cap as it is received, before
+// anything else in it is checked: the cap of a transaction plus what the
+// witnesses of its claims may take. Past it the pool looks at no witness.
+#[tokio::test]
+async fn the_pool_rejects_an_oversized_pooled_representation_before_any_other_check() {
+    let signer = key(0x72);
+    let (store, chain_id) = setup_store(&[&signer]).await;
+    let blockchain = blockchain(store);
+    let valid = pooled(claim_transaction(chain_id, &signer, Vec::new()), &[&signer]);
+
+    // A second witness, which the transaction has no claim for, large enough to
+    // take the pooled representation over the cap.
+    let mut oversized = valid.clone();
+    oversized
+        .witnesses
+        .push(Bytes::from(vec![0u8; MAX_TX_SIZE]));
+    let (actual, limit) = (oversized.wire_len(), oversized.max_wire_len());
+    assert!(actual > limit);
+    // The same with a first witness that is not a signature: were any witness
+    // verified, or counted, the answer would name it.
+    let mut forged = oversized.clone();
+    forged.witnesses[0] = Bytes::from(vec![0u8; forged.witnesses[0].len()]);
+    for pooled_tx in [oversized, forged] {
+        let result = blockchain.add_frame_transaction_to_pool(pooled_tx).await;
+        assert!(
+            matches!(
+                result,
+                Err(MempoolError::TxSizeExceeded { actual: a, limit: l }) if a == actual && l == limit
+            ),
+            "got {result:?}"
+        );
+    }
+
+    // Under the cap, a witness too many is told apart by the count of witnesses.
+    let mut one_more = valid.clone();
+    one_more.witnesses.push(Bytes::new());
+    assert!(one_more.wire_len() <= one_more.max_wire_len());
+    let result = blockchain.add_frame_transaction_to_pool(one_more).await;
+    assert!(
+        matches!(
+            result,
+            Err(MempoolError::ClaimWitnessCountMismatch {
+                expected: 1,
+                found: 2
+            })
+        ),
+        "got {result:?}"
+    );
+
+    blockchain
+        .add_frame_transaction_to_pool(valid)
+        .await
+        .expect("the transaction with its one witness is admitted");
 }
 
 // A block carries at most MAX_BLOCK_WITNESS_BYTES of claim witnesses, so the pool

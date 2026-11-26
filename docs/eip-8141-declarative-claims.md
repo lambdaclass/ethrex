@@ -343,7 +343,8 @@ A dependency two transactions share is paid by both, while the block carries one
 
 Admission follows the proposal's acceptance algorithm:
 
-1. The pooled representation decodes with `wrapper_version` 0.
+1. The pooled representation decodes with `wrapper_version` 0 and is within its size cap: the
+   cap of a transaction, a node policy, plus what the witnesses of its claims may take.
 2. The transaction satisfies the static constraints.
 3. It comes with exactly one witness per claim, each of the length its claim fixes, and its
    own witnesses fit a block's `MAX_BLOCK_WITNESS_BYTES`.
@@ -367,7 +368,8 @@ block's `claim_witnesses` over `MAX_BLOCK_WITNESS_BYTES`, and writes one witness
 No protocol version and no message is added. A frame transaction is announced by hash in
 `NewPooledTransactionHashes`, with type `0x06` and the size of its pooled representation, and
 fetched with `GetPooledTransactions`. `PooledTransactions` carries the pooled representation;
-the bare `tx_body` does not decode there. ethrex never sends a frame transaction in a
+the bare `tx_body` does not decode there, and neither does a pooled representation whose
+witnesses take more bytes than its claims allow. ethrex never sends a frame transaction in a
 `Transactions` message. This holds on every `eth` version ethrex speaks, eth/72 included, where
 a frame transaction's blobs are never elided.
 
@@ -501,9 +503,22 @@ Each entry gives what the proposal says or leaves open, and then what ethrex doe
     a transaction whose own witnesses exceed `MAX_BLOCK_WITNESS_BYTES`, since no block could
     carry it. Claims that resolve to one dependency count as one witness. The EIP-7825 cap
     rejects such a transaction too, but only once its gas is computed.
-27. **Size of a pooled transaction.** The proposal gives no limit for the pooled
-    representation. ethrex caps the transaction body at 128 KiB, like any other transaction,
-    and does not count the witnesses toward that cap: entry 26 and the gas they cost bound them.
+27. **Size of a pooled transaction.** The proposal bounds the witnesses through the claims and
+    gives no limit for the transaction body or for the pooled representation as a whole. ethrex
+    caps the representation as received, before any witness is verified, at the sum of:
+    - the transaction, with its blob sidecar when it has one: `MAX_TX_SIZE` (128 KiB), or
+      `MAX_BLOB_TX_SIZE` (1 MiB) with blobs. This term is node policy, the caps ethrex holds
+      every transaction type to;
+    - its witnesses: one for each claim, each of the length its claim resolves to, counting at
+      most `MAX_CLAIMS` claims and at most `MAX_CLAIM_WITNESS_BYTES` per witness. This term
+      comes from the proposal;
+    - 16 bytes for the wrapper version and the list headers.
+
+    The cap is checked at the pool's entry, when `eth_sendRawTransaction` decodes a submission
+    and in the handlers of `PooledTransactions`. The decoder itself rejects a `witnesses` list
+    longer than the claims allow from the length in its header, before it reads the list. The
+    transaction is still held to its own cap, and each witness to its exact length, by the
+    checks that follow. There is no limit on the witness bytes the pool holds in total.
 28. **`claim_verification_cost` against `MAX_VERIFY_GAS`.** As the proposal: it is added to the
     validation prefix's execution limits. ethrex also rejects, earlier and with its own error, a
     transaction whose claims alone exceed the limit.
@@ -517,7 +532,9 @@ Each entry gives what the proposal says or leaves open, and then what ethrex doe
 31. **No limit flag.** `MAX_CLAIMS` is a consensus constant, so the option that bounded the
     signatures of a transaction in the pool is removed.
 32. **Peers.** A peer that sends a transaction with an invalid witness is not penalized, as for
-    any other transaction the pool rejects. The proposal does not ask for it.
+    any other transaction the pool rejects. The proposal does not ask for it. A response whose
+    pooled representation has more witness bytes than its claims allow does not decode, and is
+    treated as any message that does not decode.
 
 ### Networking and RPC
 
@@ -567,6 +584,9 @@ Each entry gives what the proposal says or leaves open, and then what ethrex doe
   binds, and no valid transaction comes near `MAX_BLOCK_WITNESS_BYTES` on its own. The
   encoding still lets a transaction declare 64 MiB of witnesses, which a node has to reject
   before it does any work on them; see decision 26.
+- **Size of the pooled representation.** The claims fix how many witnesses a pooled
+  representation has and how long each is. Nothing bounds the transaction body or the
+  representation as a whole, so what a node accepts is its own policy. See decision 27.
 - **`claim_witnesses` and the block size limit.** The text bounds `claim_witnesses` at 2 MiB
   and does not say whether it counts toward EIP-7934's limit on a block's RLP size. Here it
   does: it is part of the body, so the builder counts it and a block over the limit is invalid.
@@ -610,6 +630,9 @@ Each entry gives what the proposal says or leaves open, and then what ethrex doe
   eviction order and replacement increments are as they were on the base. This branch changes
   only what claims and witnesses require.
 - **Parallel claim verification.** A block's dependencies are verified one after another.
+- **A limit on the witness bytes the pool holds in total.** There is none, as there was none
+  on the branch this one started from. Each transaction's witnesses are bounded (decisions 26
+  and 27), and the pool's limits on the number of transactions apply.
 
 ## Testing
 
@@ -633,7 +656,7 @@ independently of ethrex.
 
 | Component | File | Key items |
 |---|---|---|
-| Claims, dependencies, pooled form | `crates/common/types/transaction.rs` | `Claim`, `ProtocolVerifier`, `Dependency`, `FrameTransaction::{dependencies, claim_dependencies, compute_sig_hash}`, `block_dependencies`, `PooledFrameTransaction`, `encode_claim_witnesses`, `decode_claim_witnesses` |
+| Claims, dependencies, pooled form | `crates/common/types/transaction.rs` | `Claim`, `ProtocolVerifier`, `Dependency`, `FrameTransaction::{dependencies, claim_dependencies, compute_sig_hash, max_pooled_witnesses_len}`, `block_dependencies`, `PooledFrameTransaction`, `max_pooled_frame_tx_len`, `encode_claim_witnesses`, `decode_claim_witnesses` |
 | Header and body | `crates/common/types/block.rs` | `claim_witnesses_hash`, `claim_witnesses`, `compute_claim_witnesses_hash` |
 | Native verifiers | `crates/vm/levm/src/claims.rs` | `secp256k1_verifier`, `p256_verifier`, `leansphincs_verifier`, `verify_dependency` |
 | Pure context | `crates/vm/levm/src/vm.rs`, `crates/vm/levm/src/opcodes.rs` | `VM::run_pure_verifier`, `build_opcode_table_pure` |

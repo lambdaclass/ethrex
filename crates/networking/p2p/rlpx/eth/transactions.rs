@@ -429,6 +429,19 @@ impl PooledTransactions {
                         );
                         continue;
                     }
+                    // The pooled representation as received is held to its size
+                    // cap here, so this handler does not depend on the order of
+                    // the pool's own checks to bound what a peer sent.
+                    let (actual, limit) = (pooled.wire_len(), pooled.max_wire_len());
+                    if actual > limit {
+                        debug!(
+                            peer=%node,
+                            actual,
+                            limit,
+                            "Dropping frame transaction: pooled representation over the size cap"
+                        );
+                        continue;
+                    }
                     if let Err(e) = blockchain.add_frame_transaction_to_pool(pooled).await {
                         if matches!(e, MempoolError::BlobsBundleError(_)) {
                             return Err(e);

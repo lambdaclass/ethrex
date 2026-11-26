@@ -111,8 +111,22 @@ impl SendRawTransactionRequest {
                                 .to_string(),
                         ))
                     }
-                    EnvelopeTxType::Frame => PooledFrameTransaction::decode(tx_bytes)
-                        .map(SendRawTransactionRequest::Frame),
+                    EnvelopeTxType::Frame => {
+                        // The decoder rejects a list of witnesses longer than the
+                        // transaction's claims allow before it reads it. The whole
+                        // submission is then held to the size a node accepts for
+                        // this transaction, before anything else is done with it.
+                        let pooled = PooledFrameTransaction::decode(tx_bytes)?;
+                        let limit = pooled.max_wire_len();
+                        if bytes.len() > limit {
+                            return Err(RLPDecodeError::Custom(format!(
+                                "the pooled representation of the frame transaction takes {} bytes, \
+                                 more than the {limit} accepted for it",
+                                bytes.len()
+                            )));
+                        }
+                        Ok(SendRawTransactionRequest::Frame(pooled))
+                    }
                     EnvelopeTxType::FeeToken => FeeTokenTransaction::decode(tx_bytes)
                         .map(SendRawTransactionRequest::FeeToken),
                     EnvelopeTxType::Privileged => PrivilegedL2Transaction::decode(tx_bytes)
@@ -242,5 +256,43 @@ mod tests {
             .finish();
         let error = SendRawTransactionRequest::decode_canonical(&raw).expect_err("rejected");
         assert!(error.to_string().contains("wrapper version"), "{error}");
+    }
+
+    // A submission is bounded when it is decoded. Its witnesses may take what its claims
+    // allow and no more, and the decoder rejects a longer list before it reads it.
+    #[test]
+    fn a_submission_with_more_witness_bytes_than_its_claims_allow_is_rejected() {
+        let mut pooled = pooled_frame_transaction();
+        pooled.witnesses.push(Bytes::from(vec![0x08; 4096]));
+        let mut raw = vec![0x06];
+        pooled.encode(&mut raw);
+        let error = SendRawTransactionRequest::decode_canonical(&raw).expect_err("rejected");
+        assert!(error.to_string().contains("witnesses take"), "{error}");
+    }
+
+    // The submission as a whole is capped at the cap of a transaction plus its witnesses:
+    // a body over `MAX_TX_SIZE` is rejected here, with witnesses of the right lengths.
+    #[test]
+    fn a_submission_over_the_size_cap_of_its_transaction_is_rejected() {
+        use ethrex_common::types::MAX_TX_SIZE;
+
+        let mut pooled = pooled_frame_transaction();
+        let mut raw = vec![0x06];
+        pooled.encode(&mut raw);
+        assert_eq!(raw.len(), pooled.wire_len());
+        SendRawTransactionRequest::decode_canonical(&raw).expect("within the cap");
+
+        pooled.tx.frames[0].data = Bytes::from(vec![0x01; MAX_TX_SIZE + 1]);
+        let mut raw = vec![0x06];
+        pooled.encode(&mut raw);
+        assert!(raw.len() > pooled.max_wire_len());
+        let error = SendRawTransactionRequest::decode_canonical(&raw).expect_err("rejected");
+        assert!(error.to_string().contains("more than the"), "{error}");
+        assert!(
+            error
+                .to_string()
+                .contains(&pooled.max_wire_len().to_string()),
+            "{error}"
+        );
     }
 }

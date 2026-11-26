@@ -50,7 +50,8 @@ use ethrex_rlp::{
 #[cfg(all(feature = "zisk", target_arch = "riscv64"))]
 use super::unsync_cell::OnceCell;
 use crate::types::{
-    AccessList, AuthorizationList, BlobsBundle, constants::VERSIONED_HASH_VERSION_KZG,
+    AccessList, AuthorizationList, BlobsBundle,
+    constants::{MAX_BLOB_TX_SIZE, MAX_TX_SIZE, VERSIONED_HASH_VERSION_KZG},
 };
 #[cfg(not(all(feature = "zisk", target_arch = "riscv64")))]
 use once_cell::sync::OnceCell;
@@ -302,6 +303,47 @@ impl PooledFrameTransaction {
     pub fn witness_bytes(&self) -> usize {
         self.witnesses.iter().map(Bytes::len).sum()
     }
+
+    /// Size in bytes of the pooled representation as it travels: the type byte
+    /// followed by `rlp([tx_body, wrapper_version, witnesses, blob_sidecar])`.
+    pub fn wire_len(&self) -> usize {
+        1 + self.length()
+    }
+
+    /// The most bytes a node accepts for the pooled representation of this
+    /// transaction ([`max_pooled_frame_tx_len`]).
+    pub fn max_wire_len(&self) -> usize {
+        max_pooled_frame_tx_len(&self.tx, self.blobs_bundle.is_some())
+    }
+}
+
+/// What the framing of a pooled representation adds around the transaction
+/// body, the witnesses and the blob sidecar: the wrapper version and the list
+/// headers of the wrapper and of the sidecar, each of at most 5 bytes for
+/// anything a node handles.
+const POOLED_FRAME_TX_FRAMING_BYTES: usize = 16;
+
+/// The most bytes the pooled representation of `tx` may take, type byte
+/// included. It has two terms of different origin:
+///
+/// - The transaction itself, with its blob sidecar when it has one. EIP-8141
+///   gives no limit for it, so this is node policy: `MAX_TX_SIZE`, or
+///   `MAX_BLOB_TX_SIZE` for a transaction with blobs, the caps every other
+///   transaction type is held to.
+/// - Its witnesses. EIP-8141 §Networking fixes their number and their lengths
+///   from the transaction's claims ([`FrameTransaction::max_pooled_witnesses_len`]).
+///
+/// A node checks it on the pooled representation as received, before any
+/// witness is verified.
+pub fn max_pooled_frame_tx_len(tx: &FrameTransaction, with_blobs: bool) -> usize {
+    let transaction = if with_blobs {
+        MAX_BLOB_TX_SIZE
+    } else {
+        MAX_TX_SIZE
+    };
+    transaction
+        .saturating_add(tx.max_pooled_witnesses_len())
+        .saturating_add(POOLED_FRAME_TX_FRAMING_BYTES)
 }
 
 impl RLPEncode for PooledFrameTransaction {
@@ -327,14 +369,26 @@ impl RLPEncode for PooledFrameTransaction {
 impl RLPDecode for PooledFrameTransaction {
     fn decode_unfinished(rlp: &[u8]) -> Result<(PooledFrameTransaction, &[u8]), RLPDecodeError> {
         let decoder = Decoder::new(rlp)?;
-        let (tx, decoder) = decoder.decode_field("tx_body")?;
+        let (tx, decoder): (FrameTransaction, _) = decoder.decode_field("tx_body")?;
         let (wrapper_version, decoder) = decoder.decode_field::<u8>("wrapper_version")?;
         if wrapper_version != POOLED_WRAPPER_VERSION {
             return Err(RLPDecodeError::Custom(format!(
                 "unknown pooled wrapper version {wrapper_version}"
             )));
         }
-        let (witnesses, decoder) = decoder.decode_field("witnesses")?;
+        // EIP-8141 §Networking: the pooled representation has one witness for
+        // each claim, each of the length its claim resolves to, so the body
+        // already says how long the list of witnesses can be. A longer one is
+        // rejected by the length its header gives, before it is read.
+        let (witnesses, decoder) = decoder.get_encoded_item_ref()?;
+        let max_witnesses_len = tx.max_pooled_witnesses_len();
+        if witnesses.len() > max_witnesses_len {
+            return Err(RLPDecodeError::Custom(format!(
+                "witnesses take {} bytes, more than the {max_witnesses_len} the claims of the transaction allow",
+                witnesses.len()
+            )));
+        }
+        let witnesses = Vec::<Bytes>::decode(witnesses)?;
         let (blob_sidecar, decoder) = decoder.get_encoded_item_ref()?;
         let rest = decoder.finish()?;
 
@@ -2828,6 +2882,28 @@ impl FrameTransaction {
         let mut buf = vec![TxType::Frame as u8, 0x00];
         self.encode(&mut buf);
         keccak(&buf)
+    }
+
+    /// EIP-8141 §Networking: the most bytes the `witnesses` list of this
+    /// transaction's pooled representation takes once RLP-encoded. The list has
+    /// one witness for each claim, each of the length its claim resolves to.
+    ///
+    /// A transaction has at most `MAX_CLAIMS` claims and no witness is longer
+    /// than `MAX_CLAIM_WITNESS_BYTES`. Both limits are applied here, so the
+    /// result is bounded for a transaction whose static constraints nobody has
+    /// checked yet, which is when a node needs it.
+    pub fn max_pooled_witnesses_len(&self) -> usize {
+        let payload_len = self
+            .claims
+            .iter()
+            .take(MAX_CLAIMS)
+            .fold(0usize, |total, claim| {
+                let witness_len = claim.resolved_witness_len().min(MAX_CLAIM_WITNESS_BYTES);
+                let witness_len = usize::try_from(witness_len).unwrap_or(usize::MAX);
+                // A one-byte string takes a header when its byte is above 0x7f.
+                total.saturating_add(ethrex_rlp::encode::bytes_length(witness_len, 0xff))
+            });
+        ethrex_rlp::encode::list_length(payload_len)
     }
 
     /// EIP-8141 `claim_verification_cost`: the gas of verifying every claim, a
@@ -7993,6 +8069,98 @@ mod tests {
             .encode_field(&pooled.witnesses)
             .finish();
         assert!(PooledFrameTransaction::decode(&three).is_err());
+    }
+
+    // EIP-8141 §Networking: the pooled representation has one witness for each
+    // claim, each of the length its claim resolves to, so the claims say how
+    // long the list of witnesses is.
+    #[test]
+    fn the_claims_bound_the_witnesses_of_the_pooled_representation() {
+        let pooled = pooled_frame_tx(None);
+        assert_eq!(
+            pooled.tx.max_pooled_witnesses_len(),
+            pooled.witnesses.length()
+        );
+
+        // Each protocol verifier, and custom witnesses of 300 bytes, one byte
+        // and no bytes: the bound is the length of the list they make.
+        let mut tx = pooled.tx;
+        tx.claims = vec![
+            Claim {
+                verifier: SECP256K1_VERIFIER,
+                ..Default::default()
+            },
+            Claim {
+                verifier: P256_VERIFIER,
+                ..Default::default()
+            },
+            Claim {
+                verifier: LEANSPHINCS_VERIFIER,
+                key: Bytes::from(vec![6u8; 32]),
+                ..Default::default()
+            },
+            custom_claim(0x1234, 1, 2, 5_000, 300),
+            custom_claim(0x1234, 1, 2, 5_000, 1),
+            custom_claim(0x1234, 1, 2, 5_000, 0),
+        ];
+        let witnesses: Vec<Bytes> = [65usize, 128, 7740, 300, 1, 0]
+            .into_iter()
+            .map(|len| Bytes::from(vec![0xff; len]))
+            .collect();
+        assert_eq!(tx.max_pooled_witnesses_len(), witnesses.length());
+
+        // A transaction nobody validated may declare more claims than MAX_CLAIMS
+        // and longer witnesses than MAX_CLAIM_WITNESS_BYTES. The bound stays at
+        // MAX_CLAIMS witnesses of MAX_CLAIM_WITNESS_BYTES: 64 strings of
+        // 1,048,576 bytes with a 4-byte header each, in a list with a 5-byte one.
+        tx.claims = vec![custom_claim(0x1234, 1, 2, 5_000, u64::MAX); MAX_CLAIMS + 10];
+        assert_eq!(tx.max_pooled_witnesses_len(), 64 * (1_048_576 + 4) + 5);
+
+        tx.claims.clear();
+        assert_eq!(tx.max_pooled_witnesses_len(), 1);
+    }
+
+    // A list of witnesses longer than the claims allow is rejected when the
+    // pooled representation is decoded. A shorter one decodes, and the pool says
+    // which witness is missing or short.
+    #[test]
+    fn a_pooled_representation_with_more_witness_bytes_than_its_claims_allow_does_not_decode() {
+        let pooled = pooled_frame_tx(None);
+
+        let mut one_more = pooled.clone();
+        one_more.witnesses.push(Bytes::new());
+        let mut longer = pooled.clone();
+        longer.witnesses[1] = Bytes::from(vec![0x22; LEANSPHINCS_SIGNATURE_SIZE + 1]);
+        for oversized in [one_more, longer] {
+            let error = PooledFrameTransaction::decode(&oversized.encode_to_vec())
+                .expect_err("more witness bytes than the claims allow");
+            assert!(error.to_string().contains("witnesses take"), "{error}");
+        }
+
+        let mut shorter = pooled;
+        shorter.witnesses.pop();
+        let decoded = PooledFrameTransaction::decode(&shorter.encode_to_vec()).expect("decodes");
+        assert_eq!(decoded, shorter);
+    }
+
+    // The pooled representation as a whole is capped at the cap of a
+    // transaction, a node policy, plus the witnesses its claims fix.
+    #[test]
+    fn the_pooled_representation_is_capped_at_the_transaction_cap_plus_its_witnesses() {
+        for blobs_bundle in [None, Some(test_blobs_bundle())] {
+            let transaction_cap = if blobs_bundle.is_some() {
+                crate::types::MAX_BLOB_TX_SIZE
+            } else {
+                crate::types::MAX_TX_SIZE
+            };
+            let pooled = pooled_frame_tx(blobs_bundle);
+            assert_eq!(pooled.wire_len(), 1 + pooled.encode_to_vec().len());
+            assert_eq!(
+                pooled.max_wire_len(),
+                transaction_cap + pooled.witnesses.length() + 16
+            );
+            assert!(pooled.wire_len() <= pooled.max_wire_len());
+        }
     }
 
     #[test]

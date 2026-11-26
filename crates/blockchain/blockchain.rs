@@ -3634,15 +3634,44 @@ impl Blockchain {
         pooled: PooledFrameTransaction,
         broadcast: bool,
     ) -> Result<H256, MempoolError> {
+        #[cfg(feature = "metrics")]
+        let has_claims = !pooled.tx.claims.is_empty();
+        let admitted = self.admit_frame_transaction(pooled, broadcast).await;
+        metrics!(match &admitted {
+            Ok(_) if has_claims => METRICS_CLAIMS.admitted_total.inc(),
+            Ok(_) => {}
+            Err(error) => METRICS_CLAIMS
+                .rejected_total
+                .with_label_values(&[claim_rejection_reason(error)])
+                .inc(),
+        });
+        admitted
+    }
+
+    /// The admission itself: the size cap of the pooled representation, then the
+    /// path of a transaction with or without blobs.
+    async fn admit_frame_transaction(
+        &self,
+        pooled: PooledFrameTransaction,
+        broadcast: bool,
+    ) -> Result<H256, MempoolError> {
+        // Size cap of the pooled representation as received, checked before any
+        // other work on it: the largest transaction this node accepts plus what
+        // the witnesses of its claims may take, which EIP-8141 fixes from the
+        // claims. The transaction is held to its own cap further on, like any
+        // other, and each witness to the exact length of its claim.
+        let actual = pooled.wire_len();
+        let limit = pooled.max_wire_len();
+        if actual > limit {
+            return Err(MempoolError::TxSizeExceeded { actual, limit });
+        }
         let PooledFrameTransaction {
             tx,
             witnesses,
             blobs_bundle,
         } = pooled;
-        #[cfg(feature = "metrics")]
-        let has_claims = !tx.claims.is_empty();
         let transaction = Transaction::FrameTransaction(tx);
-        let admitted = match blobs_bundle {
+        match blobs_bundle {
             #[cfg(feature = "c-kzg")]
             Some(blobs_bundle) => {
                 self.add_blob_transaction_to_pool_inner(
@@ -3660,16 +3689,7 @@ impl Blockchain {
                 self.add_transaction_to_pool_inner(transaction, Some(witnesses), broadcast)
                     .await
             }
-        };
-        metrics!(match &admitted {
-            Ok(_) if has_claims => METRICS_CLAIMS.admitted_total.inc(),
-            Ok(_) => {}
-            Err(error) => METRICS_CLAIMS
-                .rejected_total
-                .with_label_values(&[claim_rejection_reason(error)])
-                .inc(),
-        });
-        admitted
+        }
     }
 
     /// Remove a transaction from the mempool

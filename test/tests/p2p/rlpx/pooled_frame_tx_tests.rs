@@ -12,7 +12,7 @@ use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{
     H256, H512,
-    types::{Fork, P2PTransaction, PooledFrameTransaction, Transaction, TxType},
+    types::{Fork, MAX_TX_SIZE, P2PTransaction, PooledFrameTransaction, Transaction, TxType},
 };
 use ethrex_crypto::NativeCrypto;
 use ethrex_p2p::{
@@ -201,6 +201,52 @@ async fn a_node_does_not_admit_a_frame_transaction_whose_witness_is_invalid() {
     }
 
     // The valid one is admitted afterwards: a bad copy does not shadow it.
+    PooledTransactions::new(1, vec![P2PTransaction::FrameTransaction(pooled_tx)])
+        .handle(&peer(), &receiver_node, false)
+        .await
+        .expect("handle the response");
+    assert!(receiver_node.mempool.contains_tx(hash).unwrap());
+}
+
+// A peer cannot make a node read more witness bytes than the claims of a
+// transaction allow: a response that carries such a pooled representation does
+// not decode, on either version of the message. One that reaches the handler
+// some other way is dropped there, before admission.
+#[tokio::test]
+async fn an_oversized_pooled_representation_from_a_peer_is_not_admitted() {
+    let key = key(0x85);
+    let (receiver_node, pooled_tx) = node_and_transaction(&key).await;
+    let hash = hash_of(&pooled_tx);
+
+    // A witness the transaction has no claim for, large enough to take the
+    // pooled representation over its size cap.
+    let mut oversized = pooled_tx.clone();
+    oversized
+        .witnesses
+        .push(Bytes::from(vec![0u8; MAX_TX_SIZE]));
+    assert!(oversized.wire_len() > oversized.max_wire_len());
+    let response = vec![P2PTransaction::FrameTransaction(oversized)];
+
+    assert!(
+        PooledTransactions::decode(&encode(&PooledTransactions::new(1, response.clone()))).is_err()
+    );
+    assert!(
+        PooledTransactions72::decode(&encode(&PooledTransactions72::new(1, response.clone())))
+            .is_err()
+    );
+
+    PooledTransactions::new(1, response.clone())
+        .handle(&peer(), &receiver_node, false)
+        .await
+        .expect("an oversized transaction is dropped");
+    assert!(!receiver_node.mempool.contains_tx(hash).unwrap());
+    PooledTransactions72::new(1, response)
+        .handle(&peer(), &receiver_node, false)
+        .await
+        .expect("an oversized transaction is dropped");
+    assert!(!receiver_node.mempool.contains_tx(hash).unwrap());
+
+    // The same transaction with the witnesses its claims call for is admitted.
     PooledTransactions::new(1, vec![P2PTransaction::FrameTransaction(pooled_tx)])
         .handle(&peer(), &receiver_node, false)
         .await
