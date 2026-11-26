@@ -1622,12 +1622,9 @@ pub async fn handle_eth_subscribe(
         }
         "newPendingTransactions" => {
             // geth's optional second param asks for full transaction objects.
-            crate::eth::filter::parse_pending_full_txs(
-                params.get(1).map(|v| &**v),
-                "newPendingTransactions",
-            )?;
+            let full_txs = crate::eth::filter::parse_pending_full_txs(params.get(1).map(|v| &**v))?;
             ws.subscription_manager
-                .subscribe_pending_transactions(out_tx.clone())
+                .subscribe_pending_transactions(out_tx.clone(), full_txs)
                 .await
         }
         "logs" => {
@@ -2627,11 +2624,15 @@ mod tests {
         cancel_token.cancel();
     }
 
-    /// `newPendingTransactions` delivers the hash of each transaction the mempool
-    /// admits, and refuses the full-transaction form it does not support.
+    /// `newPendingTransactions` delivers each transaction the mempool admits: its
+    /// hash, or with `true` the object `eth_getTransactionByHash` returns for it.
     #[tokio::test]
-    async fn ws_subscribe_new_pending_transactions_delivers_hashes() {
-        use ethrex_common::types::{MempoolTransaction, Transaction};
+    async fn ws_subscribe_new_pending_transactions_delivers_hashes_or_full_txs() {
+        use ethrex_common::{
+            U256,
+            types::{EIP1559Transaction, EIP4844Transaction, MempoolTransaction, Transaction},
+        };
+        use ethrex_crypto::{Crypto, NativeCrypto};
         let storage = Store::new("temp.db", EngineType::InMemory).expect("in-memory store");
         let mut context = default_context_with_storage(storage).await;
         let subscription_manager = SubscriptionManager::spawn(context.storage.clone());
@@ -2645,61 +2646,147 @@ mod tests {
             subscription_manager,
             cancel_token.clone(),
         );
-        let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<String>(16);
         let mut subscription_ids: Vec<String> = Vec::new();
         let route_request = |_req: RpcRequest| async move {
             panic!("eth_subscribe must not be routed");
             #[allow(unreachable_code)]
             Ok::<Value, RpcErr>(Value::Null)
         };
-        let subscribe = |params: &str| -> RpcRequest {
-            serde_json::from_str(&format!(
+        let mut subscribe = async |params: &str, out_tx: &tokio::sync::mpsc::Sender<String>| {
+            let request = serde_json::from_str(&format!(
                 r#"{{"jsonrpc":"2.0","method":"eth_subscribe","params":{params},"id":1}}"#
             ))
+            .unwrap();
+            process_ws_request(
+                request,
+                &context,
+                out_tx,
+                &mut subscription_ids,
+                &route_request,
+            )
+            .await
             .unwrap()
         };
 
-        let full_txs = process_ws_request(
-            subscribe(r#"["newPendingTransactions",true]"#),
-            &context,
-            &out_tx,
-            &mut subscription_ids,
-            &route_request,
-        )
-        .await
-        .unwrap();
-        assert!(full_txs.get("error").is_some(), "{full_txs}");
+        let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<String>(16);
+        let malformed = subscribe(r#"["newPendingTransactions","x"]"#, &out_tx).await;
+        assert_eq!(malformed["error"]["code"], -32602, "{malformed}");
+        let mut hash_ids = Vec::new();
+        for params in [
+            r#"["newPendingTransactions"]"#,
+            r#"["newPendingTransactions",false]"#,
+            r#"["newPendingTransactions",null]"#,
+        ] {
+            let response = subscribe(params, &out_tx).await;
+            assert!(response["result"].is_string(), "{response}");
+            hash_ids.push(response["result"].clone());
+        }
+        let (full_out_tx, mut full_out_rx) = tokio::sync::mpsc::channel::<String>(16);
+        let response = subscribe(r#"["newPendingTransactions",true]"#, &full_out_tx).await;
+        let full_id = response["result"].clone();
+        assert!(full_id.is_string(), "{response}");
 
-        let response = process_ws_request(
-            subscribe(r#"["newPendingTransactions"]"#),
-            &context,
-            &out_tx,
-            &mut subscription_ids,
-            &route_request,
-        )
-        .await
-        .unwrap();
-        let id = response["result"].clone();
-        assert!(id.is_string(), "{response}");
+        let secret = secp256k1::SecretKey::from_byte_array(&[0x11; 32]).unwrap();
+        let sign = |mut tx: Transaction| {
+            let (payload, _) = tx.signing_payload().unwrap().unwrap();
+            let message = secp256k1::Message::from_digest(NativeCrypto.keccak256(&payload));
+            let (recovery_id, signature) = secp256k1::SECP256K1
+                .sign_ecdsa_recoverable(&message, &secret)
+                .serialize_compact();
+            let (r, s) = (
+                U256::from_big_endian(&signature[..32]),
+                U256::from_big_endian(&signature[32..]),
+            );
+            let y_parity = U256::from(u8::from(i32::from(recovery_id) != 0));
+            match &mut tx {
+                Transaction::EIP1559Transaction(tx) => {
+                    (tx.signature_r, tx.signature_s, tx.signature_y_parity) = (r, s, y_parity);
+                }
+                Transaction::EIP4844Transaction(tx) => {
+                    (tx.signature_r, tx.signature_s, tx.signature_y_parity) = (r, s, y_parity);
+                }
+                _ => unreachable!("only EIP-1559 and EIP-4844 test transactions"),
+            }
+            tx
+        };
+        let transactions = [
+            sign(Transaction::EIP1559Transaction(EIP1559Transaction {
+                chain_id: 1,
+                nonce: 0,
+                max_priority_fee_per_gas: 1,
+                max_fee_per_gas: 2,
+                gas_limit: 21_000,
+                value: U256::from(3),
+                ..Default::default()
+            })),
+            sign(Transaction::EIP4844Transaction(EIP4844Transaction {
+                chain_id: 1,
+                nonce: 1,
+                max_priority_fee_per_gas: 1,
+                max_fee_per_gas: 2,
+                gas: 21_000,
+                max_fee_per_blob_gas: U256::from(4),
+                blob_versioned_hashes: vec![H256::repeat_byte(1)],
+                ..Default::default()
+            })),
+        ];
 
-        let sender = H160::from_low_u64_be(1);
-        let hash = ethrex_common::H256::from_low_u64_be(0xabc);
-        let tx =
-            MempoolTransaction::new(Transaction::EIP1559Transaction(Default::default()), sender);
-        context
-            .blockchain
-            .mempool
-            .add_transaction(hash, sender, tx, None, None)
-            .unwrap();
+        for tx in transactions {
+            let hash = tx.hash(&NativeCrypto);
+            let sender = tx.sender(&NativeCrypto).unwrap();
+            context
+                .blockchain
+                .mempool
+                .add_transaction(
+                    hash,
+                    sender,
+                    MempoolTransaction::new(tx, sender),
+                    None,
+                    None,
+                )
+                .unwrap();
 
-        let notification = tokio::time::timeout(Duration::from_secs(2), out_rx.recv())
+            let mut notified = Vec::new();
+            for _ in &hash_ids {
+                let notification = tokio::time::timeout(Duration::from_secs(2), out_rx.recv())
+                    .await
+                    .expect("timed out waiting for the notification")
+                    .unwrap();
+                let notification: Value = serde_json::from_str(&notification).unwrap();
+                assert_eq!(notification["method"], "eth_subscription");
+                assert_eq!(notification["params"]["result"], format!("{hash:#x}"));
+                notified.push(notification["params"]["subscription"].clone());
+            }
+            for id in &hash_ids {
+                assert!(notified.contains(id), "{id} not notified");
+            }
+
+            let notification = tokio::time::timeout(Duration::from_secs(2), full_out_rx.recv())
+                .await
+                .expect("timed out waiting for the notification")
+                .unwrap();
+            let notification: Value = serde_json::from_str(&notification).unwrap();
+            assert_eq!(notification["params"]["subscription"], full_id);
+            let by_hash = map_http_requests(
+                &serde_json::from_value(serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "eth_getTransactionByHash",
+                    "params": [hash],
+                }))
+                .unwrap(),
+                context.clone(),
+            )
             .await
-            .expect("timed out waiting for the notification")
             .unwrap();
-        let notification: Value = serde_json::from_str(&notification).unwrap();
-        assert_eq!(notification["method"], "eth_subscription");
-        assert_eq!(notification["params"]["subscription"], id);
-        assert_eq!(notification["params"]["result"], format!("{hash:#x}"));
+            assert_eq!(notification["params"]["result"], by_hash);
+            assert_eq!(by_hash["hash"], format!("{hash:#x}"));
+            for field in ["blockHash", "blockNumber", "transactionIndex"] {
+                assert!(by_hash[field].is_null(), "{field} in {by_hash}");
+            }
+        }
+        assert!(out_rx.try_recv().is_err());
+        assert!(full_out_rx.try_recv().is_err());
         cancel_token.cancel();
     }
 

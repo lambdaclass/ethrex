@@ -3,7 +3,10 @@
 // - Go-Ethereum, specifically: https://github.com/ethereum/go-ethereum/blob/368e16f39d6c7e5cce72a92ec289adbfbaed4854/eth/filters/filter.go
 // - Ethereum's reference: https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_newfilter
 use ethrex_blockchain::mempool::Mempool;
-use ethrex_common::{H256, types::BlockNumber};
+use ethrex_common::{
+    H256,
+    types::{BlockNumber, MempoolTransaction},
+};
 use ethrex_storage::Store;
 use std::{
     collections::HashMap,
@@ -14,7 +17,10 @@ use tracing::error;
 
 use crate::rpc::RpcHandler;
 use crate::{
-    types::block_identifier::{BlockIdentifier, BlockTag},
+    types::{
+        block_identifier::{BlockIdentifier, BlockTag},
+        transaction::RpcTransaction,
+    },
     utils::{RpcErr, RpcRequest, parse_json_hex},
 };
 use serde_json::{Value, json, value::RawValue};
@@ -46,6 +52,8 @@ pub fn clean_outdated_filters(filters: ActiveFilters, filter_duration: Duration)
 /// Maps IDs to active pollable filters and their timestamps.
 pub type ActiveFilters = Arc<Mutex<HashMap<u64, (Instant, PollableFilter)>>>;
 
+type NewTransactions = tokio::sync::broadcast::Receiver<(H256, MempoolTransaction)>;
+
 /// What a pollable filter yields on each `eth_getFilterChanges`.
 #[derive(Debug, Clone)]
 pub enum FilterKind {
@@ -53,9 +61,13 @@ pub enum FilterKind {
     Logs(LogsFilter),
     /// `eth_newBlockFilter`: the hashes of blocks added since the last poll.
     Blocks,
-    /// `eth_newPendingTransactionFilter`: the hashes of transactions added to the
-    /// mempool since the last poll, buffered by the mempool's broadcast channel.
-    PendingTransactions(Arc<Mutex<tokio::sync::broadcast::Receiver<H256>>>),
+    /// `eth_newPendingTransactionFilter`: the transactions added to the mempool
+    /// since the last poll, buffered by the mempool's broadcast channel. Their
+    /// hashes, or with `full_txs` the transactions themselves.
+    PendingTransactions {
+        new_transactions: Arc<Mutex<NewTransactions>>,
+        full_txs: bool,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -189,41 +201,58 @@ impl NewBlockFilterRequest {
     }
 }
 
-/// `eth_newPendingTransactionFilter`: registers a filter that yields the hash of
-/// every transaction added to the mempool since the previous poll. Takes no
-/// parameters.
-pub struct NewPendingTransactionFilterRequest;
+/// `eth_newPendingTransactionFilter`: registers a filter that yields every
+/// transaction added to the mempool since the previous poll, as its hash or, with
+/// the optional `fullTx` param, as a transaction object.
+pub struct NewPendingTransactionFilterRequest {
+    pub full_txs: bool,
+}
 
 /// The optional `fullTx` param of `eth_newPendingTransactionFilter` and
 /// `eth_subscribe("newPendingTransactions")`. Absent or `null` means hashes, as in
-/// geth. Only hashes are served, so `true` is an error naming `method`.
-pub(crate) fn parse_pending_full_txs(param: Option<&RawValue>, method: &str) -> Result<(), RpcErr> {
-    let full_txs = match param {
-        Some(param) => serde_json::from_str::<Option<bool>>(param.get())
+/// geth.
+pub(crate) fn parse_pending_full_txs(param: Option<&RawValue>) -> Result<bool, RpcErr> {
+    match param {
+        Some(param) => Ok(serde_json::from_str::<Option<bool>>(param.get())
             .map_err(|e| RpcErr::BadParams(format!("Invalid fullTx parameter: {e}")))?
-            .unwrap_or(false),
-        None => false,
-    };
-    if full_txs {
-        return Err(RpcErr::BadParams(format!(
-            "{method} with full transactions is not supported"
-        )));
+            .unwrap_or(false)),
+        None => Ok(false),
     }
-    Ok(())
+}
+
+/// How a `newPendingTransactions` subscription or a pending transaction filter
+/// reports `transaction`: its hash, or with `full_txs` the object
+/// `eth_getTransactionByHash` returns for it while pending.
+pub(crate) fn pending_transaction_value(
+    hash: H256,
+    transaction: &MempoolTransaction,
+    full_txs: bool,
+) -> Result<Value, RpcErr> {
+    if !full_txs {
+        return Ok(Value::String(format!("{hash:#x}")));
+    }
+    let transaction = RpcTransaction::build_with_sender(
+        transaction.transaction().clone(),
+        None,
+        None,
+        None,
+        transaction.sender(),
+    );
+    serde_json::to_value(transaction).map_err(|error| RpcErr::Internal(error.to_string()))
 }
 
 impl NewPendingTransactionFilterRequest {
     pub fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
-        match params.as_deref() {
-            None | Some([]) => Ok(NewPendingTransactionFilterRequest),
-            Some([full_txs]) => {
-                parse_pending_full_txs(Some(full_txs), "eth_newPendingTransactionFilter")?;
-                Ok(NewPendingTransactionFilterRequest)
+        let full_txs = match params.as_deref() {
+            None | Some([]) => false,
+            Some([full_txs]) => parse_pending_full_txs(Some(full_txs))?,
+            Some(_) => {
+                return Err(RpcErr::BadParams(
+                    "Expected at most one param, fullTx".to_string(),
+                ));
             }
-            Some(_) => Err(RpcErr::BadParams(
-                "Expected at most one param, fullTx".to_string(),
-            )),
-        }
+        };
+        Ok(NewPendingTransactionFilterRequest { full_txs })
     }
 
     pub fn handle(
@@ -247,7 +276,10 @@ impl NewPendingTransactionFilterRequest {
                 Instant::now(),
                 PollableFilter {
                     last_block_number,
-                    kind: FilterKind::PendingTransactions(Arc::new(Mutex::new(new_transactions))),
+                    kind: FilterKind::PendingTransactions {
+                        new_transactions: Arc::new(Mutex::new(new_transactions)),
+                        full_txs: self.full_txs,
+                    },
                 },
             ),
         );
@@ -265,25 +297,29 @@ impl NewPendingTransactionFilterRequest {
     }
 }
 
-/// The hashes `new_transactions` has received since it was last drained. Ones
-/// that fell out of the channel's buffer before this poll are skipped, as geth
-/// drops them for a filter that is not polled in time.
+/// The transactions `new_transactions` has received since it was last drained,
+/// as [`pending_transaction_value`] reports them. Ones that fell out of the
+/// channel's buffer before this poll are skipped, as geth drops them for a filter
+/// that is not polled in time.
 fn drain_new_transactions(
-    new_transactions: &Mutex<tokio::sync::broadcast::Receiver<H256>>,
-) -> Vec<String> {
+    new_transactions: &Mutex<NewTransactions>,
+    full_txs: bool,
+) -> Result<Vec<Value>, RpcErr> {
     use tokio::sync::broadcast::error::TryRecvError;
     let mut new_transactions = new_transactions
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let mut hashes = Vec::new();
+    let mut transactions = Vec::new();
     loop {
         match new_transactions.try_recv() {
-            Ok(hash) => hashes.push(format!("{hash:#x}")),
+            Ok((hash, transaction)) => {
+                transactions.push(pending_transaction_value(hash, &transaction, full_txs)?);
+            }
             Err(TryRecvError::Lagged(_)) => continue,
             Err(TryRecvError::Empty | TryRecvError::Closed) => break,
         }
     }
-    hashes
+    Ok(transactions)
 }
 
 pub struct DeleteFilterRequest {
@@ -367,10 +403,14 @@ impl FilterChangesRequest {
         if let Some((timestamp, filter)) = active_filters_guard.get_mut(&self.id) {
             // Every poll keeps its filter from expiring, whatever it returns.
             *timestamp = Instant::now();
-            if let FilterKind::PendingTransactions(new_transactions) = &filter.kind {
-                let new_transactions = new_transactions.clone();
+            if let FilterKind::PendingTransactions {
+                new_transactions,
+                full_txs,
+            } = &filter.kind
+            {
+                let (new_transactions, full_txs) = (new_transactions.clone(), *full_txs);
                 drop(active_filters_guard);
-                return Ok(json!(drain_new_transactions(&new_transactions)));
+                return Ok(json!(drain_new_transactions(&new_transactions, full_txs)?));
             }
             // A block filter has no range to validate: it always reports whatever
             // blocks arrived since the last poll.
@@ -546,7 +586,7 @@ mod tests {
         match &filter.kind {
             crate::eth::filter::FilterKind::Logs(data) => data,
             crate::eth::filter::FilterKind::Blocks
-            | crate::eth::filter::FilterKind::PendingTransactions(_) => {
+            | crate::eth::filter::FilterKind::PendingTransactions { .. } => {
                 panic!("test filter should be a log filter")
             }
         }
@@ -886,31 +926,38 @@ mod tests {
     }
 
     /// A pending transaction filter reports each transaction added to the mempool
-    /// since the previous poll, once.
+    /// since the previous poll, once: its hash, or with `fullTx` the transaction.
     #[tokio::test]
     async fn pending_transaction_filter_reports_each_new_tx_once() {
-        use ethrex_common::types::{MempoolTransaction, Transaction};
+        use ethrex_common::types::{EIP1559Transaction, MempoolTransaction, Transaction};
+        use ethrex_crypto::NativeCrypto;
         let storage = Store::new("in-mem", EngineType::InMemory).unwrap();
         add_head_block(&storage, 0, 1).await;
         let context = default_context_with_storage(storage.clone()).await;
         let add_tx = |n: u64| {
             let sender = ethrex_common::H160::from_low_u64_be(n);
-            let hash = ethrex_common::H256::from_low_u64_be(n);
-            let tx = MempoolTransaction::new(
-                Transaction::EIP1559Transaction(Default::default()),
-                sender,
-            );
+            let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+                nonce: n,
+                ..Default::default()
+            });
+            let hash = tx.hash(&NativeCrypto);
             context
                 .blockchain
                 .mempool
-                .add_transaction(hash, sender, tx, None, None)
+                .add_transaction(
+                    hash,
+                    sender,
+                    MempoolTransaction::new(tx, sender),
+                    None,
+                    None,
+                )
                 .unwrap();
             json!(format!("{hash:#x}"))
         };
         add_tx(1);
-        // Without params, and with `fullTx: false`, the hash-only form.
+        // Hashes without params and with `fullTx: false`, full transactions with `true`.
         let mut ids = Vec::new();
-        for params in [json!([]), json!([false])] {
+        for params in [json!([]), json!([false]), json!([true])] {
             let id = map_http_requests(
                 &rpc_call("eth_newPendingTransactionFilter", params),
                 context.clone(),
@@ -932,34 +979,49 @@ mod tests {
             assert_eq!(poll(id.clone()).await, json!([]));
         }
         let (second, third) = (add_tx(2), add_tx(3));
-        for id in &ids {
+        let (full_id, hash_ids) = ids.split_last().unwrap();
+        for id in hash_ids {
             assert_eq!(poll(id.clone()).await, json!([second, third]));
             assert_eq!(poll(id.clone()).await, json!([]));
         }
+        let full = poll(full_id.clone()).await;
+        let full = full.as_array().unwrap();
+        assert_eq!(full.len(), 2, "{full:?}");
+        for ((tx, hash), n) in full.iter().zip([second, third]).zip([2u64, 3]) {
+            assert_eq!(tx["hash"], hash);
+            assert_eq!(
+                tx["from"],
+                format!("{:#x}", ethrex_common::H160::from_low_u64_be(n))
+            );
+            assert_eq!(tx["nonce"], format!("{n:#x}"));
+            for field in ["blockHash", "blockNumber", "transactionIndex"] {
+                assert!(tx[field].is_null(), "{field} in {tx}");
+            }
+        }
+        assert_eq!(poll(full_id.clone()).await, json!([]));
     }
 
-    /// `fullTx` may be absent, `null` or `false`; `true` asks for full transactions,
-    /// which are not served, and anything else is malformed.
+    /// `fullTx` may be absent, `null` or `false` for hashes, or `true` for full
+    /// transactions; anything else is malformed.
     #[test]
-    fn pending_transaction_filter_parse_accepts_hash_only_forms() {
+    fn pending_transaction_filter_parse_full_tx_param() {
         use super::NewPendingTransactionFilterRequest;
         use crate::{test_utils::raw_params, utils::RpcErr};
-        for params in [
-            None,
-            Some(vec![]),
-            Some(vec![json!(false)]),
-            Some(vec![json!(null)]),
+        for (params, full_txs) in [
+            (None, false),
+            (Some(vec![]), false),
+            (Some(vec![json!(false)]), false),
+            (Some(vec![json!(null)]), false),
+            (Some(vec![json!(true)]), true),
         ] {
-            assert!(
-                NewPendingTransactionFilterRequest::parse(&raw_params(&params)).is_ok(),
+            let request = NewPendingTransactionFilterRequest::parse(&raw_params(&params));
+            assert_eq!(
+                request.map(|request| request.full_txs).ok(),
+                Some(full_txs),
                 "{params:?}"
             );
         }
-        for params in [
-            vec![json!(true)],
-            vec![json!("x")],
-            vec![json!(false), json!(false)],
-        ] {
+        for params in [vec![json!("x")], vec![json!(false), json!(false)]] {
             let result =
                 NewPendingTransactionFilterRequest::parse(&raw_params(&Some(params.clone())));
             assert!(
