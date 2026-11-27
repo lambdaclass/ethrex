@@ -42,7 +42,7 @@ jobs:
         startsWith(github.event.label.name, 'ai-review') &&
         github.event.pull_request.head.repo.full_name == github.repository
       )
-    uses: lambdaclass/actions/.github/workflows/pr_review_multi.yml@433e036e485e0c5202479bd3c5841fa794b7fd56 # v2.1.0
+    uses: lambdaclass/actions/.github/workflows/pr_review_multi.yml@5917ad124e0079a7cc7ac2245f390b65a4944e03 # v2.2.0
     permissions:
       contents: read
       pull-requests: write
