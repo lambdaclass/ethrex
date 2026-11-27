@@ -104,10 +104,11 @@ Glamsterdam declined 47 EIPs per [EIP-7773], including EIP-7692 (EOF) and EIP-79
 The fork enum lives in `crates/common/types/genesis.rs`, ending at `Amsterdam`;
 activation timestamps are `ChainConfig` fields, with `bpo1_time`..`bpo5_time` already
 defined for the BPOs and Hegotá. Amsterdam is scheduled on Sepolia (`amsterdamTime`
-1791294816, 2026-10-06 13:53:36 UTC, epoch 353024; ethereum/pm#2205, EIP-7773) in
-`cmd/ethrex/networks/sepolia/genesis.json`. Hoodi's 2026-10-26 activation was unscheduled
-(eth-clients/hoodi#33) and the mainnet date is still TBD upstream, so their presets carry no
-`amsterdamTime` yet.
+1791294816, 2026-10-06 13:53:36 UTC, epoch 353024; ethereum/pm#2205, EIP-7773) and Hoodi
+(`amsterdamTime` 1797361944, 2026-12-15 19:12:24 UTC, epoch 143616; ethereum/pm#2305,
+eth-clients/hoodi#35) in their genesis files under `cmd/ethrex/networks/`. Hoodi's earlier
+2026-10-26 activation was unscheduled (eth-clients/hoodi#33) before this date was set. The
+mainnet date is still TBD upstream, so its preset carries no `amsterdamTime` yet.
 
 ---
 
