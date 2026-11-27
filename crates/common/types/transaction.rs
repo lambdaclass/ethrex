@@ -13,22 +13,18 @@ use lru::LruCache;
 pub use mempool::MempoolTransaction;
 
 const MAX_SIGNER_CACHE_ENTRIES: usize = 100_000;
+const SIGNER_CACHE_SHARDS: usize = 64;
+const SIGNER_CACHE_PER_SHARD: usize = MAX_SIGNER_CACHE_ENTRIES / SIGNER_CACHE_SHARDS;
 
-/// Global cache mapping transaction hash → recovered sender address.
-/// Keyed by tx hash (unique per transaction), so each entry is safe to reuse.
-/// Not suitable for EIP-7702 authorization tuples where the same message hash
-/// can correspond to different signers (the message excludes the signature).
-/// Uses LRU eviction to avoid periodic cold-start spikes from clearing all entries.
-///
-/// Lock with `.unwrap_or_else(|e| e.into_inner())` — a poisoned mutex just means
-/// a thread panicked mid-update; the LruCache invariants are maintained by the
-/// std Mutex (data is still accessible), and a missing entry only costs one
-/// redundant recovery, so it's safe to keep using.
-pub static GLOBAL_SIGNER_CACHE: LazyLock<Mutex<LruCache<H256, Address>>> = LazyLock::new(|| {
-    Mutex::new(LruCache::new(
-        NonZeroUsize::new(MAX_SIGNER_CACHE_ENTRIES).expect("MAX_SIGNER_CACHE_ENTRIES is non-zero"),
-    ))
-});
+/// Sharded global cache mapping transaction hash → recovered sender address.
+/// Sharded across 64 independent mutexes keyed by `tx_hash.0[0] & 63` so parallel
+/// sender recovery across rayon workers doesn't contend on a single global lock.
+pub static GLOBAL_SIGNER_CACHE: LazyLock<[Mutex<LruCache<H256, Address>>; SIGNER_CACHE_SHARDS]> =
+    LazyLock::new(|| {
+        let cap =
+            NonZeroUsize::new(SIGNER_CACHE_PER_SHARD).expect("SIGNER_CACHE_PER_SHARD is non-zero");
+        std::array::from_fn(|_| Mutex::new(LruCache::new(cap)))
+    });
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Serialize, ser::SerializeStruct};
 pub use serde_impl::{
@@ -1245,10 +1241,10 @@ impl Transaction {
         sender_cache
             .get_or_try_init(|| {
                 let tx_hash = self.hash(crypto);
-                // Fast path: check process-level signer cache
-                let mut cache = GLOBAL_SIGNER_CACHE
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner());
+                let shard =
+                    &GLOBAL_SIGNER_CACHE[(tx_hash.0[0] as usize) & (SIGNER_CACHE_SHARDS - 1)];
+                // Fast path: check process-level sharded signer cache
+                let mut cache = shard.lock().unwrap_or_else(|e| e.into_inner());
                 if let Some(&addr) = cache.get(&tx_hash) {
                     return Ok(addr);
                 }
@@ -1256,7 +1252,7 @@ impl Transaction {
                 // Slow path: actual secp256k1 recovery
                 let sender = self.compute_sender(crypto)?;
                 // Store in global cache for future lookups (LRU evicts oldest on overflow)
-                GLOBAL_SIGNER_CACHE
+                shard
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .put(tx_hash, sender);

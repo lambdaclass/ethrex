@@ -365,21 +365,51 @@ impl BlockBody {
 }
 
 pub fn compute_transactions_root(transactions: &[Transaction], crypto: &dyn Crypto) -> H256 {
-    let iter = transactions.iter().enumerate().map(|(idx, tx)| {
-        // Key: RLP(tx_index)
-        // Value: tx_type || RLP(tx)  if tx_type != 0
-        //                   RLP(tx)  else
-        (idx.encode_to_vec(), tx.encode_canonical_to_vec())
-    });
-    Trie::compute_hash_from_unsorted_iter(iter, crypto)
+    if transactions.is_empty() {
+        return *crate::constants::EMPTY_TRIE_HASH;
+    }
+    #[cfg(feature = "rayon")]
+    let encoded: Vec<Vec<u8>> = if transactions.len() >= 32 {
+        transactions
+            .par_iter()
+            .map(|tx| tx.encode_canonical_to_vec())
+            .collect()
+    } else {
+        transactions
+            .iter()
+            .map(|tx| tx.encode_canonical_to_vec())
+            .collect()
+    };
+    #[cfg(not(feature = "rayon"))]
+    let encoded: Vec<Vec<u8>> = transactions
+        .iter()
+        .map(|tx| tx.encode_canonical_to_vec())
+        .collect();
+    Trie::compute_hash_from_ordered_values(&encoded, crypto)
 }
 
 pub fn compute_receipts_root(receipts: &[Receipt], crypto: &dyn Crypto) -> H256 {
-    let iter = receipts
+    if receipts.is_empty() {
+        return *crate::constants::EMPTY_TRIE_HASH;
+    }
+    #[cfg(feature = "rayon")]
+    let encoded: Vec<Vec<u8>> = if receipts.len() >= 32 {
+        receipts
+            .par_iter()
+            .map(|receipt| receipt.encode_inner_with_bloom(crypto))
+            .collect()
+    } else {
+        receipts
+            .iter()
+            .map(|receipt| receipt.encode_inner_with_bloom(crypto))
+            .collect()
+    };
+    #[cfg(not(feature = "rayon"))]
+    let encoded: Vec<Vec<u8>> = receipts
         .iter()
-        .enumerate()
-        .map(|(idx, receipt)| (idx.encode_to_vec(), receipt.encode_inner_with_bloom(crypto)));
-    Trie::compute_hash_from_unsorted_iter(iter, crypto)
+        .map(|receipt| receipt.encode_inner_with_bloom(crypto))
+        .collect();
+    Trie::compute_hash_from_ordered_values(&encoded, crypto)
 }
 
 /// Computes the receipts root and the aggregate header `logs_bloom` in a single pass,
@@ -390,26 +420,53 @@ pub fn compute_receipts_root_and_logs_bloom(
     receipts: &[Receipt],
     crypto: &dyn Crypto,
 ) -> (H256, Bloom) {
+    if receipts.is_empty() {
+        return (*crate::constants::EMPTY_TRIE_HASH, Bloom::zero());
+    }
+    #[cfg(feature = "rayon")]
+    if receipts.len() >= 64 {
+        use rayon::slice::ParallelSlice;
+        let chunks: Vec<(Bloom, Vec<Vec<u8>>)> = receipts
+            .par_chunks(64)
+            .map(|chunk| {
+                let mut chunk_bloom = Bloom::zero();
+                let mut chunk_enc = Vec::with_capacity(chunk.len());
+                for receipt in chunk {
+                    let bloom = crate::types::bloom_from_logs(&receipt.logs, crypto);
+                    chunk_bloom |= bloom;
+                    chunk_enc.push(receipt.encode_inner_with_precomputed_bloom(bloom));
+                }
+                (chunk_bloom, chunk_enc)
+            })
+            .collect();
+        let mut logs_bloom = Bloom::zero();
+        let mut encoded = Vec::with_capacity(receipts.len());
+        for (bloom, mut chunk_enc) in chunks {
+            logs_bloom |= bloom;
+            encoded.append(&mut chunk_enc);
+        }
+        let receipts_root = Trie::compute_hash_from_ordered_values(&encoded, crypto);
+        return (receipts_root, logs_bloom);
+    }
+
     let mut logs_bloom = Bloom::zero();
-    let iter = receipts.iter().enumerate().map(|(idx, receipt)| {
+    let mut encoded = Vec::with_capacity(receipts.len());
+    for receipt in receipts {
         let bloom = crate::types::bloom_from_logs(&receipt.logs, crypto);
         logs_bloom |= bloom;
-        (
-            idx.encode_to_vec(),
-            receipt.encode_inner_with_precomputed_bloom(bloom),
-        )
-    });
-    let receipts_root = Trie::compute_hash_from_unsorted_iter(iter, crypto);
+        encoded.push(receipt.encode_inner_with_precomputed_bloom(bloom));
+    }
+    let receipts_root = Trie::compute_hash_from_ordered_values(&encoded, crypto);
     (receipts_root, logs_bloom)
 }
 
 // See [EIP-4895](https://eips.ethereum.org/EIPS/eip-4895)
 pub fn compute_withdrawals_root(withdrawals: &[Withdrawal], crypto: &dyn Crypto) -> H256 {
-    let iter = withdrawals
-        .iter()
-        .enumerate()
-        .map(|(idx, withdrawal)| (idx.encode_to_vec(), withdrawal.encode_to_vec()));
-    Trie::compute_hash_from_unsorted_iter(iter, crypto)
+    if withdrawals.is_empty() {
+        return *crate::constants::EMPTY_TRIE_HASH;
+    }
+    let encoded: Vec<Vec<u8>> = withdrawals.iter().map(|w| w.encode_to_vec()).collect();
+    Trie::compute_hash_from_ordered_values(&encoded, crypto)
 }
 
 impl RLPEncode for BlockBody {

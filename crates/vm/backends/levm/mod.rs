@@ -686,14 +686,6 @@ impl LEVM {
             "tx count overflows u32 BlockAccessIndex"
         );
 
-        let transactions_with_sender =
-            block
-                .body
-                .get_transactions_with_sender(crypto)
-                .map_err(|error| {
-                    EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
-                })?;
-
         let sequential_reason = sequential_execution_reason(
             header_bal.is_some(),
             is_amsterdam,
@@ -721,6 +713,12 @@ impl LEVM {
         if let Some(bal) = header_bal
             && sequential_reason.is_none()
         {
+            let transactions_with_sender = block
+                .body
+                .get_transactions_with_sender(crypto)
+                .map_err(|error| {
+                    EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+                })?;
             // Validate header BAL structural properties before execution.
             // This catches index-out-of-bounds early, before wasting execution time.
             // Note: the EIP-7928 item-count cap is deferred until after transaction
@@ -995,7 +993,10 @@ impl LEVM {
         // The value itself can be safely changed.
         let mut tx_since_last_flush = 2;
 
-        for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
+        for (tx_idx, tx) in block.body.transactions.iter().enumerate() {
+            let tx_sender = tx.sender(crypto).map_err(|error| {
+                EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+            })?;
             // Pre-tx gas limit guard:
             // Pre-Amsterdam: reject tx if cumulative post-refund gas + tx.gas > block limit.
             // Amsterdam+: skip — EIP-8037's 2D gas model means cumulative gas (regular +
@@ -3297,21 +3298,84 @@ impl LEVM {
         crypto: &dyn Crypto,
         cancelled: &AtomicBool,
     ) -> Result<(), EvmError> {
-        let txs_with_sender = block
-            .body
-            .get_transactions_with_sender(crypto)
-            .map_err(|error| {
-                EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
-            })?;
+        // Process the block in ascending chunks via an atomic cursor: each rayon worker
+        // recovers senders AND immediately warms accounts/storage for its chunk before
+        // grabbing the next chunk. This keeps both sender recovery and account/storage
+        // cache warming strictly ahead of sequential execution in block order (instead of
+        // waiting for all 1,390 recoveries before warming tx #0 in random HashMap order).
+        const WARM_CHUNK: usize = 16;
+        let txs = &block.body.transactions;
+        if !txs.is_empty() {
+            let chain_config = store.get_chain_config()?;
+            let evm_config = EVMConfig::new_from_chain_config(&chain_config, &block.header);
+            let chain_id = chain_config.chain_id;
+            let base_blob_fee_per_gas =
+                get_base_fee_per_blob_gas(block.header.excess_blob_gas, &evm_config)?;
 
-        Self::warm_txs(
-            &txs_with_sender,
-            &block.header,
-            store.clone(),
-            vm_type,
-            crypto,
-            &|| cancelled.load(Ordering::Relaxed),
-        )?;
+            let num_chunks = txs.len().div_ceil(WARM_CHUNK);
+            let next_chunk = AtomicUsize::new(0);
+            let worker_count = rayon::current_num_threads().min(num_chunks).max(1);
+            let header = &block.header;
+            let store_ref = &store;
+            let next_ref = &next_chunk;
+
+            rayon::scope(|s| {
+                for _ in 0..worker_count {
+                    s.spawn(move |_| {
+                        let mut stack_pool = Vec::with_capacity(STACK_LIMIT);
+                        let mut memory_pool = Vec::with_capacity(1);
+                        let mut initcode_pool = Vec::new();
+                        let mut group_db = GeneralizedDatabase::new(store_ref.clone());
+
+                        while !cancelled.load(Ordering::Relaxed) {
+                            let chunk_idx = next_ref.fetch_add(1, Ordering::Relaxed);
+                            if chunk_idx >= num_chunks {
+                                break;
+                            }
+                            let start = chunk_idx * WARM_CHUNK;
+                            let end = (start + WARM_CHUNK).min(txs.len());
+
+                            // Recover senders for this chunk first, then warm each tx right away.
+                            let mut chunk_txs: Vec<(&Transaction, Address)> =
+                                Vec::with_capacity(end - start);
+                            for tx in &txs[start..end] {
+                                if cancelled.load(Ordering::Relaxed) {
+                                    return;
+                                }
+                                if let Ok(sender) = tx.sender(crypto) {
+                                    chunk_txs.push((tx, sender));
+                                }
+                            }
+                            for (tx, sender) in chunk_txs {
+                                if cancelled.load(Ordering::Relaxed) {
+                                    return;
+                                }
+                                let _ = Self::execute_tx_in_block(
+                                    tx,
+                                    sender,
+                                    header,
+                                    &mut group_db,
+                                    vm_type,
+                                    base_blob_fee_per_gas,
+                                    &mut stack_pool,
+                                    &mut memory_pool,
+                                    &mut initcode_pool,
+                                    true,
+                                    crypto,
+                                    evm_config,
+                                    chain_id,
+                                    None,
+                                );
+                            }
+                            // Reset mutable tx state between chunks so stale nonce/balance
+                            // mutations from chunk K don't interfere with chunk K+N.
+                            group_db.current_accounts_state.clear();
+                            group_db.initial_accounts_state.clear();
+                        }
+                    });
+                }
+            });
+        }
 
         let mut db = GeneralizedDatabase::new(store.clone());
 

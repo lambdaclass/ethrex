@@ -741,6 +741,246 @@ impl Trie {
         trie.hash_no_commit(crypto)
     }
 
+    /// Computes the Ethereum ordered-trie root (keys `RLP(0), RLP(1), ..., RLP(n-1)`)
+    /// directly from sorted key slices without allocating `Node`/`Arc`/`OnceLock`/`FxHashSet`
+    /// structures, parallelizing large subtrees under `std` (rayon).
+    pub fn compute_hash_from_ordered_values(values: &[Vec<u8>], crypto: &dyn Crypto) -> H256 {
+        if values.is_empty() {
+            return EMPTY_TRIE_HASH;
+        }
+
+        #[derive(Clone, Copy)]
+        struct OrderedKey {
+            bytes: [u8; 9],
+            byte_len: u8,
+            idx: usize,
+        }
+
+        impl OrderedKey {
+            #[inline]
+            fn from_index(idx: usize) -> Self {
+                let mut bytes = [0u8; 9];
+                let byte_len = if idx == 0 {
+                    bytes[0] = 0x80;
+                    1
+                } else if idx < 0x80 {
+                    bytes[0] = idx as u8;
+                    1
+                } else {
+                    let be = idx.to_be_bytes();
+                    let leading_zeros = (idx.leading_zeros() / 8) as usize;
+                    let sig_len = be.len() - leading_zeros;
+                    bytes[0] = 0x80 + sig_len as u8;
+                    bytes[1..1 + sig_len].copy_from_slice(&be[leading_zeros..]);
+                    (1 + sig_len) as u8
+                };
+                Self {
+                    bytes,
+                    byte_len,
+                    idx,
+                }
+            }
+
+            #[inline]
+            fn nibble_len(&self) -> usize {
+                (self.byte_len as usize) * 2
+            }
+
+            #[inline]
+            fn nibble_at(&self, nib_idx: usize) -> u8 {
+                let b = self.bytes[nib_idx >> 1];
+                if nib_idx & 1 == 0 { b >> 4 } else { b & 0x0f }
+            }
+        }
+
+        #[inline]
+        fn encode_compact_stack(
+            key: &OrderedKey,
+            start_nib: usize,
+            end_nib: usize,
+            is_leaf: bool,
+        ) -> ([u8; 10], usize) {
+            let mut out = [0u8; 10];
+            let mut pos = 0usize;
+            let len = end_nib - start_nib;
+            let flag = if is_leaf { 0x20u8 } else { 0x00u8 };
+            let mut i = start_nib;
+            if len & 1 == 1 {
+                out[pos] = flag | 0x10 | key.nibble_at(i);
+                pos += 1;
+                i += 1;
+            } else {
+                out[pos] = flag;
+                pos += 1;
+            }
+            while i < end_nib {
+                out[pos] = (key.nibble_at(i) << 4) | key.nibble_at(i + 1);
+                pos += 1;
+                i += 2;
+            }
+            (out, pos)
+        }
+
+        #[inline]
+        fn encode_bytes_field(bytes: &[u8], out: &mut Vec<u8>) {
+            <[u8] as RLPEncode>::encode(bytes, out);
+        }
+
+        #[inline]
+        fn bytes_field_len(bytes: &[u8]) -> usize {
+            <[u8] as RLPEncode>::length(bytes)
+        }
+
+        fn hash_sorted_slice(
+            entries: &[OrderedKey],
+            values: &[Vec<u8>],
+            nibble_offset: usize,
+            crypto: &dyn Crypto,
+            buf: &mut Vec<u8>,
+        ) -> NodeHash {
+            if entries.len() == 1 {
+                let entry = &entries[0];
+                let value = &values[entry.idx];
+                let (compact_arr, compact_len) =
+                    encode_compact_stack(entry, nibble_offset, entry.nibble_len(), true);
+                let compact = &compact_arr[..compact_len];
+                let payload_len = bytes_field_len(compact) + bytes_field_len(value);
+                buf.clear();
+                ethrex_rlp::encode::encode_length(payload_len, buf);
+                encode_bytes_field(compact, buf);
+                encode_bytes_field(value, buf);
+                return NodeHash::from_encoded(buf, crypto);
+            }
+
+            let first = &entries[0];
+            let last = &entries[entries.len() - 1];
+            let max_lcp = first
+                .nibble_len()
+                .min(last.nibble_len())
+                .saturating_sub(nibble_offset);
+            let mut lcp = 0usize;
+            while lcp < max_lcp
+                && first.nibble_at(nibble_offset + lcp) == last.nibble_at(nibble_offset + lcp)
+            {
+                lcp += 1;
+            }
+
+            if lcp > 0 {
+                let child_hash =
+                    hash_sorted_slice(entries, values, nibble_offset + lcp, crypto, buf);
+                let (compact_arr, compact_len) =
+                    encode_compact_stack(first, nibble_offset, nibble_offset + lcp, false);
+                let compact = &compact_arr[..compact_len];
+                let child_rlp_len = RLPEncode::length(&child_hash);
+                let payload_len = bytes_field_len(compact) + child_rlp_len;
+                buf.clear();
+                ethrex_rlp::encode::encode_length(payload_len, buf);
+                encode_bytes_field(compact, buf);
+                match child_hash {
+                    NodeHash::Hashed(h) => h.0.encode(buf),
+                    NodeHash::Inline((_, 0)) => buf.push(RLP_NULL),
+                    NodeHash::Inline((encoded, len)) => {
+                        buf.extend_from_slice(&encoded[..len as usize])
+                    }
+                }
+                return NodeHash::from_encoded(buf, crypto);
+            }
+
+            // Branch node: partition sorted entries by nibble at `nibble_offset`.
+            let mut cursor = 0usize;
+            let branch_value: &[u8] = if entries[0].nibble_len() == nibble_offset {
+                cursor = 1;
+                &values[entries[0].idx]
+            } else {
+                &[]
+            };
+
+            let mut ranges = [(0usize, 0usize); 16];
+            #[cfg(feature = "std")]
+            let mut non_empty_count = 0usize;
+            while cursor < entries.len() {
+                let nib = entries[cursor].nibble_at(nibble_offset) as usize;
+                let start = cursor;
+                cursor += 1;
+                while cursor < entries.len()
+                    && entries[cursor].nibble_at(nibble_offset) as usize == nib
+                {
+                    cursor += 1;
+                }
+                ranges[nib] = (start, cursor);
+                #[cfg(feature = "std")]
+                {
+                    non_empty_count += 1;
+                }
+            }
+
+            let mut choices = [NodeHash::default(); 16];
+            #[cfg(feature = "std")]
+            let use_parallel = entries.len() >= 64 && non_empty_count > 1;
+            #[cfg(not(feature = "std"))]
+            let use_parallel = false;
+
+            if use_parallel {
+                #[cfg(feature = "std")]
+                {
+                    use rayon::prelude::*;
+                    choices.par_iter_mut().enumerate().for_each(|(nib, slot)| {
+                        let (start, end) = ranges[nib];
+                        if start < end {
+                            let mut local_buf = Vec::with_capacity(600);
+                            *slot = hash_sorted_slice(
+                                &entries[start..end],
+                                values,
+                                nibble_offset + 1,
+                                crypto,
+                                &mut local_buf,
+                            );
+                        }
+                    });
+                }
+            } else {
+                for nib in 0..16 {
+                    let (start, end) = ranges[nib];
+                    if start < end {
+                        choices[nib] = hash_sorted_slice(
+                            &entries[start..end],
+                            values,
+                            nibble_offset + 1,
+                            crypto,
+                            buf,
+                        );
+                    }
+                }
+            }
+
+            let value_len = bytes_field_len(branch_value);
+            let payload_len = choices
+                .iter()
+                .fold(value_len, |acc, hash| acc + RLPEncode::length(hash));
+            buf.clear();
+            ethrex_rlp::encode::encode_length(payload_len, buf);
+            for hash in choices {
+                match hash {
+                    NodeHash::Hashed(h) => h.0.encode(buf),
+                    NodeHash::Inline((_, 0)) => buf.push(RLP_NULL),
+                    NodeHash::Inline((encoded, len)) => {
+                        buf.extend_from_slice(&encoded[..len as usize])
+                    }
+                }
+            }
+            encode_bytes_field(branch_value, buf);
+            NodeHash::from_encoded(buf, crypto)
+        }
+
+        let mut keys: Vec<OrderedKey> = (0..values.len()).map(OrderedKey::from_index).collect();
+        keys.sort_unstable_by(|a, b| {
+            a.bytes[..a.byte_len as usize].cmp(&b.bytes[..b.byte_len as usize])
+        });
+
+        let mut buf = Vec::with_capacity(600);
+        hash_sorted_slice(&keys, values, 0, crypto, &mut buf).finalize(crypto)
+    }
+
     /// Creates a new stateless trie. This trie won't be able to store any nodes so all data will be lost after calculating the hash
     /// Only use it for proof verification or computing a hash from an iterator
     pub(crate) fn stateless() -> Trie {
@@ -1342,6 +1582,33 @@ mod tests {
             // An inline branch holding an inline leaf.
             assert!(embed(&branch_over(&branch_over(&leaf(2, 1))), &[], 4).is_ok());
             assert!(embed(&branch_over(&branch_over(&leaf(3, 1))), &[], 4).is_err());
+        }
+    }
+
+    #[test]
+    fn ordered_values_hash_matches_unsorted_trie() {
+        for &count in &[
+            0usize, 1, 2, 3, 15, 16, 17, 127, 128, 129, 255, 256, 257, 1500,
+        ] {
+            // Mix of tiny (<32B inline) and large (>32B hashed) values
+            let values: Vec<Vec<u8>> = (0..count)
+                .map(|i| {
+                    if i % 3 == 0 {
+                        vec![(i & 0xff) as u8; (i % 5) + 1]
+                    } else {
+                        vec![((i * 31) & 0xff) as u8; 40 + (i % 64)]
+                    }
+                })
+                .collect();
+            let expected = Trie::compute_hash_from_unsorted_iter(
+                values
+                    .iter()
+                    .enumerate()
+                    .map(|(i, v)| (i.encode_to_vec(), v.clone())),
+                &NativeCrypto,
+            );
+            let actual = Trie::compute_hash_from_ordered_values(&values, &NativeCrypto);
+            assert_eq!(actual, expected, "mismatch for count={count}");
         }
     }
 }
