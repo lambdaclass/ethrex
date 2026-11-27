@@ -3375,15 +3375,11 @@ impl Store {
         genesis: Genesis,
         skip_genesis_validation: bool,
     ) -> Result<(), StoreError> {
+        const GENESIS_BLOCK_NUMBER: BlockNumber = 0;
+
         debug!("Storing initial state from genesis");
 
-        // Obtain genesis block
-        let genesis_block = genesis.get_block();
-        let genesis_block_number = genesis_block.header.number;
-
-        let genesis_hash = genesis_block.hash();
-
-        let stored_genesis_header = self.load_block_header(genesis_block_number)?;
+        let stored_genesis_header = self.load_block_header(GENESIS_BLOCK_NUMBER)?;
 
         // Always set the chain config from the genesis file. The in-memory
         // `chain_config` starts at `Default::default()` on every boot and is
@@ -3401,29 +3397,41 @@ impl Store {
             self.anchor_to_durable_head(latest).await?;
         }
 
-        match stored_genesis_header {
-            Some(header) if skip_genesis_validation => {
+        // Building the genesis block hashes every account to get the state root, which takes
+        // minutes for a large genesis. It is put off until a path needs it, and a genesis whose
+        // fingerprint is stored has passed that check on an earlier start.
+        if let Some(header) = stored_genesis_header {
+            if skip_genesis_validation {
                 info!(
                     stored_genesis = %header.hash(),
                     "Skipping genesis state validation; trusting the genesis header and state already stored in the datadir"
                 );
                 return Ok(());
             }
-            Some(header) if header.hash() == genesis_hash => {
-                info!("Received genesis file matching a previously stored one, nothing to do");
-                return Ok(());
+            let fingerprint = genesis_fingerprint(&genesis);
+            let seen_before =
+                fingerprint.is_some() && fingerprint == self.load_genesis_fingerprint().await?;
+            if !seen_before {
+                if header.hash() != genesis.get_block().hash() {
+                    error!(
+                        "The chain configuration stored in the database is incompatible with the provided configuration. If you intended to switch networks, choose another datadir or clear the database (e.g., run `ethrex removedb`) and try again."
+                    );
+                    return Err(StoreError::IncompatibleChainConfig);
+                }
+                if let Some(fingerprint) = fingerprint {
+                    self.store_genesis_fingerprint(fingerprint).await?;
+                }
             }
-            Some(_) => {
-                error!(
-                    "The chain configuration stored in the database is incompatible with the provided configuration. If you intended to switch networks, choose another datadir or clear the database (e.g., run `ethrex removedb`) and try again."
-                );
-                return Err(StoreError::IncompatibleChainConfig);
-            }
-            None => {
-                self.add_block_header(genesis_hash, genesis_block.header.clone())
-                    .await?
-            }
+            info!("Received genesis file matching a previously stored one, nothing to do");
+            return Ok(());
         }
+
+        let fingerprint = genesis_fingerprint(&genesis);
+        let genesis_block = genesis.get_block();
+        let genesis_block_number = genesis_block.header.number;
+        let genesis_hash = genesis_block.hash();
+        self.add_block_header(genesis_hash, genesis_block.header.clone())
+            .await?;
         // Store genesis accounts
         // TODO: Should we use this root instead of computing it before the block hash check?
         let genesis_state_root = self.setup_genesis_state_trie(genesis.alloc).await?;
@@ -3444,7 +3452,26 @@ impl Store {
         self.mark_history_bounds_reconciled(None).await?;
         self.forkchoice_update(vec![], genesis_block_number, genesis_hash, None, None)
             .await?;
+        if let Some(fingerprint) = fingerprint {
+            self.store_genesis_fingerprint(fingerprint).await?;
+        }
         Ok(())
+    }
+
+    /// Fingerprint of the genesis that was last checked against the stored genesis block.
+    async fn load_genesis_fingerprint(&self) -> Result<Option<H256>, StoreError> {
+        let key = chain_data_key(ChainDataIndex::GenesisFingerprint);
+        Ok(self
+            .read_async(CHAIN_DATA, key)
+            .await?
+            .filter(|bytes| bytes.len() == H256::len_bytes())
+            .map(|bytes| H256::from_slice(&bytes)))
+    }
+
+    async fn store_genesis_fingerprint(&self, fingerprint: H256) -> Result<(), StoreError> {
+        let key = chain_data_key(ChainDataIndex::GenesisFingerprint);
+        self.write_async(CHAIN_DATA, key, fingerprint.as_bytes().to_vec())
+            .await
     }
 
     pub async fn load_initial_state(&self) -> Result<(), StoreError> {
@@ -6152,6 +6179,15 @@ pub fn hash_key(key: &H256) -> Vec<u8> {
 
 pub fn hash_key_fixed(key: &H256) -> [u8; 32] {
     keccak_hash(key.to_fixed_bytes())
+}
+
+/// The genesis fingerprint, or `None` if it could not be computed. Without one the genesis is
+/// checked in full on every start.
+fn genesis_fingerprint(genesis: &Genesis) -> Option<H256> {
+    genesis
+        .fingerprint()
+        .inspect_err(|err| warn!("Failed to compute the genesis fingerprint: {err}"))
+        .ok()
 }
 
 fn chain_data_key(index: ChainDataIndex) -> Vec<u8> {
@@ -9278,5 +9314,90 @@ mod state_view_tests {
     fn state_view_is_pinned_across_a_commit_rocksdb() {
         let dir = tempfile::tempdir().unwrap();
         state_view_is_pinned_across_a_commit(Store::new(dir.path(), EngineType::RocksDB).unwrap());
+    }
+}
+
+#[cfg(test)]
+mod genesis_fingerprint_tests {
+    use super::*;
+
+    const GENESIS_KURTOSIS: &str = include_str!("../../fixtures/genesis/kurtosis.json");
+
+    fn kurtosis_genesis() -> Genesis {
+        serde_json::from_str(GENESIS_KURTOSIS).expect("deserialize kurtosis.json")
+    }
+
+    /// The same genesis with one account holding one more wei: another genesis block, which
+    /// only hashing the accounts can tell from the original.
+    fn kurtosis_genesis_with_another_balance() -> Genesis {
+        let mut genesis = kurtosis_genesis();
+        let account = genesis
+            .alloc
+            .values_mut()
+            .next()
+            .expect("genesis has accounts");
+        account.balance += U256::one();
+        genesis
+    }
+
+    #[tokio::test]
+    async fn a_new_database_stores_the_fingerprint_of_its_genesis() {
+        let genesis = kurtosis_genesis();
+        let mut store = Store::new("", EngineType::InMemory).unwrap();
+
+        store.add_initial_state(genesis.clone()).await.unwrap();
+
+        assert_eq!(
+            store.load_genesis_fingerprint().await.unwrap(),
+            Some(genesis.fingerprint().unwrap())
+        );
+    }
+
+    #[tokio::test]
+    async fn a_database_without_a_fingerprint_gets_one_after_the_full_check() {
+        let genesis = kurtosis_genesis();
+        let mut store = Store::new("", EngineType::InMemory).unwrap();
+        store.add_initial_state(genesis.clone()).await.unwrap();
+        // What a database written before fingerprints existed holds: none that matches.
+        store.store_genesis_fingerprint(H256::zero()).await.unwrap();
+
+        store.add_initial_state(genesis.clone()).await.unwrap();
+
+        assert_eq!(
+            store.load_genesis_fingerprint().await.unwrap(),
+            Some(genesis.fingerprint().unwrap())
+        );
+    }
+
+    #[tokio::test]
+    async fn a_genesis_with_other_accounts_is_rejected_and_not_remembered() {
+        let genesis = kurtosis_genesis();
+        let mut store = Store::new("", EngineType::InMemory).unwrap();
+        store.add_initial_state(genesis.clone()).await.unwrap();
+
+        let result = store
+            .add_initial_state(kurtosis_genesis_with_another_balance())
+            .await;
+
+        assert!(matches!(result, Err(StoreError::IncompatibleChainConfig)));
+        assert_eq!(
+            store.load_genesis_fingerprint().await.unwrap(),
+            Some(genesis.fingerprint().unwrap())
+        );
+    }
+
+    /// The genesis block is not built again for a genesis whose fingerprint is stored. Storing
+    /// the fingerprint of another genesis by hand shows it: the full check would reject it.
+    #[tokio::test]
+    async fn a_genesis_with_a_stored_fingerprint_skips_the_full_check() {
+        let mut store = Store::new("", EngineType::InMemory).unwrap();
+        store.add_initial_state(kurtosis_genesis()).await.unwrap();
+        let other_genesis = kurtosis_genesis_with_another_balance();
+        store
+            .store_genesis_fingerprint(other_genesis.fingerprint().unwrap())
+            .await
+            .unwrap();
+
+        store.add_initial_state(other_genesis).await.unwrap();
     }
 }

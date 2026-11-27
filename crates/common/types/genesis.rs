@@ -1,13 +1,16 @@
 use bytes::Bytes;
 use ethereum_types::{Address, Bloom, H256, U256};
-use ethrex_crypto::{NativeCrypto, keccak::keccak_hash};
+use ethrex_crypto::{
+    NativeCrypto,
+    keccak::{Keccak256, keccak_hash},
+};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Trie;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap},
-    io::{BufReader, Error},
+    io::{BufReader, BufWriter, Error, Write},
     path::Path,
 };
 use tracing::warn;
@@ -815,6 +818,105 @@ impl Genesis {
             )
         });
         Trie::compute_hash_from_unsorted_iter(iter, &NativeCrypto)
+    }
+
+    /// Hash of everything in the genesis, the accounts included.
+    ///
+    /// It takes one pass over the data, which is far cheaper than [`Genesis::get_block`]: that
+    /// one builds the storage tries and the state trie to get the state root. Two genesis that
+    /// differ in any field have different fingerprints. The value depends on how the fields
+    /// are fed to the hash, so it only tells whether a genesis is the same one seen before; it
+    /// does not identify a chain.
+    pub fn fingerprint(&self) -> Result<H256, serde_json::Error> {
+        // The accounts are written a few bytes at a time.
+        const BUFFER_SIZE: usize = 64 * 1024;
+
+        /// Feeds what is written to it into a hasher.
+        struct HashWriter(Keccak256);
+
+        impl Write for HashWriter {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.update(buf);
+                Ok(buf.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        // Every field is named, here and for the accounts below, so that a new one does not
+        // compile until it is hashed too.
+        let Genesis {
+            config,
+            alloc,
+            coinbase,
+            difficulty,
+            extra_data,
+            gas_limit,
+            nonce,
+            mix_hash,
+            timestamp,
+            base_fee_per_gas,
+            blob_gas_used,
+            excess_blob_gas,
+            requests_hash,
+            block_access_list_hash,
+            slot_number,
+        } = self;
+        // All but the accounts is small: it goes through the serializer, which keeps up with
+        // the chain config on its own.
+        let without_accounts = serde_json::to_vec(&Genesis {
+            config: *config,
+            alloc: BTreeMap::new(),
+            coinbase: *coinbase,
+            difficulty: *difficulty,
+            extra_data: extra_data.clone(),
+            gas_limit: *gas_limit,
+            nonce: *nonce,
+            mix_hash: *mix_hash,
+            timestamp: *timestamp,
+            base_fee_per_gas: *base_fee_per_gas,
+            blob_gas_used: *blob_gas_used,
+            excess_blob_gas: *excess_blob_gas,
+            requests_hash: *requests_hash,
+            block_access_list_hash: *block_access_list_hash,
+            slot_number: *slot_number,
+        })?;
+
+        // What has a variable size is preceded by its length, so that no two genesis feed the
+        // hash the same bytes.
+        let length = |length: usize| (length as u64).to_le_bytes();
+        let mut writer = BufWriter::with_capacity(BUFFER_SIZE, HashWriter(Keccak256::new()));
+        let mut write_all = || -> std::io::Result<()> {
+            writer.write_all(&length(without_accounts.len()))?;
+            writer.write_all(&without_accounts)?;
+            writer.write_all(&length(alloc.len()))?;
+            for (address, account) in alloc {
+                let GenesisAccount {
+                    code,
+                    storage,
+                    balance,
+                    nonce,
+                } = account;
+                writer.write_all(address.as_bytes())?;
+                writer.write_all(&balance.to_big_endian())?;
+                writer.write_all(&nonce.to_le_bytes())?;
+                writer.write_all(&length(code.len()))?;
+                writer.write_all(code)?;
+                writer.write_all(&length(storage.len()))?;
+                for (key, value) in storage {
+                    writer.write_all(&key.to_big_endian())?;
+                    writer.write_all(&value.to_big_endian())?;
+                }
+            }
+            Ok(())
+        };
+        write_all().map_err(serde_json::Error::io)?;
+        let HashWriter(hasher) = writer
+            .into_inner()
+            .map_err(|err| serde_json::Error::io(err.into_error()))?;
+        Ok(H256(hasher.finalize()))
     }
 }
 #[cfg(test)]
@@ -1660,5 +1762,52 @@ mod tests {
 
         config.bpo3_time = Some(0);
         assert_eq!(config.get_fork_blob_schedule(0), Some(bpo3));
+    }
+
+    fn kurtosis_genesis() -> Genesis {
+        let file = File::open("../../fixtures/genesis/kurtosis.json")
+            .expect("Failed to open genesis file");
+        serde_json::from_reader(BufReader::new(file)).expect("Failed to deserialize genesis file")
+    }
+
+    #[test]
+    fn fingerprint_is_the_same_for_the_same_genesis() {
+        assert_eq!(
+            kurtosis_genesis().fingerprint().unwrap(),
+            kurtosis_genesis().fingerprint().unwrap()
+        );
+    }
+
+    #[test]
+    fn fingerprint_changes_with_any_part_of_the_genesis() {
+        let genesis = kurtosis_genesis();
+        let fingerprint = genesis.fingerprint().unwrap();
+
+        let mut other_balance = genesis.clone();
+        let account = other_balance.alloc.values_mut().next().unwrap();
+        account.balance += U256::one();
+        assert_ne!(other_balance.fingerprint().unwrap(), fingerprint);
+
+        let mut other_storage = genesis.clone();
+        let account = other_storage.alloc.values_mut().next().unwrap();
+        account.storage.insert(U256::MAX, U256::one());
+        assert_ne!(other_storage.fingerprint().unwrap(), fingerprint);
+
+        let mut other_code = genesis.clone();
+        let account = other_code.alloc.values_mut().next().unwrap();
+        account.code = [account.code.as_ref(), &[0]].concat().into();
+        assert_ne!(other_code.fingerprint().unwrap(), fingerprint);
+
+        let mut other_account = genesis.clone();
+        other_account.alloc.pop_last();
+        assert_ne!(other_account.fingerprint().unwrap(), fingerprint);
+
+        let mut other_header = genesis.clone();
+        other_header.gas_limit += 1;
+        assert_ne!(other_header.fingerprint().unwrap(), fingerprint);
+
+        let mut other_config = genesis;
+        other_config.config.chain_id += 1;
+        assert_ne!(other_config.fingerprint().unwrap(), fingerprint);
     }
 }
