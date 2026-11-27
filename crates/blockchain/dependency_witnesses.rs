@@ -79,10 +79,23 @@ pub fn validate_dependency_witnesses(
             found: witnesses.len(),
         });
     }
-    for (index, (dependency, witness)) in dependencies.iter().zip(witnesses).enumerate() {
-        if !satisfies(dependency, witness) {
-            return Err(InvalidBlockError::DependencyNotSatisfied(index));
-        }
+    // Each witness is checked on its own, so they are checked in parallel. The
+    // lowest failing index is reported, as checking them in order would.
+    #[cfg(feature = "rayon")]
+    let unsatisfied = {
+        use rayon::prelude::*;
+        dependencies
+            .par_iter()
+            .zip(witnesses.par_iter())
+            .position_first(|(dependency, witness)| !satisfies(dependency, witness))
+    };
+    #[cfg(not(feature = "rayon"))]
+    let unsatisfied = dependencies
+        .iter()
+        .zip(witnesses)
+        .position(|(dependency, witness)| !satisfies(dependency, witness));
+    if let Some(index) = unsatisfied {
+        return Err(InvalidBlockError::DependencyNotSatisfied(index));
     }
     metrics!({
         let count = witnesses.len() as u64;

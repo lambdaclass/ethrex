@@ -596,3 +596,66 @@ async fn dependency_transaction_is_submitted_with_its_witnesses_through_the_rpc(
             .await;
     assert!(result.is_err(), "got {result:?}");
 }
+
+/// A block whose transactions declare `per_key` explicit-message dependencies
+/// under each of `keys`, with a valid witness for each in block order.
+async fn block_with_dependencies(
+    keys: &[&Key],
+    per_key: usize,
+) -> (Block, ethrex_common::types::ChainConfig) {
+    let (store, chain_id) = setup_store(keys).await;
+    let transactions: Vec<Transaction> = keys
+        .iter()
+        .enumerate()
+        .map(|(k, key)| {
+            let declarations: Vec<(H256, H256)> = (1..per_key)
+                .map(|i| {
+                    (
+                        H256::from_low_u64_be((k * 1_000_000 + i) as u64),
+                        key.public,
+                    )
+                })
+                .collect();
+            Transaction::FrameTransaction(dependency_transaction(chain_id, key, &declarations))
+        })
+        .collect();
+    let witnesses = block_dependencies(&transactions)
+        .iter()
+        .map(|dependency| {
+            let key = keys
+                .iter()
+                .find(|key| key.public == dependency.verification_key_hash)
+                .unwrap();
+            sign(key, dependency.data_hash)
+        })
+        .collect();
+    let config = store.get_chain_config();
+    let header = ethrex_common::types::BlockHeader {
+        timestamp: store.get_block_header(0).unwrap().unwrap().timestamp + 12,
+        ..Default::default()
+    };
+    let body = ethrex_common::types::BlockBody {
+        transactions,
+        dependency_witnesses: Some(witnesses),
+        ..Default::default()
+    };
+    (Block::new(header, body), config)
+}
+
+#[tokio::test]
+async fn the_first_unsatisfied_dependency_is_the_one_reported() {
+    use ethrex_blockchain::dependency_witnesses::validate_dependency_witnesses;
+    let key = key(0x71);
+    let (mut block, config) = block_with_dependencies(&[&key], 6).await;
+    validate_dependency_witnesses(&block, &config).expect("every witness holds");
+    let witnesses = block.body.dependency_witnesses.as_mut().unwrap();
+    for index in [4, 1, 5] {
+        let mut tampered = witnesses[index].to_vec();
+        tampered[100] ^= 0x01;
+        witnesses[index] = Bytes::from(tampered);
+    }
+    assert!(matches!(
+        validate_dependency_witnesses(&block, &config),
+        Err(InvalidBlockError::DependencyNotSatisfied(1))
+    ));
+}
