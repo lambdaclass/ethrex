@@ -303,7 +303,8 @@ fn block_state_call_to_spec(
     let block_overrides = entry.block_overrides.unwrap_or_default();
     // Every field is mapped across by hand below, so anything left unmapped would parse
     // and then be silently ignored, answering with a plausible-looking but wrong result.
-    // `blockHash` is the one field that cannot be honored, so it is refused with a reason.
+    // `blockHash` cannot be honored at all, and `difficulty` not after the merge, so both
+    // are refused with a reason.
     // `beaconRoot` *is* honored here, unlike on the `eth_call` family's `apply_to` path:
     // this engine runs the block's system calls, so the value reaches the EIP-4788 ring
     // buffer rather than just sitting on the header.
@@ -312,6 +313,11 @@ fn block_state_call_to_spec(
             "blockHash is not supported: it is a reth/alloy extension, not part of the \
              eth_simulateV1 or geth Block Override Set"
                 .to_string(),
+        ));
+    }
+    if block_overrides.sets_difficulty_after_merge(chain_config, timestamp) {
+        return Err(invalid_params(
+            "difficulty is not supported after the merge".to_string(),
         ));
     }
     let excess_blob_gas = block_overrides.resolved_excess_blob_gas(chain_config, timestamp);
@@ -1584,6 +1590,26 @@ mod integration_tests {
         let message = err.to_string();
         assert!(
             message.contains("blockHash"),
+            "the refusal should name the field, got: {message}"
+        );
+        assert_eq!(error_code(err), -32602);
+    }
+
+    /// The shared `BlockOverrides` schema requires a client that knows `difficulty` to
+    /// reject it with -32602 for a block after the merge, where the field has no meaning.
+    #[tokio::test]
+    async fn difficulty_override_after_the_merge_is_refused() {
+        let err = simulate(json!([{
+            "blockStateCalls": [{
+                "blockOverrides": { "difficulty": "0x1" },
+                "calls": [{"from": RICH, "to": FRESH_A, "gas": "0x186a0"}],
+            }],
+        }, "latest"]))
+        .await
+        .expect_err("a post-merge difficulty override must be refused");
+        let message = err.to_string();
+        assert!(
+            message.contains("difficulty"),
             "the refusal should name the field, got: {message}"
         );
         assert_eq!(error_code(err), -32602);
