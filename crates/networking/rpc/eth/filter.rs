@@ -534,7 +534,10 @@ mod tests {
         rpc::{FILTER_DURATION, map_http_requests},
         test_utils::{TEST_GENESIS, default_context_with_storage, start_test_api},
     };
-    use crate::{types::block_identifier::BlockIdentifier, utils::RpcRequest};
+    use crate::{
+        types::block_identifier::{BlockIdentifier, BlockTag},
+        utils::RpcRequest,
+    };
     use ethrex_common::types::Genesis;
     use ethrex_storage::{EngineType, Store};
 
@@ -685,8 +688,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[should_panic]
-    async fn filter_request_smoke_test_from_block_missing() {
+    async fn filter_request_smoke_test_from_block_null() {
         let raw_json = json!(
         {
             "jsonrpc":"2.0",
@@ -702,8 +704,19 @@ mod tests {
             ]
                 ,"id":1
         });
+        // A null `fromBlock` is unset, so it defaults to `latest`.
         let filters = Arc::new(Mutex::new(HashMap::new()));
-        run_new_filter_request_test(raw_json.clone(), filters.clone()).await;
+        let id = run_new_filter_request_test(raw_json.clone(), filters.clone()).await;
+        let filters = filters.lock().unwrap();
+        let (_, filter) = filters.get(&id).unwrap().clone();
+        assert!(matches!(
+            logs_filter(&filter).from_block,
+            BlockIdentifier::Tag(BlockTag::Latest)
+        ));
+        assert!(matches!(
+            logs_filter(&filter).to_block,
+            BlockIdentifier::Number(10)
+        ));
     }
 
     async fn run_new_filter_request_test(
