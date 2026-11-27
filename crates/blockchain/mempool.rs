@@ -119,9 +119,9 @@ pub const RECENTLY_INCLUDED_TTL: Duration = Duration::from_secs(60);
 /// blobpool `datacap`) so memory is bounded regardless of blobs-per-tx.
 pub const MAX_BLOB_MEMPOOL_SIZE: usize = 512;
 
-/// Hashes [`Mempool::subscribe_new_transactions`] buffers for a subscriber that
-/// has not read them yet, the same as geth's `txChanSize`. A subscriber further
-/// behind skips the oldest ones.
+/// Transactions [`Mempool::subscribe_new_transactions`] buffers for a subscriber
+/// that has not read them yet, the same as geth's `txChanSize`. A subscriber
+/// further behind skips the oldest ones.
 pub const NEW_TRANSACTIONS_CAPACITY: usize = 4096;
 
 /// Keccak-256 hash of the canonical paymaster bytecode (EIP-8141).
@@ -724,9 +724,9 @@ pub struct Mempool {
     /// snapshotted the mempool, so it can decide whether a stale build is safe
     /// to return.
     tx_seq: AtomicU64,
-    /// The hash of every transaction added to the pool for broadcast. Private
+    /// Every transaction added to the pool for broadcast, with its hash. Private
     /// transactions are left out, as they are from P2P.
-    new_transactions: tokio::sync::broadcast::Sender<H256>,
+    new_transactions: tokio::sync::broadcast::Sender<(H256, MempoolTransaction)>,
     /// When true, the EIP-8070 sampler/provider state machine is active.
     /// When false (default), the node always acts as provider (p=1.0).
     pub blob_sampling_enabled: bool,
@@ -820,10 +820,12 @@ impl Mempool {
         }
     }
 
-    /// Receives the hash of every transaction added to the pool from now on,
+    /// Receives every transaction added to the pool from now on, with its hash,
     /// except private ones. Backs `eth_newPendingTransactionFilter` and
     /// `eth_subscribe("newPendingTransactions")`.
-    pub fn subscribe_new_transactions(&self) -> tokio::sync::broadcast::Receiver<H256> {
+    pub fn subscribe_new_transactions(
+        &self,
+    ) -> tokio::sync::broadcast::Receiver<(H256, MempoolTransaction)> {
         self.new_transactions.subscribe()
     }
 
@@ -1047,6 +1049,7 @@ impl Mempool {
             inner.txs_order.push_back(hash);
         }
         let tx_nonce = transaction.nonce();
+        let announced = broadcast.then(|| transaction.clone());
         inner.txs_by_sender_nonce.insert((sender, tx_nonce), hash);
         inner.transaction_pool.insert(hash, transaction);
         // Private txs are held for local block building only: they never enter
@@ -1097,9 +1100,9 @@ impl Mempool {
         // already incorporated as "new since last build".
         self.tx_seq.fetch_add(1, Ordering::Release);
         self.tx_added.notify_waiters();
-        if broadcast {
+        if let Some(transaction) = announced {
             // An error only means nobody is subscribed.
-            let _ = self.new_transactions.send(hash);
+            let _ = self.new_transactions.send((hash, transaction));
         }
 
         Ok(())
@@ -2432,10 +2435,11 @@ mod tests {
         mempool
             .add_transaction_no_broadcast(private, sender, dummy_mempool_tx(sender, 0), None, None)
             .unwrap();
+        let public_tx = dummy_mempool_tx(sender, 1);
         mempool
-            .add_transaction(public, sender, dummy_mempool_tx(sender, 1), None, None)
+            .add_transaction(public, sender, public_tx.clone(), None, None)
             .unwrap();
-        assert_eq!(new_transactions.try_recv(), Ok(public));
+        assert_eq!(new_transactions.try_recv(), Ok((public, public_tx)));
         assert!(new_transactions.try_recv().is_err());
     }
 
