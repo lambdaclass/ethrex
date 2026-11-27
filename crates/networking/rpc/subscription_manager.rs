@@ -20,6 +20,7 @@ pub use crate::eth::logs::TopicFilter;
 use crate::{
     eth::{
         client::{SYNCED_HEAD_TOLERANCE, SYNCING_HEAD_TOLERANCE, sync_status},
+        filter::pending_transaction_value,
         logs::{collect_receipt_logs, matches_topics},
     },
     rpc::RpcApiContext,
@@ -28,7 +29,7 @@ use crate::{
 };
 use ethrex_common::{
     H160, H256,
-    types::{BlockHeader, BlockNumber},
+    types::{BlockHeader, BlockNumber, MempoolTransaction},
 };
 use ethrex_storage::{Store, error::StoreError};
 use rand::RngCore;
@@ -103,8 +104,10 @@ pub struct SubscriptionManager {
     /// `syncing` subscribers, each with whether it was last told the node is
     /// synced (`None` until its initial status is delivered).
     syncing_subscribers: HashMap<String, (Sender<String>, Option<bool>)>,
-    /// `newPendingTransactions` subscribers.
+    /// `newPendingTransactions` subscribers that get transaction hashes.
     pending_tx_subscribers: HashMap<String, Sender<String>>,
+    /// `newPendingTransactions` subscribers that get full transactions.
+    full_pending_tx_subscribers: HashMap<String, Sender<String>>,
     /// `logs` subscribers.
     log_subscribers: HashMap<String, (Sender<String>, LogSubscriptionFilter)>,
     last_head: Option<(BlockNumber, H256)>,
@@ -120,9 +123,13 @@ pub trait SubscriptionManagerProtocol: Send + Sync {
     /// when their channel is closed.
     fn new_head(&self, header: BlockHeader) -> Result<(), ActorError>;
 
-    /// Broadcast the hash of a transaction added to the mempool to all
+    /// Broadcast a transaction added to the mempool to all
     /// `newPendingTransactions` subscribers.
-    fn new_pending_transaction(&self, hash: H256) -> Result<(), ActorError>;
+    fn new_pending_transaction(
+        &self,
+        hash: H256,
+        transaction: MempoolTransaction,
+    ) -> Result<(), ActorError>;
 
     /// Send `status` to the `syncing` subscribers last told otherwise, and to the
     /// ones still owed their initial status. A subscriber whose channel is full
@@ -146,9 +153,14 @@ pub trait SubscriptionManagerProtocol: Send + Sync {
     /// [`Self::new_sync_status`].
     fn subscribe_syncing(&self, sender: Sender<String>) -> Response<Option<String>>;
 
-    /// Register a new `newPendingTransactions` subscriber. Returns its ID like
-    /// [`Self::subscribe`], under the same global cap.
-    fn subscribe_pending_transactions(&self, sender: Sender<String>) -> Response<Option<String>>;
+    /// Register a new `newPendingTransactions` subscriber, sent full transactions
+    /// instead of hashes with `full_txs`. Returns its ID like [`Self::subscribe`],
+    /// under the same global cap.
+    fn subscribe_pending_transactions(
+        &self,
+        sender: Sender<String>,
+        full_txs: bool,
+    ) -> Response<Option<String>>;
 
     /// Register a new `logs` subscriber that gets the logs matching `filter`.
     /// Returns its ID like [`Self::subscribe`], under the same global cap.
@@ -174,6 +186,7 @@ impl SubscriptionManager {
             subscribers: HashMap::new(),
             syncing_subscribers: HashMap::new(),
             pending_tx_subscribers: HashMap::new(),
+            full_pending_tx_subscribers: HashMap::new(),
             log_subscribers: HashMap::new(),
             last_head: None,
         }
@@ -205,15 +218,18 @@ impl SubscriptionManager {
         msg: subscription_manager_protocol::NewPendingTransaction,
         _ctx: &Context<Self>,
     ) {
-        if self.pending_tx_subscribers.is_empty() {
-            return;
+        for (subscribers, full_txs) in [
+            (&mut self.pending_tx_subscribers, false),
+            (&mut self.full_pending_tx_subscribers, true),
+        ] {
+            if subscribers.is_empty() {
+                continue;
+            }
+            match pending_transaction_value(msg.hash, &msg.transaction, full_txs) {
+                Ok(result) => fan_out(subscribers, &result, "newPendingTransactions"),
+                Err(e) => warn!("Failed to serialize transaction for newPendingTransactions: {e}"),
+            }
         }
-        let hash = Value::String(format!("{:#x}", msg.hash));
-        fan_out(
-            &mut self.pending_tx_subscribers,
-            &hash,
-            "newPendingTransactions",
-        );
     }
 
     #[send_handler]
@@ -297,7 +313,12 @@ impl SubscriptionManager {
             return None;
         }
         let id = generate_subscription_id();
-        self.pending_tx_subscribers.insert(id.clone(), msg.sender);
+        let subscribers = if msg.full_txs {
+            &mut self.full_pending_tx_subscribers
+        } else {
+            &mut self.pending_tx_subscribers
+        };
+        subscribers.insert(id.clone(), msg.sender);
         Some(id)
     }
 
@@ -325,6 +346,7 @@ impl SubscriptionManager {
         self.subscribers.remove(&msg.id).is_some()
             || self.syncing_subscribers.remove(&msg.id).is_some()
             || self.pending_tx_subscribers.remove(&msg.id).is_some()
+            || self.full_pending_tx_subscribers.remove(&msg.id).is_some()
             || self.log_subscribers.remove(&msg.id).is_some()
     }
 }
@@ -335,6 +357,7 @@ impl SubscriptionManager {
         if self.subscribers.len()
             + self.syncing_subscribers.len()
             + self.pending_tx_subscribers.len()
+            + self.full_pending_tx_subscribers.len()
             + self.log_subscribers.len()
             >= MAX_TOTAL_SUBSCRIPTIONS
         {
@@ -574,10 +597,10 @@ fn fan_out(subscribers: &mut HashMap<String, Sender<String>>, result: &Value, ki
     }
 }
 
-/// Forwards the hash of every transaction the mempool announces to `manager`'s
+/// Forwards every transaction the mempool announces to `manager`'s
 /// `newPendingTransactions` subscribers, until `cancel_token` is cancelled.
 pub fn spawn_pending_transactions_feed(
-    mut new_transactions: broadcast::Receiver<H256>,
+    mut new_transactions: broadcast::Receiver<(H256, MempoolTransaction)>,
     manager: ActorRef<SubscriptionManager>,
     cancel_token: CancellationToken,
 ) {
@@ -585,8 +608,8 @@ pub fn spawn_pending_transactions_feed(
         loop {
             tokio::select! {
                 received = new_transactions.recv() => match received {
-                    Ok(hash) => {
-                        if manager.new_pending_transaction(hash).is_err() {
+                    Ok((hash, transaction)) => {
+                        if manager.new_pending_transaction(hash, transaction).is_err() {
                             break;
                         }
                     }

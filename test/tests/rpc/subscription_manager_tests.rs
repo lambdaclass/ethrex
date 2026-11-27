@@ -1,8 +1,8 @@
 use ethrex_common::{
     Address, H256,
     types::{
-        Block, BlockBody, BlockHeader, LegacyTransaction, Log, Receipt, Transaction, TxType,
-        bloom_from_logs,
+        Block, BlockBody, BlockHeader, EIP1559Transaction, LegacyTransaction, Log,
+        MempoolTransaction, Receipt, Transaction, TxType, bloom_from_logs,
     },
 };
 use ethrex_crypto::NativeCrypto;
@@ -306,36 +306,102 @@ async fn subscribe_returns_none_at_global_cap() {
     assert!(result.is_none(), "expected None at MAX_TOTAL_SUBSCRIPTIONS");
 }
 
+fn pending_transaction() -> (H256, MempoolTransaction) {
+    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        nonce: 7,
+        ..Default::default()
+    });
+    let hash = tx.hash(&NativeCrypto);
+    (
+        hash,
+        MempoolTransaction::new(tx, Address::from_low_u64_be(1)),
+    )
+}
+
+async fn recv_notification(rx: &mut mpsc::Receiver<String>) -> serde_json::Value {
+    let msg = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+        .await
+        .expect("timed out")
+        .expect("channel closed");
+    serde_json::from_str(&msg).unwrap()
+}
+
 #[tokio::test]
 async fn new_pending_transaction_reaches_only_its_subscribers() {
     let manager = SubscriptionManager::spawn(test_store());
 
     let (heads_tx, mut heads_rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
     let (pending_tx, mut pending_rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
+    let (full_tx, mut full_rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
     let _heads_id = manager.subscribe(heads_tx).await.unwrap().unwrap();
     let pending_id = manager
-        .subscribe_pending_transactions(pending_tx)
+        .subscribe_pending_transactions(pending_tx, false)
+        .await
+        .unwrap()
+        .unwrap();
+    let full_id = manager
+        .subscribe_pending_transactions(full_tx, true)
         .await
         .unwrap()
         .unwrap();
 
-    let hash = H256::from_low_u64_be(0xabc);
-    manager.new_pending_transaction(hash).unwrap();
+    let (hash, transaction) = pending_transaction();
+    manager.new_pending_transaction(hash, transaction).unwrap();
 
-    let msg = tokio::time::timeout(std::time::Duration::from_secs(2), pending_rx.recv())
-        .await
-        .expect("timed out")
-        .expect("channel closed");
-    let v: serde_json::Value = serde_json::from_str(&msg).unwrap();
+    let v = recv_notification(&mut pending_rx).await;
     assert_eq!(v["params"]["subscription"], pending_id);
     assert_eq!(v["params"]["result"], format!("{hash:#x}"));
+
+    let v = recv_notification(&mut full_rx).await;
+    assert_eq!(v["params"]["subscription"], full_id);
+    let result = &v["params"]["result"];
+    assert_eq!(result["hash"], format!("{hash:#x}"));
+    assert_eq!(
+        result["from"],
+        format!("{:#x}", Address::from_low_u64_be(1))
+    );
+    assert_eq!(result["nonce"], "0x7");
+    assert_eq!(result["type"], "0x2");
+    for field in ["blockHash", "blockNumber", "transactionIndex"] {
+        assert!(result[field].is_null(), "{field} in {result}");
+    }
+
     assert!(
         heads_rx.try_recv().is_err(),
         "newHeads subscriber got a tx hash"
     );
+    assert!(pending_rx.try_recv().is_err());
+    assert!(full_rx.try_recv().is_err());
 
-    assert!(manager.unsubscribe(pending_id.clone()).await.unwrap());
-    assert!(!manager.unsubscribe(pending_id).await.unwrap());
+    for id in [pending_id, full_id] {
+        assert!(manager.unsubscribe(id.clone()).await.unwrap());
+        assert!(!manager.unsubscribe(id).await.unwrap());
+    }
+}
+
+#[tokio::test]
+async fn full_pending_transaction_subscriptions_count_toward_global_cap() {
+    let manager = SubscriptionManager::spawn(test_store());
+
+    let mut keep_alive = Vec::with_capacity(MAX_TOTAL_SUBSCRIPTIONS);
+    for i in 0..MAX_TOTAL_SUBSCRIPTIONS {
+        let (tx, rx) = mpsc::channel(1);
+        let id = manager
+            .subscribe_pending_transactions(tx, i % 2 == 0)
+            .await
+            .unwrap();
+        assert!(id.is_some());
+        keep_alive.push(rx);
+    }
+
+    for full_txs in [false, true] {
+        let (tx, _rx) = mpsc::channel(1);
+        let result = manager
+            .subscribe_pending_transactions(tx, full_txs)
+            .await
+            .unwrap();
+        assert!(result.is_none(), "full_txs = {full_txs} past the cap");
+    }
 }
 
 async fn add_block(
