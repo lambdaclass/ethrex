@@ -19,7 +19,7 @@
 use ethrex_common::{
     Address, H256, U256,
     constants::MIN_BASE_FEE_PER_BLOB_GAS,
-    types::{BlockHeader, ChainConfig, Withdrawal, fake_exponential},
+    types::{BlockHeader, ChainConfig, Fork, Withdrawal, fake_exponential},
 };
 use serde::{Deserialize, Deserializer, de::Error as DeError};
 
@@ -138,6 +138,14 @@ impl BlockOverrideSet {
             && self.block_hash.is_none()
     }
 
+    /// Whether `difficulty` is set for a block at or after the merge. The shared
+    /// `BlockOverrides` schema says a client that supports the key "MUST reject it with
+    /// error code -32602 for a block after the merge": PREVRANDAO replaced DIFFICULTY
+    /// there, so the override would only change a header field nothing reads.
+    pub fn sets_difficulty_after_merge(&self, chain_config: &ChainConfig, timestamp: u64) -> bool {
+        self.difficulty.is_some() && chain_config.fork(timestamp) >= Fork::Paris
+    }
+
     /// Resolve `blobBaseFee` into the `excess_blob_gas` that produces it
     /// (ethrex derives BLOBBASEFEE from `excess_blob_gas`). `None` when the
     /// override is not set.
@@ -168,8 +176,9 @@ impl BlockOverrideSet {
     /// `header`. The `chain_config` is consulted to resolve the blob-fee update
     /// fraction for the active fork when inverting `blobBaseFeePerGas`.
     ///
-    /// Fails only for `blobBaseFeePerGas` on a fork with no blob schedule, where there is
-    /// no update fraction to invert against and honoring the request is impossible.
+    /// Fails for `difficulty` on a post-merge block, for `blobBaseFeePerGas` on a fork with
+    /// no blob schedule, where there is no update fraction to invert against, and for the
+    /// fields this path cannot honor (`beaconRoot`, `withdrawals`, `blockHash`).
     pub fn apply_to(
         &self,
         mut header: BlockHeader,
@@ -192,6 +201,12 @@ impl BlockOverrideSet {
         }
         if let Some(bf) = self.base_fee_per_gas {
             header.base_fee_per_gas = Some(bf);
+        }
+        // Checked after the `time` override above, against the block the call runs in.
+        if self.sets_difficulty_after_merge(chain_config, header.timestamp) {
+            return Err(RpcErr::BadParams(
+                "difficulty is not supported after the merge".to_string(),
+            ));
         }
         if let Some(d) = self.difficulty {
             header.difficulty = d;
@@ -471,6 +486,18 @@ mod tests {
             format!("{err}").contains("blobBaseFeePerGas"),
             "error should name the field, got: {err}"
         );
+    }
+
+    /// Every block ethrex serves is post-merge, where the shared `BlockOverrides` schema
+    /// says a `difficulty` override MUST be rejected with -32602.
+    #[test]
+    fn difficulty_is_rejected_after_the_merge() {
+        let set: BlockOverrideSet = serde_json::from_value(json!({ "difficulty": "0x1" })).unwrap();
+        let err = set
+            .apply_to(BlockHeader::default(), &ChainConfig::default())
+            .expect_err("a post-merge difficulty override must be rejected");
+        assert!(format!("{err}").contains("difficulty"), "got: {err}");
+        assert_eq!(crate::utils::RpcErrorMetadata::from(err).code, -32602);
     }
 
     #[test]

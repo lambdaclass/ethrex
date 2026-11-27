@@ -707,3 +707,55 @@ impl RpcHandler for TraceCallRequest {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::rpc::map_http_requests;
+    use crate::test_utils::{default_context_with_storage, setup_store};
+    use crate::utils::{RpcErr, RpcErrorMetadata, RpcRequest};
+    use serde_json::{Value, json};
+
+    /// Funded EOA from fixtures/genesis/l1.json.
+    const SENDER: &str = "0x00000a8d3f37af8def18832962ee008d8dca4f7b";
+
+    async fn trace_call(params: Value) -> Result<Value, RpcErr> {
+        let context = default_context_with_storage(setup_store().await).await;
+        let request: RpcRequest = serde_json::from_value(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "debug_traceCall",
+            "params": params,
+        }))
+        .unwrap();
+        map_http_requests(&request, context.clone()).await
+    }
+
+    /// The shared `BlockOverrides` schema requires a client that knows `difficulty` to
+    /// reject it with -32602 for a block after the merge, where the field has no meaning.
+    #[tokio::test]
+    async fn difficulty_override_after_the_merge_is_refused() {
+        let call = json!({
+            "from": SENDER,
+            "to": "0x0000000000000000000000000000000000000002",
+            "gas": "0x186a0",
+        });
+        let err = trace_call(json!([
+            call,
+            "latest",
+            { "tracer": "callTracer", "blockOverrides": { "difficulty": "0x1" } },
+        ]))
+        .await
+        .expect_err("a post-merge difficulty override must be refused");
+        let message = err.to_string();
+        assert!(
+            message.contains("difficulty"),
+            "the refusal should name the field, got: {message}"
+        );
+        assert_eq!(RpcErrorMetadata::from(err).code, -32602);
+
+        // The same call without the override traces, so the refusal is the override's.
+        trace_call(json!([call, "latest", { "tracer": "callTracer" }]))
+            .await
+            .expect("the call itself should trace");
+    }
+}
