@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-11-27
+
+- Warm a block's transactions in execution order with heavy senders split, find their reads in parallel rounds while the store is cold, carry each block's state cache to its child, and take the warmer's result for every transaction whose reads still hold: a 300-block mainnet replay with an empty page cache 14.3 → 7.1 s (2.0x), with a warm page cache −28%, and a live mainnet node's mean block 33.3 → 24.2 ms [#7592](https://github.com/lambdaclass/ethrex/pull/7592)
+
 ### 2026-10-22
 
 - Answer MODEXP inversions modulo well-known 256-bit primes (base^(p − 2) mod p for the BN254 base and scalar fields, the secp256k1 and P-256 base fields and group orders, and the BLS12-381 scalar field) with a safegcd inversion, and build the Montgomery constants with 8 squarings instead of 512 doublings: the dominant mainnet MODEXP call 4.09 → 0.73 µs [#7456](https://github.com/lambdaclass/ethrex/pull/7456)
