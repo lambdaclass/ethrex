@@ -34,7 +34,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-04e84b77.js";
+            window.path_to_searchindex_js = "../searchindex-ec7f43d9.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-a6a3d26a.js"></script>
@@ -265,7 +265,6 @@ git push origin &lt;release_version&gt;
 <li><input disabled="" type="checkbox"> Launch multisync on <code>ethrex-multisync-main</code></li>
 <li><input disabled="" type="checkbox"> Upgrade an L2 created with the previous version, with and without downtime, and run the integration tests, on the GPU server (<code>l2-gpu</code>) with the SP1 prover</li>
 <li><input disabled="" type="checkbox"> Run the L2 integration tests with a SP1 prover on the GPU server (<code>l2-gpu</code>)</li>
-<li><input disabled="" type="checkbox"> Run the multiprover test: SP1 prover on the GPU server (<code>l2-gpu</code>), TDX prover and the rest of the stack on <code>ethrex-tdx-baremetal</code></li>
 </ul>
 <p>The commands for each target follow. The host roster changes between releases — fill in the ones you run and leave the placeholders for the rest. Replace <code>vX.Y.Z-rc.W</code> / <code>release/vX.Y.Z</code> with the version under test.</p>
 <h4 id="ethrex-ethdocker-mainnet"><a class="header" href="#ethrex-ethdocker-mainnet"><code>ethrex-ethdocker-mainnet</code></a></h4>
@@ -326,15 +325,6 @@ the other, not concurrently.</p>
 <p>This one deploys the new version from scratch; the upgrade test above covers the
 path from the previous release. Keep both: a release can deploy cleanly and still
 fail to upgrade, and the reverse.</p>
-<h4 id="multiprover-test-sp1-gpu--tdx"><a class="header" href="#multiprover-test-sp1-gpu--tdx">Multiprover test (SP1 GPU + TDX)</a></h4>
-<p>See <a href="l2/multiprover-test.html">Multiprover test</a> for the full procedure. It runs across two hosts: the SP1 prover on <code>l2-gpu</code>, and the L1, deploy, sequencer and TDX prover VM on <code>ethrex-tdx-baremetal</code>, with the SP1 prover reaching the proof coordinator over the tailnet.</p>
-<p>The single-prover checks above each exercise one prover against an <code>OnChainProposer</code> that requires only that one. This is the only check where a batch must satisfy <strong>two</strong> provers before <code>lastVerifiedBatch</code> moves, which is the configuration a production rollup runs.</p>
-<p>Confirm on-chain that the deployment really requires both, rather than trusting the deploy flags — a batch verifying under a single-prover deployment would prove nothing:</p>
-<pre><code class="language-bash">rex call "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" 'REQUIRE_SP1_PROOF()' "$L1_RPC"   # 0x..01
-rex call "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" 'REQUIRE_TDX_PROOF()' "$L1_RPC"   # 0x..01
-</code></pre>
-<p>The check passes when <code>lastVerifiedBatch</code> advances past zero with both flags set.</p>
-<p>Run it with <code>ETHREX_TDX_DEV_MODE=false</code>, so the TDX quote is verified on chain by <code>verifyAndAttestOnChain</code> rather than trusted. That is the point of running on TDX hardware, and it is what CI cannot do — CI uses dev mode, where registration skips verification entirely. It needs two extra steps the runbook covers: pinning the verifier’s expected measurements to the image being released, and loading this platform’s TCB collateral, since the tool <code>ethrex</code> normally shells out to cannot serve a dev chain.</p>
 <h3 id="publish"><a class="header" href="#publish">Publish</a></h3>
 <p>Once the pre-release is created and you want to publish the release, go to the <a href="https://github.com/lambdaclass/ethrex/releases">release page</a> and follow the next steps:</p>
 <ol>
