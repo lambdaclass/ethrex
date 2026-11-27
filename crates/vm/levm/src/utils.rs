@@ -298,7 +298,7 @@ pub fn eip7702_peek_delegation(
     }
     let code_hash = account.info.code_hash;
     let bytecode = db.get_code(code_hash)?.clone();
-    if !code_has_delegation(bytecode.code())? {
+    if fork < Fork::Prague || !code_has_delegation(bytecode.code())? {
         return Ok((Some(bytecode), None));
     }
     let auth_address = get_authorized_address_from_code(bytecode.code())?;

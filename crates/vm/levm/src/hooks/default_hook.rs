@@ -20,6 +20,22 @@ use ethrex_common::{
 
 pub const MAX_REFUND_QUOTIENT: u64 = 5;
 
+/// Fast-path `a.checked_mul(U256::from(b))` using a single 64x64->128 multiply
+/// when `a` fits in `u64` (covers virtually all gas price * gas limit products).
+#[inline(always)]
+#[expect(
+    clippy::as_conversions,
+    clippy::arithmetic_side_effects,
+    reason = "u64 * u64 cannot overflow u128"
+)]
+fn u256_checked_mul_u64(a: U256, b: u64) -> Option<U256> {
+    if a.0[1] == 0 && a.0[2] == 0 && a.0[3] == 0 {
+        let prod = u128::from(a.0[0]) * u128::from(b);
+        return Some(U256([prod as u64, (prod >> 64) as u64, 0, 0]));
+    }
+    a.checked_mul(U256::from(b))
+}
+
 pub struct DefaultHook;
 
 impl Hook for DefaultHook {
@@ -88,10 +104,7 @@ impl Hook for DefaultHook {
         }
 
         // (1) GASLIMIT_PRICE_PRODUCT_OVERFLOW
-        let gaslimit_price_product = vm
-            .env
-            .gas_price
-            .checked_mul(vm.env.gas_limit.into())
+        let gaslimit_price_product = u256_checked_mul_u64(vm.env.gas_price, vm.env.gas_limit)
             .ok_or(TxValidationError::GasLimitPriceProductOverflow)?;
 
         validate_sender_balance(vm, sender_info.balance)?;
@@ -142,7 +155,7 @@ impl Hook for DefaultHook {
         }
 
         // (9) SENDER_NOT_EOA
-        if !vm.env.disable_sender_eoa_check {
+        if !vm.env.disable_sender_eoa_check && sender_info.code_hash != *EMPTY_KECCAK_HASH {
             let code = vm.db.get_code(sender_info.code_hash)?;
             validate_sender(sender_address, code.code())?;
         }
@@ -159,8 +172,11 @@ impl Hook for DefaultHook {
         // `try` around `set_delegation` + `prepare_dispatch`). Taken after the sender
         // nonce bump (7) and fee deduction (3) above so both survive a region
         // rollback, and before the type-4 auth handling below (the first region
-        // charge). See `VM::enter_prepare_region` / `VM::fail_prepare_region`.
-        vm.enter_prepare_region();
+        // charge). Only active from Amsterdam onwards — `fail_prepare_region` is
+        // never called on earlier forks.
+        if vm.env.config.fork >= Fork::Amsterdam {
+            vm.enter_prepare_region();
+        }
 
         // [EIP-7702]: https://eips.ethereum.org/EIPS/eip-7702
         // Transaction is type 4 if authorization_list is Some
@@ -511,6 +527,10 @@ pub fn compute_actual_gas_used(
 }
 
 pub fn pay_coinbase(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
+    if vm.db.current_accounts_state.contains_key(&vm.env.coinbase) {
+        vm.db.coinbase_touched_before_fee = true;
+    }
+
     let priority_fee_per_gas = if vm.validate_base_fee {
         vm.env
             .gas_price
@@ -520,9 +540,8 @@ pub fn pay_coinbase(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
         vm.env.gas_price.saturating_sub(vm.env.base_fee_per_gas)
     };
 
-    let coinbase_fee = U256::from(gas_to_pay)
-        .checked_mul(priority_fee_per_gas)
-        .ok_or(InternalError::Overflow)?;
+    let coinbase_fee =
+        u256_checked_mul_u64(priority_fee_per_gas, gas_to_pay).ok_or(InternalError::Overflow)?;
 
     // Per EIP-7928: Coinbase must appear in BAL when there's a user transaction,
     // even if the priority fee is zero. The spec reads the coinbase for every user
@@ -867,12 +886,11 @@ pub fn validate_sender_balance(vm: &mut VM<'_>, sender_balance: U256) -> Result<
 
     // For the transaction to be valid the sender account has to have a balance >= gas_price * gas_limit + value if tx is type 0 and 1
     // balance >= max_fee_per_gas * gas_limit + value + blob_gas_cost if tx is type 2 or 3
-    let gas_fee_for_valid_tx = vm
-        .env
-        .tx_max_fee_per_gas
-        .unwrap_or(vm.env.gas_price)
-        .checked_mul(vm.env.gas_limit.into())
-        .ok_or(TxValidationError::GasLimitPriceProductOverflow)?;
+    let gas_fee_for_valid_tx = u256_checked_mul_u64(
+        vm.env.tx_max_fee_per_gas.unwrap_or(vm.env.gas_price),
+        vm.env.gas_limit,
+    )
+    .ok_or(TxValidationError::GasLimitPriceProductOverflow)?;
 
     let balance_for_valid_tx = gas_fee_for_valid_tx
         .checked_add(value)

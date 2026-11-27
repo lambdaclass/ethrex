@@ -1045,7 +1045,15 @@ impl Blockchain {
                 #[cfg(feature = "rayon")]
                 let bal_prefetch_enabled = self.options.bal_prefetch_enabled;
                 #[cfg(feature = "rayon")]
-                let warm_handle = (!collect_witness)
+                let optimistic_parallel_will_run = bal.is_none()
+                    && ethrex_vm::backends::levm::should_use_optimistic_parallel(
+                        &block.body.transactions,
+                        chain_config.is_amsterdam_activated(block.header.timestamp),
+                        vm_type,
+                        bal_parallel_exec_enabled,
+                    );
+                #[cfg(feature = "rayon")]
+                let warm_handle = (!collect_witness && !optimistic_parallel_will_run)
                     .then(|| {
                         std::thread::Builder::new()
                             .name("block_executor_warmer".to_string())

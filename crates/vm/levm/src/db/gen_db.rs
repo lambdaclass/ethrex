@@ -236,6 +236,11 @@ pub struct GeneralizedDatabase {
     /// Simulation-only precompile relocations (`movePrecompileToAddress`).
     /// `None` on every consensus path, where dispatch is unchanged.
     pub precompile_moves: Option<Arc<PrecompileMoves>>,
+    /// Set by `pay_coinbase` when `env.coinbase` was already present in
+    /// `current_accounts_state` prior to fee payment (e.g. coinbase was sender,
+    /// recipient, or inspected by EVM opcodes). Used by optimistic parallel
+    /// execution to treat fee-only coinbase credits as commutative.
+    pub coinbase_touched_before_fee: bool,
 }
 
 impl GeneralizedDatabase {
@@ -253,6 +258,31 @@ impl GeneralizedDatabase {
             accessed_accounts: None,
             lazy_bal: None,
             precompile_moves: None,
+            coinbase_touched_before_fee: false,
+        }
+    }
+
+    /// Creates a new GeneralizedDatabase backed by a read-only `shared_base` snapshot
+    /// while still tracking touched accounts/slots in `initial_accounts_state` so the
+    /// caller can compute exact per-tx read/write diffs (used by optimistic parallel execution).
+    pub fn new_with_shared_base_tracking(
+        store: Arc<dyn Database>,
+        shared_base: Arc<CacheDB>,
+    ) -> Self {
+        Self {
+            store,
+            current_accounts_state: CacheDB::with_capacity_and_hasher(8, Default::default()),
+            initial_accounts_state: CacheDB::with_capacity_and_hasher(8, Default::default()),
+            shared_base: Some(shared_base),
+            tx_backup: None,
+            codes: Default::default(),
+            code_metadata: Default::default(),
+            bal_recorder: None,
+            skip_initial_tracking: false,
+            accessed_accounts: None,
+            lazy_bal: None,
+            precompile_moves: None,
+            coinbase_touched_before_fee: false,
         }
     }
 
@@ -284,6 +314,7 @@ impl GeneralizedDatabase {
             accessed_accounts: None,
             lazy_bal: None,
             precompile_moves: None,
+            coinbase_touched_before_fee: false,
         }
     }
 
@@ -344,6 +375,7 @@ impl GeneralizedDatabase {
             accessed_accounts: None,
             lazy_bal: None,
             precompile_moves: None,
+            coinbase_touched_before_fee: false,
         }
     }
 
@@ -443,11 +475,17 @@ impl GeneralizedDatabase {
             }
         }
 
-        // Check shared_base (read-only pre-block snapshot) before hitting store.
+        // Check shared_base (read-only snapshot) before hitting store.
+        // Clone info/flags only (not the full storage map) unless destroyed, and resolve
+        // storage slots lazily against `shared_base` in `get_storage_value` — keeps hot
+        // contracts with thousands of committed slots O(1) to load per parallel tx.
         if let Some(ref base) = self.shared_base
             && let Some(account) = base.get(&address)
         {
-            let account = account.clone();
+            let account = match account.status {
+                AccountStatus::Destroyed | AccountStatus::DestroyedModified => account.clone(),
+                _ => account.clone_without_storage(),
+            };
             if !self.skip_initial_tracking {
                 self.initial_accounts_state.insert(address, account.clone());
             }
@@ -841,12 +879,13 @@ impl<'a> VM<'a> {
     */
     pub fn get_account_mut(&mut self, address: Address) -> Result<&mut LevmAccount, InternalError> {
         // Backup must be taken before mark_modified flips `exists` to true.
-        let account = self.db.get_account(address)?;
+        // Call `load_account` once (instead of `get_account` + `get_account_mut`)
+        // to avoid a duplicate `current_accounts_state` lookup on every state write.
+        let account = self.db.load_account(address)?;
         self.current_call_frame
             .call_frame_backup
             .backup_account_info(address, account)?;
-
-        let account = self.db.get_account_mut(address)?;
+        account.mark_modified();
         Ok(account)
     }
 
@@ -1003,7 +1042,7 @@ impl<'a> VM<'a> {
         let original_value = match self
             .storage_original_values
             .entry(address)
-            .or_default()
+            .or_insert_with(Self::take_reused_storage_original_slots)
             .entry(key)
         {
             Entry::Occupied(entry) => *entry.get(),
@@ -1088,6 +1127,30 @@ impl<'a> VM<'a> {
             return Ok(value);
         }
 
+        // Resolve against `shared_base` lazily (paired with the info-only clone in
+        // `load_account`) before hitting the backing store.
+        if let Some(value) = self
+            .db
+            .shared_base
+            .as_ref()
+            .and_then(|base| base.get(&address))
+            .and_then(|account| account.storage.get(&key))
+            .copied()
+        {
+            if !self.db.skip_initial_tracking
+                && let Some(init_account) = self.db.initial_accounts_state.get_mut(&address)
+            {
+                init_account.storage.insert(key, value);
+            }
+            let account = self
+                .db
+                .current_accounts_state
+                .get_mut(&address)
+                .ok_or(InternalError::AccountNotFound)?;
+            account.storage.insert(key, value);
+            return Ok(value);
+        }
+
         let value = self.db.get_value_from_database(address, key)?;
 
         // Cache-fill only: this is a read-path miss, not a state mutation.
@@ -1144,7 +1207,7 @@ impl<'a> VM<'a> {
             .call_frame_backup
             .original_account_storage_slots
             .entry(address)
-            .or_default()
+            .or_insert_with(Self::take_reused_backup_storage_slots)
             .entry(key)
             .or_insert(current_value);
 

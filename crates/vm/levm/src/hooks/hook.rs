@@ -32,7 +32,10 @@ pub fn get_hooks(vm_type: &VMType) -> Vec<Rc<RefCell<dyn Hook + 'static>>> {
 }
 
 pub fn l1_hooks() -> Vec<Rc<RefCell<dyn Hook + 'static>>> {
-    vec![Rc::new(RefCell::new(DefaultHook))]
+    thread_local! {
+        static DEFAULT_HOOK: Rc<RefCell<dyn Hook + 'static>> = Rc::new(RefCell::new(DefaultHook));
+    }
+    DEFAULT_HOOK.with(|hook| vec![Rc::clone(hook)])
 }
 
 pub fn l2_hooks(fee_config: FeeConfig) -> Vec<Rc<RefCell<dyn Hook + 'static>>> {

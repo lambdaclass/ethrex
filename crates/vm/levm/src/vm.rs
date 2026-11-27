@@ -154,33 +154,78 @@ impl Substate {
     /// Push a checkpoint that can be either reverted or committed. All data up to this point is
     /// still accessible.
     pub fn push_backup(&mut self) {
-        let parent = mem::take(self);
-        self.refunded_gas = parent.refunded_gas;
+        let mut parent_box = SUBSTATE_BOX_REUSE
+            .with(|slot| slot.borrow_mut().take())
+            .unwrap_or_else(|| Box::new(Self::default()));
+        mem::swap(self, parent_box.as_mut());
+        self.refunded_gas = parent_box.refunded_gas;
         // Carry the fork forward so child checkpoints keep the same precompile-warmth view.
-        self.fork = parent.fork;
-        self.parent = Some(Box::new(parent));
+        self.fork = parent_box.fork;
+        self.parent = Some(parent_box);
     }
 
     /// Pop and merge with the last backup.
     ///
     /// Does nothing if the substate has no backup.
     pub fn commit_backup(&mut self) {
-        if let Some(parent) = self.parent.as_mut() {
-            let mut delta = mem::take(parent);
-            mem::swap(self, &mut delta);
+        if let Some(mut parent_box) = self.parent.take() {
+            mem::swap(self, parent_box.as_mut());
+            let delta = parent_box.as_mut();
 
-            self.selfdestruct_set.extend(delta.selfdestruct_set);
-            self.accessed_addresses.extend(delta.accessed_addresses);
-            for (address, slot_set) in delta.accessed_storage_slots {
-                self.accessed_storage_slots
-                    .entry(address)
-                    .or_default()
-                    .extend(slot_set);
+            if self.selfdestruct_set.is_empty() {
+                mem::swap(&mut self.selfdestruct_set, &mut delta.selfdestruct_set);
+            } else if !delta.selfdestruct_set.is_empty() {
+                self.selfdestruct_set.extend(delta.selfdestruct_set.drain());
             }
-            self.created_accounts.extend(delta.created_accounts);
+            if self.accessed_addresses.is_empty() {
+                mem::swap(&mut self.accessed_addresses, &mut delta.accessed_addresses);
+            } else if !delta.accessed_addresses.is_empty() {
+                if delta.accessed_addresses.len() > self.accessed_addresses.len() {
+                    mem::swap(&mut self.accessed_addresses, &mut delta.accessed_addresses);
+                }
+                self.accessed_addresses
+                    .extend(delta.accessed_addresses.drain());
+            }
+            if self.accessed_storage_slots.is_empty() {
+                mem::swap(
+                    &mut self.accessed_storage_slots,
+                    &mut delta.accessed_storage_slots,
+                );
+            } else if !delta.accessed_storage_slots.is_empty() {
+                for (address, mut slot_set) in delta.accessed_storage_slots.drain() {
+                    match self.accessed_storage_slots.entry(address) {
+                        std::collections::hash_map::Entry::Vacant(e) => {
+                            e.insert(slot_set);
+                        }
+                        std::collections::hash_map::Entry::Occupied(mut e) => {
+                            let existing = e.get_mut();
+                            if slot_set.len() > existing.len() {
+                                mem::swap(existing, &mut slot_set);
+                            }
+                            existing.extend(slot_set);
+                        }
+                    }
+                }
+            }
+            if self.created_accounts.is_empty() {
+                mem::swap(&mut self.created_accounts, &mut delta.created_accounts);
+            } else if !delta.created_accounts.is_empty() {
+                self.created_accounts.extend(delta.created_accounts.drain());
+            }
             self.refunded_gas = delta.refunded_gas;
-            self.transient_storage.extend(delta.transient_storage);
-            self.logs.extend(delta.logs);
+            if self.transient_storage.is_empty() {
+                mem::swap(&mut self.transient_storage, &mut delta.transient_storage);
+            } else if !delta.transient_storage.is_empty() {
+                self.transient_storage
+                    .extend(delta.transient_storage.drain());
+            }
+            if self.logs.is_empty() {
+                mem::swap(&mut self.logs, &mut delta.logs);
+            } else if !delta.logs.is_empty() {
+                self.logs.append(&mut delta.logs);
+            }
+
+            Self::recycle_box_to_thread_local(parent_box);
         }
     }
 
@@ -188,8 +233,9 @@ impl Substate {
     ///
     /// Does nothing if the substate has no backup.
     pub fn revert_backup(&mut self) {
-        if let Some(parent) = self.parent.as_mut() {
-            *self = mem::take(parent);
+        if let Some(mut parent_box) = self.parent.take() {
+            mem::swap(self, parent_box.as_mut());
+            Self::recycle_box_to_thread_local(parent_box);
         }
     }
 
@@ -279,42 +325,32 @@ impl Substate {
 
     /// Mark an address as accessed and return whether the slot was cold.
     pub fn add_accessed_slot(&mut self, address: Address, key: H256) -> bool {
-        if self
+        if !self
             .accessed_storage_slots
-            .get(&address)
-            .is_some_and(|set| set.contains(&key))
+            .entry(address)
+            .or_insert_with(Self::take_reused_slot_set)
+            .insert(key)
         {
             return false;
         }
 
-        let is_present = self
+        !self
             .parent
             .as_ref()
-            .map(|parent| parent.is_slot_accessed(&address, &key))
-            .unwrap_or_default();
-
-        // Note: Do not simplify this expression, it uses `||` to avoid executing the right hand
-        //   expression if not necessary.
-        #[expect(clippy::nonminimal_bool, reason = "order of evaluation matters")]
-        !(is_present
-            || !self
-                .accessed_storage_slots
-                .entry(address)
-                .or_default()
-                .insert(key))
+            .is_some_and(|parent| parent.is_slot_accessed(&address, &key))
     }
 
     /// Return whether an address has already been accessed.
     pub fn is_slot_accessed(&self, address: &Address, key: &H256) -> bool {
-        self.accessed_storage_slots
-            .get(address)
-            .map(|slot_set| slot_set.contains(key))
-            .unwrap_or_default()
+        (!self.accessed_storage_slots.is_empty()
+            && self
+                .accessed_storage_slots
+                .get(address)
+                .is_some_and(|slot_set| slot_set.contains(key)))
             || self
                 .parent
                 .as_ref()
-                .map(|parent| parent.is_slot_accessed(address, key))
-                .unwrap_or_default()
+                .is_some_and(|parent| parent.is_slot_accessed(address, key))
     }
 
     /// Returns all accessed storage slots for a given address.
@@ -344,20 +380,14 @@ impl Substate {
             return false;
         }
 
-        if self.accessed_addresses.contains(&address) {
+        if !self.accessed_addresses.insert(address) {
             return false;
         }
 
-        let is_present = self
+        !self
             .parent
             .as_ref()
-            .map(|parent| parent.is_address_accessed(&address))
-            .unwrap_or_default();
-
-        // Note: Do not simplify this expression, it uses `||` to avoid executing the right hand
-        //   expression if not necessary.
-        #[expect(clippy::nonminimal_bool, reason = "order of evaluation matters")]
-        !(is_present || !self.accessed_addresses.insert(address))
+            .is_some_and(|parent| parent.is_address_accessed(&address))
     }
 
     /// Return whether an address has already been accessed.
@@ -419,6 +449,28 @@ impl Substate {
     /// Clear all transient storage (used between frames in frame transactions).
     pub fn clear_transient_storage(&mut self) {
         self.transient_storage.clear();
+    }
+
+    /// Extract all logs in order by moving them out (zero-copy when `parent` is `None`).
+    pub fn take_logs(&mut self) -> Vec<Log> {
+        fn inner(substate: &mut Substate, target: &mut Vec<Log>) {
+            if let Some(parent) = substate.parent.as_deref_mut() {
+                inner(parent, target);
+            }
+            if target.is_empty() {
+                mem::swap(target, &mut substate.logs);
+            } else {
+                target.append(&mut substate.logs);
+            }
+        }
+
+        if self.parent.is_none() {
+            return mem::take(&mut self.logs);
+        }
+
+        let mut logs = Vec::new();
+        inner(self, &mut logs);
+        logs
     }
 
     /// Extract all logs in order.
@@ -944,6 +996,7 @@ impl<'a> VM<'a> {
     /// to `stack_pool`, the root memory buffer to `memory_pool` and the initcode buffers to
     /// `initcode_pool`, so the next tx reuses them.
     #[allow(clippy::too_many_arguments)]
+    #[inline]
     pub fn new_pooled(
         env: Environment,
         db: &'a mut GeneralizedDatabase,
@@ -991,6 +1044,7 @@ impl<'a> VM<'a> {
     /// still pooled internally) to `stack_pool`, the root memory buffer to `memory_pool`, and the
     /// pooled initcode buffers to `initcode_pool`.
     /// Must run on both the success and error paths of [`VM::execute`].
+    #[inline]
     pub fn reclaim_into(
         mut self,
         stack_pool: &mut Vec<Stack>,
@@ -1028,9 +1082,15 @@ impl<'a> VM<'a> {
         );
         root_memory.reset_for_reuse();
         memory_pool.push(root_memory);
+        // Recycle the root Substate, CallFrameBackup, and storage_original_values maps into
+        // thread-local 1-slot caches so the next tx reuses their hash-table allocations.
+        self.substate.recycle_to_thread_local();
+        Self::recycle_call_frame_backup(self.current_call_frame.call_frame_backup);
+        Self::recycle_storage_originals(self.storage_original_values);
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[inline(always)]
     fn new_with_root_stack(
         env: Environment,
         db: &'a mut GeneralizedDatabase,
@@ -1085,7 +1145,7 @@ impl<'a> VM<'a> {
             db,
             tx,
             hooks,
-            storage_original_values: Default::default(),
+            storage_original_values: Self::take_reused_storage_originals(),
             tracer,
             opcode_tracer: LevmOpcodeTracer::disabled(),
             validation_observer: ValidationObserver::disabled(),
@@ -1133,20 +1193,23 @@ impl<'a> VM<'a> {
             crypto,
             stateless_validator,
         };
+        vm.current_call_frame.call_frame_backup = Self::take_reused_call_frame_backup();
 
-        let call_type = if is_create {
-            CallType::CREATE
-        } else {
-            CallType::CALL
-        };
-        vm.tracer.enter(
-            call_type,
-            vm.env.origin,
-            callee,
-            vm.tx.value(),
-            vm.env.gas_limit,
-            &vm.tx.data().clone().into(),
-        )?;
+        if vm.tracer.active {
+            let call_type = if is_create {
+                CallType::CREATE
+            } else {
+                CallType::CALL
+            };
+            vm.tracer.enter(
+                call_type,
+                vm.env.origin,
+                callee,
+                vm.tx.value(),
+                vm.env.gas_limit,
+                &vm.tx.data().clone().into(),
+            )?;
+        }
 
         #[cfg(feature = "debug")]
         {
@@ -2883,13 +2946,907 @@ impl<'a> VM<'a> {
         }
 
         // Specialize the dispatch loop on whether a struct-log tracer is active.
-        // The `!TRACED` variant compiles out every tracer branch and capture call,
-        // leaving a minimal hot loop (the common, non-traced case).
+        // The `!TRACED && !VALIDATING` variant runs the register-pinned direct-inlined
+        // fast-path loop with peephole superinstruction fusion.
         match (self.opcode_tracer.active, self.validation_observer.active) {
+            #[cfg(not(any(
+                feature = "perf_opcode_timings",
+                feature = "sp1",
+                feature = "risc0",
+                feature = "zisk",
+                feature = "openvm"
+            )))]
+            (false, false) => self.run_dispatch_ir(),
+            #[cfg(all(
+                not(feature = "perf_opcode_timings"),
+                any(
+                    feature = "sp1",
+                    feature = "risc0",
+                    feature = "zisk",
+                    feature = "openvm"
+                )
+            ))]
+            (false, false) => self.run_dispatch_fast(),
+            #[cfg(feature = "perf_opcode_timings")]
             (false, false) => self.run_dispatch::<false, false>(),
             (false, true) => self.run_dispatch::<false, true>(),
             (true, false) => self.run_dispatch::<true, false>(),
             (true, true) => self.run_dispatch::<true, true>(),
+        }
+    }
+
+    /// Register-pinned direct-inlined opcode dispatch loop for the common non-traced,
+    /// non-validating execution path. Keeps `pc`, `gas`, `sp`, `code_ptr`, and `stack_ptr`
+    /// live in local registers across hot opcodes and fuses common Solidity control-flow
+    /// idioms (`PUSH1/2 + JUMP/JUMPI + JUMPDEST`, `ISZERO + PUSH2 + JUMPI`, `EQ + PUSH2 + JUMPI`).
+    #[cfg(not(feature = "perf_opcode_timings"))]
+    #[expect(
+        unsafe_code,
+        clippy::indexing_slicing,
+        clippy::as_conversions,
+        clippy::arithmetic_side_effects,
+        reason = "register-pinned EVM hot loop with explicit gas/stack bounds checks"
+    )]
+    pub(crate) fn run_dispatch_fast(&mut self) -> Result<ContextResult, VMError> {
+        use crate::constants::STACK_LIMIT;
+        use crate::opcode_handlers::arithmetic::wrapping_mul;
+        use crate::opcode_handlers::bitwise_comparison::{shift_left, shift_right};
+        use ethrex_common::types::BYTECODE_PADDING;
+
+        const { assert!(BYTECODE_PADDING > 32) };
+
+        let mut error = OnceCell::<VMError>::new();
+        let opcode_table = self.opcode_table;
+        let fork = self.env.config.fork;
+        let has_push0 = fork >= Fork::Shanghai;
+        let has_shifts = fork >= Fork::Constantinople;
+        let debug_enabled = self.debug_mode.enabled;
+
+        let mut pc = self.current_call_frame.pc;
+        let mut gas = self.current_call_frame.gas_remaining;
+        let mut sp = self.current_call_frame.stack.offset;
+        let mut code_ptr = self.current_call_frame.bytecode.dispatch_buf().as_ptr();
+        let mut stack_ptr = self.current_call_frame.stack.values.as_mut_ptr();
+
+        enum FastExit {
+            Stop,
+            Error(VMError),
+        }
+
+        macro_rules! flush_regs {
+            () => {
+                self.current_call_frame.pc = pc;
+                self.current_call_frame.gas_remaining = gas;
+                self.current_call_frame.stack.offset = sp;
+            };
+        }
+        macro_rules! reload_regs {
+            () => {
+                pc = self.current_call_frame.pc;
+                gas = self.current_call_frame.gas_remaining;
+                sp = self.current_call_frame.stack.offset;
+                code_ptr = self.current_call_frame.bytecode.dispatch_buf().as_ptr();
+                stack_ptr = self.current_call_frame.stack.values.as_mut_ptr();
+            };
+        }
+
+        // Single cold exit path outside the inner hot loop so error/halt cleanup
+        // is emitted once instead of duplicated across ~35 opcode arms.
+        loop {
+            let exit: FastExit = loop {
+                macro_rules! halt_err {
+                    ($err:expr) => {
+                        break FastExit::Error($err.into())
+                    };
+                }
+
+                // SAFETY: `pc` is always `<= bytecode_len`, and `dispatch_buf()` has 33 bytes
+                // of trailing zero (`STOP`) padding.
+                let opcode = unsafe { *code_ptr.add(pc) };
+                pc = pc.wrapping_add(1);
+
+                match opcode {
+                    // STOP (0x00)
+                    0x00 => break FastExit::Stop,
+
+                    // ADD (0x01)
+                    0x01 => {
+                        gas -= 3;
+                        if gas < 0 {
+                            halt_err!(ExceptionalHalt::OutOfGas);
+                        }
+                        let new_sp = sp + 1;
+                        if new_sp >= STACK_LIMIT {
+                            halt_err!(ExceptionalHalt::StackUnderflow);
+                        }
+                        unsafe {
+                            let a = *stack_ptr.add(sp);
+                            let b = &mut *stack_ptr.add(new_sp);
+                            *b = a.overflowing_add(*b).0;
+                        }
+                        sp = new_sp;
+                    }
+
+                    // MUL (0x02)
+                    0x02 => {
+                        gas -= 5;
+                        if gas < 0 {
+                            halt_err!(ExceptionalHalt::OutOfGas);
+                        }
+                        let new_sp = sp + 1;
+                        if new_sp >= STACK_LIMIT {
+                            halt_err!(ExceptionalHalt::StackUnderflow);
+                        }
+                        unsafe {
+                            let a = &*stack_ptr.add(sp);
+                            let b = &mut *stack_ptr.add(new_sp);
+                            *b = wrapping_mul(a, b);
+                        }
+                        sp = new_sp;
+                    }
+
+                    // SUB (0x03)
+                    0x03 => {
+                        gas -= 3;
+                        if gas < 0 {
+                            halt_err!(ExceptionalHalt::OutOfGas);
+                        }
+                        let new_sp = sp + 1;
+                        if new_sp >= STACK_LIMIT {
+                            halt_err!(ExceptionalHalt::StackUnderflow);
+                        }
+                        unsafe {
+                            let a = *stack_ptr.add(sp);
+                            let b = &mut *stack_ptr.add(new_sp);
+                            *b = a.overflowing_sub(*b).0;
+                        }
+                        sp = new_sp;
+                    }
+
+                    // LT (0x10)
+                    0x10 => {
+                        gas -= 3;
+                        if gas < 0 {
+                            halt_err!(ExceptionalHalt::OutOfGas);
+                        }
+                        let new_sp = sp + 1;
+                        if new_sp >= STACK_LIMIT {
+                            halt_err!(ExceptionalHalt::StackUnderflow);
+                        }
+                        unsafe {
+                            let a = *stack_ptr.add(sp);
+                            let b = &mut *stack_ptr.add(new_sp);
+                            *b = U256::from((a < *b) as u64);
+                        }
+                        sp = new_sp;
+                    }
+
+                    // GT (0x11)
+                    0x11 => {
+                        gas -= 3;
+                        if gas < 0 {
+                            halt_err!(ExceptionalHalt::OutOfGas);
+                        }
+                        let new_sp = sp + 1;
+                        if new_sp >= STACK_LIMIT {
+                            halt_err!(ExceptionalHalt::StackUnderflow);
+                        }
+                        unsafe {
+                            let a = *stack_ptr.add(sp);
+                            let b = &mut *stack_ptr.add(new_sp);
+                            *b = U256::from((a > *b) as u64);
+                        }
+                        sp = new_sp;
+                    }
+
+                    // EQ (0x14) — with fused EQ + PUSH2 + JUMPI (+ JUMPDEST)
+                    0x14 => {
+                        let next0 = unsafe { *code_ptr.add(pc) };
+                        if next0 == 0x61
+                            && unsafe { *code_ptr.add(pc + 3) } == 0x57
+                            && gas >= 17
+                            && sp + 1 < STACK_LIMIT
+                        {
+                            let dest = u16::from_be_bytes(unsafe {
+                                [*code_ptr.add(pc + 1), *code_ptr.add(pc + 2)]
+                            }) as usize;
+                            let eq = unsafe { *stack_ptr.add(sp) == *stack_ptr.add(sp + 1) };
+                            if !eq {
+                                sp += 2;
+                                gas -= 16; // EQ(3) + PUSH2(3) + JUMPI(10)
+                                pc += 4;
+                                continue;
+                            } else if self.current_call_frame.bytecode.is_valid_jumpdest(dest) {
+                                sp += 2;
+                                gas -= 17; // EQ(3) + PUSH2(3) + JUMPI(10) + JUMPDEST(1)
+                                pc = dest + 1;
+                                continue;
+                            }
+                        }
+                        gas -= 3;
+                        if gas < 0 {
+                            halt_err!(ExceptionalHalt::OutOfGas);
+                        }
+                        let new_sp = sp + 1;
+                        if new_sp >= STACK_LIMIT {
+                            halt_err!(ExceptionalHalt::StackUnderflow);
+                        }
+                        unsafe {
+                            let a = *stack_ptr.add(sp);
+                            let b = &mut *stack_ptr.add(new_sp);
+                            *b = U256::from((a == *b) as u64);
+                        }
+                        sp = new_sp;
+                    }
+
+                    // ISZERO (0x15) — with fused ISZERO + PUSH2 + JUMPI (+ JUMPDEST)
+                    0x15 => {
+                        let next0 = unsafe { *code_ptr.add(pc) };
+                        if next0 == 0x61
+                            && unsafe { *code_ptr.add(pc + 3) } == 0x57
+                            && gas >= 17
+                            && (1..STACK_LIMIT).contains(&sp)
+                        {
+                            let dest = u16::from_be_bytes(unsafe {
+                                [*code_ptr.add(pc + 1), *code_ptr.add(pc + 2)]
+                            }) as usize;
+                            let is_zero = unsafe { (*stack_ptr.add(sp)).is_zero() };
+                            if !is_zero {
+                                sp += 1;
+                                gas -= 16; // ISZERO(3) + PUSH2(3) + JUMPI(10)
+                                pc += 4;
+                                continue;
+                            } else if self.current_call_frame.bytecode.is_valid_jumpdest(dest) {
+                                sp += 1;
+                                gas -= 17; // ISZERO(3) + PUSH2(3) + JUMPI(10) + JUMPDEST(1)
+                                pc = dest + 1;
+                                continue;
+                            }
+                        }
+                        gas -= 3;
+                        if gas < 0 {
+                            halt_err!(ExceptionalHalt::OutOfGas);
+                        }
+                        if sp >= STACK_LIMIT {
+                            halt_err!(ExceptionalHalt::StackUnderflow);
+                        }
+                        unsafe {
+                            let slot = &mut *stack_ptr.add(sp);
+                            *slot = U256::from(slot.is_zero() as u64);
+                        }
+                    }
+
+                    // AND (0x16)
+                    0x16 => {
+                        gas -= 3;
+                        if gas < 0 {
+                            halt_err!(ExceptionalHalt::OutOfGas);
+                        }
+                        let new_sp = sp + 1;
+                        if new_sp >= STACK_LIMIT {
+                            halt_err!(ExceptionalHalt::StackUnderflow);
+                        }
+                        unsafe {
+                            let a = *stack_ptr.add(sp);
+                            let b = &mut *stack_ptr.add(new_sp);
+                            *b = a & *b;
+                        }
+                        sp = new_sp;
+                    }
+
+                    // OR (0x17)
+                    0x17 => {
+                        gas -= 3;
+                        if gas < 0 {
+                            halt_err!(ExceptionalHalt::OutOfGas);
+                        }
+                        let new_sp = sp + 1;
+                        if new_sp >= STACK_LIMIT {
+                            halt_err!(ExceptionalHalt::StackUnderflow);
+                        }
+                        unsafe {
+                            let a = *stack_ptr.add(sp);
+                            let b = &mut *stack_ptr.add(new_sp);
+                            *b = a | *b;
+                        }
+                        sp = new_sp;
+                    }
+
+                    // XOR (0x18)
+                    0x18 => {
+                        gas -= 3;
+                        if gas < 0 {
+                            halt_err!(ExceptionalHalt::OutOfGas);
+                        }
+                        let new_sp = sp + 1;
+                        if new_sp >= STACK_LIMIT {
+                            halt_err!(ExceptionalHalt::StackUnderflow);
+                        }
+                        unsafe {
+                            let a = *stack_ptr.add(sp);
+                            let b = &mut *stack_ptr.add(new_sp);
+                            *b = a ^ *b;
+                        }
+                        sp = new_sp;
+                    }
+
+                    // NOT (0x19)
+                    0x19 => {
+                        gas -= 3;
+                        if gas < 0 {
+                            halt_err!(ExceptionalHalt::OutOfGas);
+                        }
+                        if sp >= STACK_LIMIT {
+                            halt_err!(ExceptionalHalt::StackUnderflow);
+                        }
+                        unsafe {
+                            let slot = &mut *stack_ptr.add(sp);
+                            *slot = !*slot;
+                        }
+                    }
+
+                    // SHL (0x1B)
+                    0x1B if has_shifts => {
+                        gas -= 3;
+                        if gas < 0 {
+                            halt_err!(ExceptionalHalt::OutOfGas);
+                        }
+                        let new_sp = sp + 1;
+                        if new_sp >= STACK_LIMIT {
+                            halt_err!(ExceptionalHalt::StackUnderflow);
+                        }
+                        unsafe {
+                            let shift_amount = *stack_ptr.add(sp);
+                            let slot = &mut *stack_ptr.add(new_sp);
+                            *slot = match u8::try_from(shift_amount) {
+                                Ok(s) => shift_left(slot, s),
+                                Err(_) => U256::zero(),
+                            };
+                        }
+                        sp = new_sp;
+                    }
+
+                    // SHR (0x1C)
+                    0x1C if has_shifts => {
+                        gas -= 3;
+                        if gas < 0 {
+                            halt_err!(ExceptionalHalt::OutOfGas);
+                        }
+                        let new_sp = sp + 1;
+                        if new_sp >= STACK_LIMIT {
+                            halt_err!(ExceptionalHalt::StackUnderflow);
+                        }
+                        unsafe {
+                            let shift_amount = *stack_ptr.add(sp);
+                            let slot = &mut *stack_ptr.add(new_sp);
+                            *slot = match u8::try_from(shift_amount) {
+                                Ok(s) => shift_right(slot, s, 0),
+                                Err(_) => U256::zero(),
+                            };
+                        }
+                        sp = new_sp;
+                    }
+
+                    // CALLER (0x33)
+                    0x33 => {
+                        gas -= 2;
+                        if gas < 0 {
+                            halt_err!(ExceptionalHalt::OutOfGas);
+                        }
+                        if sp == 0 {
+                            halt_err!(ExceptionalHalt::StackOverflow);
+                        }
+                        sp -= 1;
+                        unsafe {
+                            *stack_ptr.add(sp) =
+                                crate::utils::address_to_word(self.current_call_frame.msg_sender);
+                        }
+                    }
+
+                    // CALLVALUE (0x34)
+                    0x34 => {
+                        gas -= 2;
+                        if gas < 0 {
+                            halt_err!(ExceptionalHalt::OutOfGas);
+                        }
+                        if sp == 0 {
+                            halt_err!(ExceptionalHalt::StackOverflow);
+                        }
+                        sp -= 1;
+                        unsafe {
+                            *stack_ptr.add(sp) = self.current_call_frame.msg_value;
+                        }
+                    }
+
+                    // CALLDATALOAD (0x35)
+                    0x35 => {
+                        gas -= 3;
+                        if gas < 0 {
+                            halt_err!(ExceptionalHalt::OutOfGas);
+                        }
+                        if sp >= STACK_LIMIT {
+                            halt_err!(ExceptionalHalt::StackUnderflow);
+                        }
+                        let offset_word = unsafe { *stack_ptr.add(sp) };
+                        let value = match usize::try_from(offset_word) {
+                            Ok(offset) => {
+                                match self.current_call_frame.calldata.load_word(offset) {
+                                    Ok(v) => v,
+                                    Err(e) => {
+                                        flush_regs!();
+                                        return Err(e);
+                                    }
+                                }
+                            }
+                            Err(_) => U256::zero(),
+                        };
+                        unsafe {
+                            *stack_ptr.add(sp) = value;
+                        }
+                    }
+
+                    // CALLDATASIZE (0x36)
+                    0x36 => {
+                        gas -= 2;
+                        if gas < 0 {
+                            halt_err!(ExceptionalHalt::OutOfGas);
+                        }
+                        if sp == 0 {
+                            halt_err!(ExceptionalHalt::StackOverflow);
+                        }
+                        sp -= 1;
+                        unsafe {
+                            *stack_ptr.add(sp) = U256::from(self.current_call_frame.calldata.len());
+                        }
+                    }
+
+                    // POP (0x50)
+                    0x50 => {
+                        gas -= 2;
+                        if gas < 0 {
+                            halt_err!(ExceptionalHalt::OutOfGas);
+                        }
+                        if sp >= STACK_LIMIT {
+                            halt_err!(ExceptionalHalt::StackUnderflow);
+                        }
+                        sp += 1;
+                    }
+
+                    // MLOAD (0x51) — fast path when already within allocated memory
+                    0x51 => {
+                        if sp < STACK_LIMIT {
+                            let offset_word = unsafe { *stack_ptr.add(sp) };
+                            let mem_len = self.current_call_frame.memory.len();
+                            if offset_word.0[1] == 0
+                                && offset_word.0[2] == 0
+                                && offset_word.0[3] == 0
+                                && (offset_word.0[0] as usize).saturating_add(32) <= mem_len
+                            {
+                                gas -= 3;
+                                if gas < 0 {
+                                    halt_err!(ExceptionalHalt::OutOfGas);
+                                }
+                                let offset = offset_word.0[0] as usize;
+                                if let Ok(word) = self
+                                    .current_call_frame
+                                    .memory
+                                    .load_word_prerounded(offset, mem_len)
+                                {
+                                    unsafe {
+                                        *stack_ptr.add(sp) = word;
+                                    }
+                                    continue;
+                                }
+                            }
+                        }
+                        // Fallback for expansion / OOB / underflow
+                        flush_regs!();
+                        let op_result = opcode_table[0x51].call(self, &mut error);
+                        if let OpcodeResult::Halt = op_result {
+                            match error.take() {
+                                None => break FastExit::Stop,
+                                Some(err) => break FastExit::Error(err),
+                            }
+                        }
+                        reload_regs!();
+                    }
+
+                    // MSTORE (0x52) — fast path when already within allocated memory & !debug
+                    0x52 if !debug_enabled => {
+                        if sp + 1 < STACK_LIMIT {
+                            let offset_word = unsafe { *stack_ptr.add(sp) };
+                            let mem_len = self.current_call_frame.memory.len();
+                            if offset_word.0[1] == 0
+                                && offset_word.0[2] == 0
+                                && offset_word.0[3] == 0
+                                && (offset_word.0[0] as usize).saturating_add(32) <= mem_len
+                            {
+                                gas -= 3;
+                                if gas < 0 {
+                                    halt_err!(ExceptionalHalt::OutOfGas);
+                                }
+                                let offset = offset_word.0[0] as usize;
+                                let value = unsafe { *stack_ptr.add(sp + 1) };
+                                sp += 2;
+                                if self
+                                    .current_call_frame
+                                    .memory
+                                    .store_word_prerounded(offset, value, mem_len)
+                                    .is_ok()
+                                {
+                                    continue;
+                                }
+                                // Restore sp on unexpected error and fall through
+                                sp -= 2;
+                                gas += 3;
+                            }
+                        }
+                        flush_regs!();
+                        let op_result = opcode_table[0x52].call(self, &mut error);
+                        if let OpcodeResult::Halt = op_result {
+                            match error.take() {
+                                None => break FastExit::Stop,
+                                Some(err) => break FastExit::Error(err),
+                            }
+                        }
+                        reload_regs!();
+                    }
+
+                    // JUMP (0x56) — fuses JUMPDEST
+                    0x56 => {
+                        gas -= 8;
+                        if gas < 0 {
+                            halt_err!(ExceptionalHalt::OutOfGas);
+                        }
+                        if sp >= STACK_LIMIT {
+                            halt_err!(ExceptionalHalt::StackUnderflow);
+                        }
+                        let target_word = unsafe { *stack_ptr.add(sp) };
+                        sp += 1;
+                        let target = usize::try_from(target_word).unwrap_or(usize::MAX);
+                        if self.current_call_frame.bytecode.is_valid_jumpdest(target) {
+                            pc = target + 1;
+                            gas -= 1;
+                            if gas < 0 {
+                                halt_err!(ExceptionalHalt::OutOfGas);
+                            }
+                        } else {
+                            halt_err!(ExceptionalHalt::InvalidJump);
+                        }
+                    }
+
+                    // JUMPI (0x57) — fuses JUMPDEST
+                    0x57 => {
+                        gas -= 10;
+                        if gas < 0 {
+                            halt_err!(ExceptionalHalt::OutOfGas);
+                        }
+                        if sp + 1 >= STACK_LIMIT {
+                            halt_err!(ExceptionalHalt::StackUnderflow);
+                        }
+                        let target_word = unsafe { *stack_ptr.add(sp) };
+                        let cond = unsafe { *stack_ptr.add(sp + 1) };
+                        sp += 2;
+                        if !cond.is_zero() {
+                            let target = usize::try_from(target_word).unwrap_or(usize::MAX);
+                            if self.current_call_frame.bytecode.is_valid_jumpdest(target) {
+                                pc = target + 1;
+                                gas -= 1;
+                                if gas < 0 {
+                                    halt_err!(ExceptionalHalt::OutOfGas);
+                                }
+                            } else {
+                                halt_err!(ExceptionalHalt::InvalidJump);
+                            }
+                        }
+                    }
+
+                    // GAS (0x5A)
+                    0x5A => {
+                        gas -= 2;
+                        if gas < 0 {
+                            halt_err!(ExceptionalHalt::OutOfGas);
+                        }
+                        if sp == 0 {
+                            halt_err!(ExceptionalHalt::StackOverflow);
+                        }
+                        sp -= 1;
+                        unsafe {
+                            *stack_ptr.add(sp) = U256::from(gas as u64);
+                        }
+                    }
+
+                    // JUMPDEST (0x5B)
+                    0x5B => {
+                        gas -= 1;
+                        if gas < 0 {
+                            halt_err!(ExceptionalHalt::OutOfGas);
+                        }
+                    }
+
+                    // PUSH0 (0x5F)
+                    0x5F if has_push0 => {
+                        gas -= 2;
+                        if gas < 0 {
+                            halt_err!(ExceptionalHalt::OutOfGas);
+                        }
+                        if sp == 0 {
+                            halt_err!(ExceptionalHalt::StackOverflow);
+                        }
+                        sp -= 1;
+                        unsafe {
+                            *stack_ptr.add(sp) = U256::zero();
+                        }
+                    }
+
+                    // PUSH1 (0x60) — with fused PUSH1 + JUMP / JUMPI / MLOAD / MSTORE / ADD
+                    0x60 => {
+                        let b0 = unsafe { *code_ptr.add(pc) } as usize;
+                        let next = unsafe { *code_ptr.add(pc + 1) };
+                        if next == 0x56
+                            && sp >= 1
+                            && gas >= 12
+                            && self.current_call_frame.bytecode.is_valid_jumpdest(b0)
+                        {
+                            gas -= 12; // PUSH1(3) + JUMP(8) + JUMPDEST(1)
+                            pc = b0 + 1;
+                            continue;
+                        }
+                        if next == 0x57 && (1..STACK_LIMIT).contains(&sp) && gas >= 14 {
+                            let cond = unsafe { *stack_ptr.add(sp) };
+                            if cond.is_zero() {
+                                sp += 1;
+                                gas -= 13; // PUSH1(3) + JUMPI(10)
+                                pc += 2;
+                                continue;
+                            } else if self.current_call_frame.bytecode.is_valid_jumpdest(b0) {
+                                sp += 1;
+                                gas -= 14; // PUSH1(3) + JUMPI(10) + JUMPDEST(1)
+                                pc = b0 + 1;
+                                continue;
+                            }
+                        }
+                        gas -= 3;
+                        if gas < 0 {
+                            halt_err!(ExceptionalHalt::OutOfGas);
+                        }
+                        if sp == 0 {
+                            halt_err!(ExceptionalHalt::StackOverflow);
+                        }
+                        pc += 1;
+                        sp -= 1;
+                        unsafe {
+                            let slot = &mut *stack_ptr.add(sp);
+                            slot.0[0] = b0 as u64;
+                            slot.0[1] = 0;
+                            slot.0[2] = 0;
+                            slot.0[3] = 0;
+                        }
+                    }
+
+                    // PUSH2 (0x61) — with fused PUSH2 + JUMP / JUMPI
+                    0x61 => {
+                        let dest = u16::from_be_bytes(unsafe {
+                            [*code_ptr.add(pc), *code_ptr.add(pc + 1)]
+                        }) as usize;
+                        let next = unsafe { *code_ptr.add(pc + 2) };
+                        if next == 0x56
+                            && sp >= 1
+                            && gas >= 12
+                            && self.current_call_frame.bytecode.is_valid_jumpdest(dest)
+                        {
+                            gas -= 12; // PUSH2(3) + JUMP(8) + JUMPDEST(1)
+                            pc = dest + 1;
+                            continue;
+                        }
+                        if next == 0x57 && (1..STACK_LIMIT).contains(&sp) && gas >= 14 {
+                            let cond = unsafe { *stack_ptr.add(sp) };
+                            if cond.is_zero() {
+                                sp += 1;
+                                gas -= 13; // PUSH2(3) + JUMPI(10)
+                                pc += 3;
+                                continue;
+                            } else if self.current_call_frame.bytecode.is_valid_jumpdest(dest) {
+                                sp += 1;
+                                gas -= 14; // PUSH2(3) + JUMPI(10) + JUMPDEST(1)
+                                pc = dest + 1;
+                                continue;
+                            }
+                        }
+                        gas -= 3;
+                        if gas < 0 {
+                            halt_err!(ExceptionalHalt::OutOfGas);
+                        }
+                        if sp == 0 {
+                            halt_err!(ExceptionalHalt::StackOverflow);
+                        }
+                        pc += 2;
+                        sp -= 1;
+                        unsafe {
+                            let slot = &mut *stack_ptr.add(sp);
+                            slot.0[0] = dest as u64;
+                            slot.0[1] = 0;
+                            slot.0[2] = 0;
+                            slot.0[3] = 0;
+                        }
+                    }
+
+                    // PUSH4 (0x63) — function selectors
+                    0x63 => {
+                        gas -= 3;
+                        if gas < 0 {
+                            halt_err!(ExceptionalHalt::OutOfGas);
+                        }
+                        if sp == 0 {
+                            halt_err!(ExceptionalHalt::StackOverflow);
+                        }
+                        let v = u32::from_be_bytes(unsafe {
+                            std::ptr::read_unaligned(code_ptr.add(pc).cast::<[u8; 4]>())
+                        }) as u64;
+                        pc += 4;
+                        sp -= 1;
+                        unsafe {
+                            let slot = &mut *stack_ptr.add(sp);
+                            slot.0[0] = v;
+                            slot.0[1] = 0;
+                            slot.0[2] = 0;
+                            slot.0[3] = 0;
+                        }
+                    }
+
+                    // PUSH3, PUSH5..PUSH8
+                    0x62 | 0x64..=0x67 => {
+                        gas -= 3;
+                        if gas < 0 {
+                            halt_err!(ExceptionalHalt::OutOfGas);
+                        }
+                        if sp == 0 {
+                            halt_err!(ExceptionalHalt::StackOverflow);
+                        }
+                        let n = (opcode - 0x5F) as usize;
+                        // Load 8 bytes big-endian and shift right by (8 - n) * 8 bits.
+                        let raw = u64::from_be_bytes(unsafe {
+                            std::ptr::read_unaligned(code_ptr.add(pc).cast::<[u8; 8]>())
+                        });
+                        let v = raw >> ((8 - n) * 8);
+                        pc += n;
+                        sp -= 1;
+                        unsafe {
+                            let slot = &mut *stack_ptr.add(sp);
+                            slot.0[0] = v;
+                            slot.0[1] = 0;
+                            slot.0[2] = 0;
+                            slot.0[3] = 0;
+                        }
+                    }
+
+                    // PUSH20 (0x73) — addresses / 160-bit masks
+                    0x73 => {
+                        gas -= 3;
+                        if gas < 0 {
+                            halt_err!(ExceptionalHalt::OutOfGas);
+                        }
+                        if sp == 0 {
+                            halt_err!(ExceptionalHalt::StackOverflow);
+                        }
+                        let (w2, w1, w0) = unsafe {
+                            let hi = u32::from_be_bytes(std::ptr::read_unaligned(
+                                code_ptr.add(pc).cast::<[u8; 4]>(),
+                            )) as u64;
+                            let mid = u64::from_be_bytes(std::ptr::read_unaligned(
+                                code_ptr.add(pc + 4).cast::<[u8; 8]>(),
+                            ));
+                            let lo = u64::from_be_bytes(std::ptr::read_unaligned(
+                                code_ptr.add(pc + 12).cast::<[u8; 8]>(),
+                            ));
+                            (hi, mid, lo)
+                        };
+                        pc += 20;
+                        sp -= 1;
+                        unsafe {
+                            let slot = &mut *stack_ptr.add(sp);
+                            slot.0[0] = w0;
+                            slot.0[1] = w1;
+                            slot.0[2] = w2;
+                            slot.0[3] = 0;
+                        }
+                    }
+
+                    // PUSH32 (0x7F)
+                    0x7F => {
+                        gas -= 3;
+                        if gas < 0 {
+                            halt_err!(ExceptionalHalt::OutOfGas);
+                        }
+                        if sp == 0 {
+                            halt_err!(ExceptionalHalt::StackOverflow);
+                        }
+                        unsafe {
+                            let w3 = u64::from_be_bytes(std::ptr::read_unaligned(
+                                code_ptr.add(pc).cast::<[u8; 8]>(),
+                            ));
+                            let w2 = u64::from_be_bytes(std::ptr::read_unaligned(
+                                code_ptr.add(pc + 8).cast::<[u8; 8]>(),
+                            ));
+                            let w1 = u64::from_be_bytes(std::ptr::read_unaligned(
+                                code_ptr.add(pc + 16).cast::<[u8; 8]>(),
+                            ));
+                            let w0 = u64::from_be_bytes(std::ptr::read_unaligned(
+                                code_ptr.add(pc + 24).cast::<[u8; 8]>(),
+                            ));
+                            pc += 32;
+                            sp -= 1;
+                            let slot = &mut *stack_ptr.add(sp);
+                            slot.0[0] = w0;
+                            slot.0[1] = w1;
+                            slot.0[2] = w2;
+                            slot.0[3] = w3;
+                        }
+                    }
+
+                    // DUP1..=DUP16 (0x80..=0x8F)
+                    0x80..=0x8F => {
+                        gas -= 3;
+                        if gas < 0 {
+                            halt_err!(ExceptionalHalt::OutOfGas);
+                        }
+                        let idx = sp + (opcode - 0x80) as usize;
+                        if idx >= STACK_LIMIT {
+                            halt_err!(ExceptionalHalt::StackUnderflow);
+                        }
+                        if sp == 0 {
+                            halt_err!(ExceptionalHalt::StackOverflow);
+                        }
+                        sp -= 1;
+                        unsafe {
+                            *stack_ptr.add(sp) = *stack_ptr.add(idx);
+                        }
+                    }
+
+                    // SWAP1..=SWAP16 (0x90..=0x9F)
+                    0x90..=0x9F => {
+                        gas -= 3;
+                        if gas < 0 {
+                            halt_err!(ExceptionalHalt::OutOfGas);
+                        }
+                        let idx = sp + (opcode - 0x8F) as usize;
+                        if idx >= STACK_LIMIT {
+                            halt_err!(ExceptionalHalt::StackUnderflow);
+                        }
+                        unsafe {
+                            std::ptr::swap(stack_ptr.add(sp), stack_ptr.add(idx));
+                        }
+                    }
+
+                    // All other (cold/stateful/system) opcodes: flush registers, delegate to table.
+                    _ => {
+                        flush_regs!();
+                        let op_result = opcode_table[opcode as usize].call(self, &mut error);
+                        match op_result {
+                            OpcodeResult::Continue => {
+                                reload_regs!();
+                            }
+                            OpcodeResult::Halt => match error.take() {
+                                None => break FastExit::Stop,
+                                Some(err) => break FastExit::Error(err),
+                            },
+                        }
+                    }
+                }
+            };
+
+            // Cold exit handling: emitted once outside the inner dispatch loop.
+            flush_regs!();
+            let result = match exit {
+                FastExit::Stop => self.handle_opcode_result()?,
+                FastExit::Error(err) => self.handle_opcode_error(err)?,
+            };
+            if self.is_initial_call_frame() {
+                self.handle_state_backup(&result, !self.preserve_top_level_backup)?;
+                return Ok(result);
+            }
+            self.handle_return(&result)?;
+            reload_regs!();
         }
     }
 
@@ -3411,7 +4368,7 @@ impl<'a> VM<'a> {
         // Only include logs if transaction succeeded. When a transaction reverts,
         // no logs should be emitted (including EIP-7708 Transfer logs).
         let logs = if ctx_result.is_success() {
-            self.substate.extract_logs()
+            self.substate.take_logs()
         } else {
             Vec::new()
         };
@@ -3527,49 +4484,182 @@ impl<'a> VM<'a> {
 }
 
 impl Substate {
+    #[inline]
+    fn take_reused_slot_set() -> SeededHashSet<H256> {
+        SLOT_SET_REUSE
+            .with(|slot| slot.borrow_mut().take())
+            .unwrap_or_default()
+    }
+
+    fn clear_for_reuse(&mut self) -> bool {
+        self.parent = None;
+        self.selfdestruct_set.clear();
+        self.accessed_addresses.clear();
+        if !self.accessed_storage_slots.is_empty() {
+            let mut saved = false;
+            for (_, mut set) in self.accessed_storage_slots.drain() {
+                if !saved && set.capacity() <= 256 {
+                    set.clear();
+                    SLOT_SET_REUSE.with(|slot| {
+                        let _ = slot.replace(Some(set));
+                    });
+                    saved = true;
+                }
+            }
+        }
+        self.created_accounts.clear();
+        self.refunded_gas = 0;
+        self.transient_storage.clear();
+        self.logs.clear();
+        // Avoid retaining abnormally large allocations in TLS after pathological txs.
+        self.accessed_addresses.capacity() <= 256
+            && self.accessed_storage_slots.capacity() <= 64
+            && self.logs.capacity() <= 256
+            && self.transient_storage.capacity() <= 64
+    }
+
+    fn recycle_box_to_thread_local(mut boxed: Box<Self>) {
+        if boxed.clear_for_reuse() {
+            SUBSTATE_BOX_REUSE.with(|slot| {
+                let _ = slot.replace(Some(boxed));
+            });
+        }
+    }
+
+    /// Recycles this `Substate` into a 1-slot thread-local cache so the next transaction
+    /// on this thread reuses its allocated `accessed_addresses` / `logs` buffers.
+    pub(crate) fn recycle_to_thread_local(mut self) {
+        if self.clear_for_reuse() {
+            SUBSTATE_REUSE.with(|slot| {
+                let _ = slot.replace(Some(self));
+            });
+        }
+    }
+
     /// Initializes the VM substate, mainly adding addresses to the "accessed_addresses" field and the same with storage slots
     pub fn initialize(env: &Environment, tx: &Transaction) -> Result<Substate, VMError> {
         let fork = env.config.fork;
 
-        // Add sender and recipient to accessed accounts [https://www.evm.codes/about#access_list]
-        // Precompiles are NO LONGER inserted here — they are warm by construction (see
-        // `is_warm_precompile`), removing the ~20-entry floor that used to dominate this set. The
-        // remaining working set is small (sender + coinbase + recipient + access-list/touched
-        // addresses; real p99 ~7), so a capacity of 8 covers most txs with little waste.
-        let mut initial_accessed_addresses =
-            AccessedAddresses::with_capacity_and_hasher(8, Default::default());
-        // Storage slots are ~98% empty (p95 0, p99 4), so `default()` (alloc-free until first
-        // insert) beats pre-sizing, which would tax the common empty case.
-        let mut initial_accessed_storage_slots = AccessedStorageSlots::default();
+        let mut substate = SUBSTATE_REUSE
+            .with(|slot| slot.borrow_mut().take())
+            .unwrap_or_else(|| {
+                Substate::from_accesses(
+                    fork,
+                    AccessedAddresses::with_capacity_and_hasher(8, Default::default()),
+                    AccessedStorageSlots::default(),
+                )
+            });
+        substate.fork = fork;
 
         // Add Tx sender to accessed accounts
-        initial_accessed_addresses.insert(env.origin);
+        substate.accessed_addresses.insert(env.origin);
 
         // [EIP-3651] - Add coinbase to accessed accounts after Shanghai
         if fork >= Fork::Shanghai {
-            initial_accessed_addresses.insert(env.coinbase);
+            substate.accessed_addresses.insert(env.coinbase);
         }
 
         // Add access lists contents to accessed accounts and accessed storage slots.
-        // Iterate by reference (`Address`/`H256` are `Copy`); the old `.clone()` deep-copied
-        // the whole `Vec<(Address, Vec<H256>)>` per tx just to read it.
         for (address, keys) in tx.access_list() {
-            initial_accessed_addresses.insert(*address);
-            // Access lists can have different entries even for the same address, that's why we check if there's an existing set instead of considering it empty
-            let warm_slots = initial_accessed_storage_slots.entry(*address).or_default();
+            substate.accessed_addresses.insert(*address);
+            let warm_slots = substate.accessed_storage_slots.entry(*address).or_default();
             for slot in keys {
                 warm_slots.insert(*slot);
             }
         }
 
-        let substate = Substate::from_accesses(
-            fork,
-            initial_accessed_addresses,
-            initial_accessed_storage_slots,
-        );
-
         Ok(substate)
     }
+}
+
+impl<'a> VM<'a> {
+    #[inline]
+    fn take_reused_call_frame_backup() -> crate::call_frame::CallFrameBackup {
+        CALL_FRAME_BACKUP_REUSE
+            .with(|slot| slot.borrow_mut().take())
+            .unwrap_or_default()
+    }
+
+    #[inline]
+    pub(crate) fn take_reused_backup_storage_slots() -> SeededHashMap<H256, U256> {
+        BACKUP_STORAGE_SLOTS_REUSE
+            .with(|slot| slot.borrow_mut().take())
+            .unwrap_or_default()
+    }
+
+    fn recycle_call_frame_backup(mut backup: crate::call_frame::CallFrameBackup) {
+        backup.original_accounts_info.clear();
+        if !backup.original_account_storage_slots.is_empty() {
+            let mut saved = false;
+            for (_, mut inner) in backup.original_account_storage_slots.drain() {
+                if !saved && inner.capacity() <= 256 {
+                    inner.clear();
+                    BACKUP_STORAGE_SLOTS_REUSE.with(|slot| {
+                        let _ = slot.replace(Some(inner));
+                    });
+                    saved = true;
+                }
+            }
+        }
+        backup.bal_checkpoint = None;
+        backup.inserted_code_hashes.clear();
+        if backup.original_accounts_info.capacity() <= 256
+            && backup.original_account_storage_slots.capacity() <= 64
+            && backup.inserted_code_hashes.capacity() <= 64
+        {
+            CALL_FRAME_BACKUP_REUSE.with(|slot| {
+                let _ = slot.replace(Some(backup));
+            });
+        }
+    }
+
+    #[inline]
+    fn take_reused_storage_originals() -> SeededHashMap<Address, SeededHashMap<H256, U256>> {
+        STORAGE_ORIGINALS_REUSE
+            .with(|slot| slot.borrow_mut().take())
+            .unwrap_or_default()
+    }
+
+    #[inline]
+    pub(crate) fn take_reused_storage_original_slots() -> SeededHashMap<H256, U256> {
+        STORAGE_ORIGINAL_SLOTS_REUSE
+            .with(|slot| slot.borrow_mut().take())
+            .unwrap_or_default()
+    }
+
+    fn recycle_storage_originals(mut map: SeededHashMap<Address, SeededHashMap<H256, U256>>) {
+        if !map.is_empty() {
+            let mut saved = false;
+            for (_, mut inner) in map.drain() {
+                if !saved && inner.capacity() <= 256 {
+                    inner.clear();
+                    STORAGE_ORIGINAL_SLOTS_REUSE.with(|slot| {
+                        let _ = slot.replace(Some(inner));
+                    });
+                    saved = true;
+                }
+            }
+        }
+        if map.capacity() <= 64 {
+            STORAGE_ORIGINALS_REUSE.with(|slot| {
+                let _ = slot.replace(Some(map));
+            });
+        }
+    }
+}
+
+thread_local! {
+    static SUBSTATE_REUSE: RefCell<Option<Substate>> = const { RefCell::new(None) };
+    static SUBSTATE_BOX_REUSE: RefCell<Option<Box<Substate>>> = const { RefCell::new(None) };
+    static SLOT_SET_REUSE: RefCell<Option<SeededHashSet<H256>>> = const { RefCell::new(None) };
+    static CALL_FRAME_BACKUP_REUSE: RefCell<Option<crate::call_frame::CallFrameBackup>> =
+        const { RefCell::new(None) };
+    static BACKUP_STORAGE_SLOTS_REUSE: RefCell<Option<SeededHashMap<H256, U256>>> =
+        const { RefCell::new(None) };
+    static STORAGE_ORIGINALS_REUSE: RefCell<Option<SeededHashMap<Address, SeededHashMap<H256, U256>>>> =
+        const { RefCell::new(None) };
+    static STORAGE_ORIGINAL_SLOTS_REUSE: RefCell<Option<SeededHashMap<H256, U256>>> =
+        const { RefCell::new(None) };
 }
 
 // Test-support surface for the EIP-8037 state-gas reservoir/clamp-spill unit tests, which live
@@ -3629,7 +4719,7 @@ impl<'a> VM<'a> {
             db,
             tx,
             hooks: Vec::new(),
-            storage_original_values: Default::default(),
+            storage_original_values: Self::take_reused_storage_originals(),
             tracer: LevmCallTracer::disabled(),
             opcode_tracer: LevmOpcodeTracer::disabled(),
             debug_mode: DebugMode::disabled(),

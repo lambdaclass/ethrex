@@ -76,11 +76,11 @@ use ethrex_levm::{
     vm::VM,
 };
 #[cfg(feature = "rayon")]
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 #[cfg(feature = "rayon")]
 use rayon::slice::ParallelSlice;
 #[cfg(feature = "rayon")]
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::cmp::min;
 use std::sync::Arc;
 #[cfg(feature = "rayon")]
@@ -411,6 +411,62 @@ fn first_failure_by_key<K: Ord, V, S, E>(
         .into_iter()
         .try_for_each(|(key, value)| check(key, value))
 }
+
+/// Minimum transaction count to engage wave-based optimistic parallel execution
+/// on non-BAL L1 blocks. Below this threshold sequential execution avoids rayon overhead.
+#[cfg(feature = "rayon")]
+pub const OPTIMISTIC_PARALLEL_MIN_TXS: usize = 32;
+
+/// Fast O(1) pre-check over the first 16 transactions to detect obviously serialized
+/// workloads (e.g. every tx calling the exact same contract + selector + first ABI word,
+/// such as load-test ERC-20 transfers into a single recipient). Returns `true` when
+/// optimistic parallel execution should run; returns `false` to skip the probe wave and
+/// start warmed sequential execution immediately.
+#[cfg(feature = "rayon")]
+pub fn should_use_optimistic_parallel(
+    txs: &[Transaction],
+    is_amsterdam: bool,
+    vm_type: VMType,
+    parallel_exec_enabled: bool,
+) -> bool {
+    if !parallel_exec_enabled
+        || is_amsterdam
+        || !matches!(vm_type, VMType::L1)
+        || txs.len() < OPTIMISTIC_PARALLEL_MIN_TXS
+    {
+        return false;
+    }
+    let sample = &txs[..OPTIMISTIC_PROBE_WAVE_SIZE];
+    let mut counts: FxHashMap<(Option<Address>, &[u8]), usize> = FxHashMap::default();
+    let mut max_same = 0usize;
+    for tx in sample {
+        let to_addr = match tx.to() {
+            TxKind::Call(addr) => Some(addr),
+            TxKind::Create => None,
+        };
+        let data = tx.data().as_ref();
+        let prefix = &data[..data.len().min(36)];
+        let count = counts.entry((to_addr, prefix)).or_insert(0);
+        *count += 1;
+        if *count > max_same {
+            max_same = *count;
+        }
+    }
+    // If > 50% of sampled txs share the exact same target + first 36 calldata bytes,
+    // they almost certainly serialize on the same state slot.
+    max_same * 2 <= sample.len()
+}
+
+/// Small initial probe wave size so high-conflict blocks (e.g. many transfers into a
+/// single hot address/pool) detect contention in <0.2 ms and switch immediately to
+/// warmed sequential execution without wasting work.
+#[cfg(feature = "rayon")]
+const OPTIMISTIC_PROBE_WAVE_SIZE: usize = 16;
+
+/// Number of transactions speculatively executed per steady-state parallel wave before
+/// canonical conflict validation and streaming merkleizer flush.
+#[cfg(feature = "rayon")]
+const OPTIMISTIC_WAVE_SIZE: usize = 128;
 
 impl LEVM {
     /// Execute a block and return the execution result.
@@ -989,122 +1045,166 @@ impl LEVM {
         // EIP-8037 (Amsterdam+): track regular and state gas separately for block-level max()
         let mut block_regular_gas_used = 0_u64;
         let mut block_state_gas_used = 0_u64;
-        // Starts at 2 to account for the two precompile calls done in `Self::prepare_block`.
-        // The value itself can be safely changed.
-        let mut tx_since_last_flush = 2;
 
-        for (tx_idx, tx) in block.body.transactions.iter().enumerate() {
-            let tx_sender = tx.sender(crypto).map_err(|error| {
-                EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
-            })?;
-            // Pre-tx gas limit guard:
-            // Pre-Amsterdam: reject tx if cumulative post-refund gas + tx.gas > block limit.
-            // Amsterdam+: skip — EIP-8037's 2D gas model means cumulative gas (regular +
-            // state) can legally exceed the block gas limit as long as
-            // max(sum_regular, sum_state) stays within it. Block-level overflow is
-            // detected post-execution.
-            if !is_amsterdam {
-                check_gas_limit(cumulative_gas_used, tx.gas_limit(), block.header.gas_limit)?;
-            }
-
-            // EIP-8037 (Amsterdam+, PR #2703): per-tx 2D inclusion check.
-            if is_amsterdam {
-                check_2d_gas_allowance(
-                    tx,
-                    block_regular_gas_used,
-                    block_state_gas_used,
-                    block.header.gas_limit,
-                )?;
-            }
-
-            // Set BAL index for this transaction (1-indexed per EIP-7928)
-            if is_amsterdam {
-                let bal_index = u32::try_from(tx_idx + 1).unwrap_or(u32::MAX);
-                db.set_bal_index(bal_index);
-
-                // Record tx sender for BAL. The recipient is recorded when the prepare
-                // region loads it (default_hook), per the EIP-7928 v7.1.0 update: an
-                // EIP-7702 auth halt before the recipient load must exclude it.
-                if let Some(recorder) = db.bal_recorder_mut() {
-                    recorder.record_touched_address(tx_sender);
-                }
-            }
-
-            let report = Self::execute_tx_in_block(
-                tx,
-                tx_sender,
-                &block.header,
+        // Wave-based optimistic parallel execution (Block-STM without BAL):
+        // Used for pre-Amsterdam L1 blocks with enough transactions when parallel exec
+        // is enabled (automatically disabled during witness collection or --no-bal-parallel-exec)
+        // and the block does not obviously serialize on a single target/calldata prefix.
+        #[cfg(feature = "rayon")]
+        let ran_optimistic_parallel = if should_use_optimistic_parallel(
+            &block.body.transactions,
+            is_amsterdam,
+            vm_type,
+            bal_parallel_exec_enabled,
+        ) {
+            Self::execute_txs_optimistic_parallel(
+                block,
                 db,
                 vm_type,
-                base_blob_fee_per_gas,
-                &mut shared_stack_pool,
-                &mut shared_memory_pool,
-                &mut shared_initcode_pool,
-                false,
+                &merkleizer,
+                queue_length,
                 crypto,
                 evm_config,
                 chain_id,
+                base_blob_fee_per_gas,
                 stateless_validator,
+                &mut shared_stack_pool,
+                &mut shared_memory_pool,
+                &mut shared_initcode_pool,
+                &mut receipts,
+                &mut tx_gas_breakdowns,
+                &mut cumulative_gas_used,
+                &mut block_gas_used,
             )?;
+            true
+        } else {
+            false
+        };
+        #[cfg(not(feature = "rayon"))]
+        let ran_optimistic_parallel = false;
 
-            tx_gas_breakdowns.push(TxGasBreakdown::from_report(
-                tx_idx,
-                tx.hash(crypto),
-                &report,
-            ));
+        // Starts at 2 to account for the two precompile calls done in `Self::prepare_block`.
+        // Scale flush cadence with block size so large blocks don't drain & refault hot
+        // contracts every 6 txs while still keeping ~16 overlapping merkleizer batches.
+        let flush_interval = (n_txs / 16).clamp(8, 64);
+        let mut tx_since_last_flush = 2;
 
-            if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
-                LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
-                tx_since_last_flush = 0;
-            } else {
-                tx_since_last_flush += 1;
-            }
-
-            // EIP-7778: gas_spent (POST-REFUND) for receipt cumulative_gas_used
-            cumulative_gas_used += report.gas_spent;
-
-            // EIP-8037 (Amsterdam+): block_gas_used = max(sum_regular, sum_state)
-            // For pre-Amsterdam, state_gas_used is always 0 so gas_used == regular_gas.
-            let tx_state_gas = report.state_gas_used;
-            let tx_regular_gas = report.gas_used.saturating_sub(tx_state_gas);
-            block_regular_gas_used = block_regular_gas_used.saturating_add(tx_regular_gas);
-            block_state_gas_used = block_state_gas_used.saturating_add(tx_state_gas);
-
-            if is_amsterdam {
-                // Amsterdam+: block gas = max(regular_sum, state_sum)
-                block_gas_used = block_regular_gas_used.max(block_state_gas_used);
-
-                // DoS protection: early exit if either regular or state gas exceeds the limit.
-                // Since block_gas_used = max(regular, state), if either component exceeds
-                // the limit, we know the block is invalid and can safely reject without
-                // violating EIP-8037 semantics.
-                if block_regular_gas_used > block.header.gas_limit
-                    || block_state_gas_used > block.header.gas_limit
-                {
-                    return Err(EvmError::Transaction(format!(
-                        "Gas allowance exceeded: Block gas used overflow: \
-                         block_gas_used {block_gas_used} > block_gas_limit {}",
-                        block.header.gas_limit
-                    )));
+        if !ran_optimistic_parallel {
+            for (tx_idx, tx) in block.body.transactions.iter().enumerate() {
+                let tx_sender = tx.sender(crypto).map_err(|error| {
+                    EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+                })?;
+                // Pre-tx gas limit guard:
+                // Pre-Amsterdam: reject tx if cumulative post-refund gas + tx.gas > block limit.
+                // Amsterdam+: skip — EIP-8037's 2D gas model means cumulative gas (regular +
+                // state) can legally exceed the block gas limit as long as
+                // max(sum_regular, sum_state) stays within it. Block-level overflow is
+                // detected post-execution.
+                if !is_amsterdam {
+                    check_gas_limit(cumulative_gas_used, tx.gas_limit(), block.header.gas_limit)?;
                 }
-            } else {
-                block_gas_used = block_gas_used.saturating_add(report.gas_used);
+
+                // EIP-8037 (Amsterdam+, PR #2703): per-tx 2D inclusion check.
+                if is_amsterdam {
+                    check_2d_gas_allowance(
+                        tx,
+                        block_regular_gas_used,
+                        block_state_gas_used,
+                        block.header.gas_limit,
+                    )?;
+                }
+
+                // Set BAL index for this transaction (1-indexed per EIP-7928)
+                if is_amsterdam {
+                    let bal_index = u32::try_from(tx_idx + 1).unwrap_or(u32::MAX);
+                    db.set_bal_index(bal_index);
+
+                    // Record tx sender for BAL. The recipient is recorded when the prepare
+                    // region loads it (default_hook), per the EIP-7928 v7.1.0 update: an
+                    // EIP-7702 auth halt before the recipient load must exclude it.
+                    if let Some(recorder) = db.bal_recorder_mut() {
+                        recorder.record_touched_address(tx_sender);
+                    }
+                }
+
+                let report = Self::execute_tx_in_block(
+                    tx,
+                    tx_sender,
+                    &block.header,
+                    db,
+                    vm_type,
+                    base_blob_fee_per_gas,
+                    &mut shared_stack_pool,
+                    &mut shared_memory_pool,
+                    &mut shared_initcode_pool,
+                    false,
+                    crypto,
+                    evm_config,
+                    chain_id,
+                    stateless_validator,
+                )?;
+
+                tx_gas_breakdowns.push(TxGasBreakdown::from_report(
+                    tx_idx,
+                    tx.hash(crypto),
+                    &report,
+                ));
+
+                if queue_length.load(Ordering::Relaxed) == 0
+                    && tx_since_last_flush >= flush_interval
+                {
+                    LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
+                    tx_since_last_flush = 0;
+                } else {
+                    tx_since_last_flush += 1;
+                }
+
+                // EIP-7778: gas_spent (POST-REFUND) for receipt cumulative_gas_used
+                cumulative_gas_used += report.gas_spent;
+
+                // EIP-8037 (Amsterdam+): block_gas_used = max(sum_regular, sum_state)
+                // For pre-Amsterdam, state_gas_used is always 0 so gas_used == regular_gas.
+                let tx_state_gas = report.state_gas_used;
+                let tx_regular_gas = report.gas_used.saturating_sub(tx_state_gas);
+                block_regular_gas_used = block_regular_gas_used.saturating_add(tx_regular_gas);
+                block_state_gas_used = block_state_gas_used.saturating_add(tx_state_gas);
+
+                if is_amsterdam {
+                    // Amsterdam+: block gas = max(regular_sum, state_sum)
+                    block_gas_used = block_regular_gas_used.max(block_state_gas_used);
+
+                    // DoS protection: early exit if either regular or state gas exceeds the limit.
+                    // Since block_gas_used = max(regular, state), if either component exceeds
+                    // the limit, we know the block is invalid and can safely reject without
+                    // violating EIP-8037 semantics.
+                    if block_regular_gas_used > block.header.gas_limit
+                        || block_state_gas_used > block.header.gas_limit
+                    {
+                        return Err(EvmError::Transaction(format!(
+                            "Gas allowance exceeded: Block gas used overflow: \
+                         block_gas_used {block_gas_used} > block_gas_limit {}",
+                            block.header.gas_limit
+                        )));
+                    }
+                } else {
+                    block_gas_used = block_gas_used.saturating_add(report.gas_used);
+                }
+
+                let mut receipt = Receipt::new(
+                    tx.tx_type(),
+                    matches!(report.result, TxResult::Success),
+                    cumulative_gas_used,
+                    report.logs,
+                );
+
+                // For frame transactions, propagate payer and per-frame receipts
+                if matches!(tx, Transaction::FrameTransaction(_)) {
+                    receipt.payer = report.payer_address;
+                    receipt.frame_receipts = frame_receipts_from(report.frame_results);
+                }
+
+                receipts.push(receipt);
             }
-
-            let mut receipt = Receipt::new(
-                tx.tx_type(),
-                matches!(report.result, TxResult::Success),
-                cumulative_gas_used,
-                report.logs,
-            );
-
-            // For frame transactions, propagate payer and per-frame receipts
-            if matches!(tx, Transaction::FrameTransaction(_)) {
-                receipt.payer = report.payer_address;
-                receipt.frame_receipts = frame_receipts_from(report.frame_results);
-            }
-
-            receipts.push(receipt);
         }
 
         // EIP-7778 (Amsterdam+): block-level gas overflow check.
@@ -1177,6 +1277,592 @@ impl LEVM {
             },
             bal,
         ))
+    }
+
+    /// Wave-based optimistic parallel execution (Block-STM without BAL) for pre-Amsterdam L1 blocks.
+    ///
+    /// Executes waves of up to [`OPTIMISTIC_WAVE_SIZE`] transactions speculatively in parallel
+    /// against a zero-copy frozen `shared_base` snapshot of `db.initial_accounts_state`.
+    /// Each wave is then validated in canonical block order against exact per-tx read/write sets
+    /// (treating fee-only coinbase credits as commutative), committing conflict-free transactions
+    /// directly and re-executing only conflicting transactions sequentially. Each wave's committed
+    /// state transitions are streamed immediately to the merkleizer thread so trie updates overlap
+    /// with subsequent waves.
+    #[cfg(feature = "rayon")]
+    #[allow(clippy::too_many_arguments)]
+    fn execute_txs_optimistic_parallel(
+        block: &Block,
+        db: &mut GeneralizedDatabase,
+        vm_type: VMType,
+        merkleizer: &Sender<Vec<AccountUpdate>>,
+        queue_length: &AtomicUsize,
+        crypto: &dyn Crypto,
+        evm_config: EVMConfig,
+        chain_id: u64,
+        base_blob_fee_per_gas: U256,
+        stateless_validator: Option<&dyn StatelessValidator>,
+        shared_stack_pool: &mut Vec<Stack>,
+        shared_memory_pool: &mut Vec<Memory>,
+        shared_initcode_pool: &mut Vec<InitcodeBuffer>,
+        receipts: &mut Vec<Receipt>,
+        tx_gas_breakdowns: &mut Vec<TxGasBreakdown>,
+        cumulative_gas_used: &mut u64,
+        block_gas_used: &mut u64,
+    ) -> Result<(), EvmError> {
+        struct SpeculativeTxOutcome {
+            sender: Result<Address, String>,
+            report: Option<ExecutionReport>,
+            current: CacheDB,
+            initial: CacheDB,
+            deployed_codes: Vec<(H256, Code)>,
+            coinbase_touched_before_fee: bool,
+        }
+
+        // Flush pre-block system calls (`prepare_block`) so `db.current_accounts_state` is empty
+        // and `db.initial_accounts_state` holds the exact pre-tx state snapshot.
+        LEVM::send_state_transitions_tx(merkleizer, db, queue_length)?;
+
+        let txs = &block.body.transactions;
+        let n_txs = txs.len();
+        let coinbase = block.header.coinbase;
+
+        let mut dirty_account_info: FxHashSet<Address> = FxHashSet::default();
+        let mut dirty_destroyed: FxHashSet<Address> = FxHashSet::default();
+        let mut dirty_storage: FxHashSet<(Address, H256)> = FxHashSet::default();
+        let mut wave_start = 0usize;
+        let mut use_parallel = true;
+
+        while wave_start < n_txs {
+            if !use_parallel {
+                // High-conflict circuit breaker: run remaining txs sequentially while
+                // concurrently running our split-role sender-recovery + state warmer
+                // on `txs[wave_start..]` so sequential fallback stays at full speed.
+                let remaining_txs = &txs[wave_start..];
+                let remaining = remaining_txs.len();
+                let flush_interval = (remaining / 16).clamp(8, 64);
+                let warm_cancelled = AtomicBool::new(false);
+                let warm_store = Arc::clone(&db.store);
+                let header = &block.header;
+
+                std::thread::scope(|scope| -> Result<(), EvmError> {
+                    let warm_cancel_ref = &warm_cancelled;
+                    let _warm_handle = scope.spawn(move || {
+                        Self::warm_tx_slice_split(
+                            remaining_txs,
+                            header,
+                            warm_store,
+                            vm_type,
+                            crypto,
+                            evm_config,
+                            chain_id,
+                            base_blob_fee_per_gas,
+                            warm_cancel_ref,
+                        );
+                    });
+
+                    let mut tx_since_last_flush = 0usize;
+                    let seq_result: Result<(), EvmError> = (|| {
+                        for (offset, tx) in remaining_txs.iter().enumerate() {
+                            let tx_idx = wave_start + offset;
+                            let tx_sender = tx.sender(crypto).map_err(|error| {
+                                EvmError::Transaction(format!(
+                                    "Couldn't recover addresses with error: {error}"
+                                ))
+                            })?;
+                            check_gas_limit(
+                                *cumulative_gas_used,
+                                tx.gas_limit(),
+                                block.header.gas_limit,
+                            )?;
+                            let report = Self::execute_tx_in_block(
+                                tx,
+                                tx_sender,
+                                &block.header,
+                                db,
+                                vm_type,
+                                base_blob_fee_per_gas,
+                                shared_stack_pool,
+                                shared_memory_pool,
+                                shared_initcode_pool,
+                                false,
+                                crypto,
+                                evm_config,
+                                chain_id,
+                                stateless_validator,
+                            )?;
+                            tx_gas_breakdowns.push(TxGasBreakdown::from_report(
+                                tx_idx,
+                                tx.hash(crypto),
+                                &report,
+                            ));
+                            if queue_length.load(Ordering::Relaxed) == 0
+                                && tx_since_last_flush >= flush_interval
+                            {
+                                LEVM::send_state_transitions_tx(merkleizer, db, queue_length)?;
+                                tx_since_last_flush = 0;
+                            } else {
+                                tx_since_last_flush += 1;
+                            }
+                            *cumulative_gas_used += report.gas_spent;
+                            *block_gas_used = block_gas_used.saturating_add(report.gas_used);
+                            let mut receipt = Receipt::new(
+                                tx.tx_type(),
+                                matches!(report.result, TxResult::Success),
+                                *cumulative_gas_used,
+                                report.logs,
+                            );
+                            if matches!(tx, Transaction::FrameTransaction(_)) {
+                                receipt.payer = report.payer_address;
+                                receipt.frame_receipts = frame_receipts_from(report.frame_results);
+                            }
+                            receipts.push(receipt);
+                        }
+                        Ok(())
+                    })();
+
+                    warm_cancelled.store(true, Ordering::Relaxed);
+                    seq_result
+                })?;
+                break;
+            }
+
+            let wave_size = if wave_start == 0 {
+                OPTIMISTIC_PROBE_WAVE_SIZE
+            } else {
+                OPTIMISTIC_WAVE_SIZE
+            };
+            let wave_end = (wave_start + wave_size).min(n_txs);
+            let chunk = &txs[wave_start..wave_end];
+
+            // Zero-copy freeze of `db.initial_accounts_state` as the wave's read-only base.
+            let shared_base = Arc::new(std::mem::take(&mut db.initial_accounts_state));
+            let store = Arc::clone(&db.store);
+            let header = &block.header;
+
+            let outcomes: Vec<SpeculativeTxOutcome> = chunk
+                .par_iter()
+                .map_init(
+                    || {
+                        (
+                            Vec::with_capacity(STACK_LIMIT),
+                            Vec::with_capacity(1),
+                            Vec::new(),
+                            SeededHashMap::<H256, Code>::default(),
+                        )
+                    },
+                    |(stack_pool, memory_pool, initcode_pool, worker_codes), tx| {
+                        let sender = tx.sender(crypto).map_err(|e| e.to_string());
+                        let Ok(tx_sender) = sender else {
+                            return SpeculativeTxOutcome {
+                                sender,
+                                report: None,
+                                current: Default::default(),
+                                initial: Default::default(),
+                                deployed_codes: Vec::new(),
+                                coinbase_touched_before_fee: false,
+                            };
+                        };
+                        if matches!(tx, Transaction::FrameTransaction(_)) {
+                            return SpeculativeTxOutcome {
+                                sender: Ok(tx_sender),
+                                report: None,
+                                current: Default::default(),
+                                initial: Default::default(),
+                                deployed_codes: Vec::new(),
+                                coinbase_touched_before_fee: false,
+                            };
+                        }
+
+                        let mut tx_db = GeneralizedDatabase::new_with_shared_base_tracking(
+                            Arc::clone(&store),
+                            Arc::clone(&shared_base),
+                        );
+                        std::mem::swap(&mut tx_db.codes, worker_codes);
+
+                        let exec_res = Self::execute_tx_in_block(
+                            tx,
+                            tx_sender,
+                            header,
+                            &mut tx_db,
+                            vm_type,
+                            base_blob_fee_per_gas,
+                            stack_pool,
+                            memory_pool,
+                            initcode_pool,
+                            false,
+                            crypto,
+                            evm_config,
+                            chain_id,
+                            stateless_validator,
+                        );
+
+                        let mut deployed_codes = Vec::new();
+                        if exec_res.is_ok() {
+                            for (addr, acct) in &tx_db.current_accounts_state {
+                                if acct.is_unmodified() {
+                                    continue;
+                                }
+                                let new_hash = acct.info.code_hash;
+                                if new_hash != *EMPTY_KECCAK_HASH
+                                    && tx_db
+                                        .initial_accounts_state
+                                        .get(addr)
+                                        .is_none_or(|init| init.info.code_hash != new_hash)
+                                    && let Some(code) = tx_db.codes.get(&new_hash)
+                                {
+                                    deployed_codes.push((new_hash, code.clone()));
+                                }
+                            }
+                        }
+
+                        std::mem::swap(&mut tx_db.codes, worker_codes);
+                        SpeculativeTxOutcome {
+                            sender: Ok(tx_sender),
+                            report: exec_res.ok(),
+                            current: tx_db.current_accounts_state,
+                            initial: tx_db.initial_accounts_state,
+                            deployed_codes,
+                            coinbase_touched_before_fee: tx_db.coinbase_touched_before_fee,
+                        }
+                    },
+                )
+                .collect();
+
+            // Zero-copy restore of `db.initial_accounts_state` once all workers finish.
+            db.initial_accounts_state =
+                Arc::try_unwrap(shared_base).unwrap_or_else(|arc| (*arc).clone());
+
+            dirty_account_info.clear();
+            dirty_destroyed.clear();
+            dirty_storage.clear();
+            let mut wave_coinbase_fee_nonzero = false;
+            let mut dirty_coinbase_non_fee = false;
+            let mut conflicts = 0usize;
+
+            for (offset, mut spec) in outcomes.into_iter().enumerate() {
+                let tx_idx = wave_start + offset;
+                let tx = &chunk[offset];
+                let tx_sender = spec.sender.map_err(|error| {
+                    EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+                })?;
+
+                // Canonical pre-tx block gas limit check.
+                check_gas_limit(*cumulative_gas_used, tx.gas_limit(), block.header.gas_limit)?;
+
+                let mut has_conflict =
+                    spec.report.is_none() || matches!(tx, Transaction::FrameTransaction(_));
+                if !has_conflict
+                    && spec.coinbase_touched_before_fee
+                    && (wave_coinbase_fee_nonzero || dirty_coinbase_non_fee)
+                {
+                    has_conflict = true;
+                }
+
+                // Compute commutative coinbase fee delta (when coinbase was only touched by pay_coinbase)
+                // and verify adding it to the live coinbase balance cannot overflow before mutating `db`.
+                let mut coinbase_fee = U256::zero();
+                if !has_conflict && !spec.coinbase_touched_before_fee {
+                    if dirty_coinbase_non_fee || dirty_destroyed.contains(&coinbase) {
+                        has_conflict = true;
+                    } else if let Some(cb_cur) = spec.current.get(&coinbase) {
+                        if let Some(cb_init) = spec.initial.get(&coinbase) {
+                            if matches!(
+                                cb_cur.status,
+                                AccountStatus::Destroyed | AccountStatus::DestroyedModified
+                            ) || cb_cur.info.nonce != cb_init.info.nonce
+                                || cb_cur.info.code_hash != cb_init.info.code_hash
+                                || cb_cur.info.balance < cb_init.info.balance
+                            {
+                                has_conflict = true;
+                            } else {
+                                coinbase_fee = cb_cur.info.balance - cb_init.info.balance;
+                                if !coinbase_fee.is_zero() {
+                                    let live_cb_bal = db.get_account(coinbase)?.info.balance;
+                                    if live_cb_bal.checked_add(coinbase_fee).is_none() {
+                                        has_conflict = true;
+                                    }
+                                }
+                            }
+                        } else {
+                            has_conflict = true;
+                        }
+                    }
+                }
+
+                if !has_conflict {
+                    'read_check: for (addr, acct) in &spec.current {
+                        if matches!(
+                            acct.status,
+                            AccountStatus::Destroyed | AccountStatus::DestroyedModified
+                        ) {
+                            has_conflict = true;
+                            break;
+                        }
+                        if *addr == coinbase && !spec.coinbase_touched_before_fee {
+                            continue;
+                        }
+                        if dirty_account_info.contains(addr) || dirty_destroyed.contains(addr) {
+                            has_conflict = true;
+                            break;
+                        }
+                        for slot in acct.storage.keys() {
+                            if dirty_storage.contains(&(*addr, *slot)) {
+                                has_conflict = true;
+                                break 'read_check;
+                            }
+                        }
+                    }
+                }
+
+                let report = if !has_conflict {
+                    for (code_hash, code) in spec.deployed_codes {
+                        db.codes.entry(code_hash).or_insert(code);
+                    }
+
+                    for (addr, new_acct) in spec.current {
+                        if addr == coinbase && !spec.coinbase_touched_before_fee {
+                            continue;
+                        }
+                        if new_acct.is_unmodified() {
+                            continue;
+                        }
+                        let Some(init_acct) = spec.initial.remove(&addr) else {
+                            continue;
+                        };
+                        let info_changed = new_acct.info != init_acct.info
+                            || new_acct.exists != init_acct.exists
+                            || new_acct.has_storage != init_acct.has_storage;
+
+                        let mut changed_slots: Vec<(H256, U256, U256)> = Vec::new();
+                        for (slot, new_val) in new_acct.storage {
+                            let old_val = init_acct.storage.get(&slot).copied().unwrap_or_default();
+                            if new_val != old_val {
+                                changed_slots.push((slot, old_val, new_val));
+                            }
+                        }
+
+                        if !info_changed && changed_slots.is_empty() {
+                            continue;
+                        }
+
+                        let init_entry = db
+                            .initial_accounts_state
+                            .entry(addr)
+                            .or_insert_with(|| init_acct.clone_without_storage());
+                        for &(slot, old_val, _) in &changed_slots {
+                            init_entry.storage.entry(slot).or_insert(old_val);
+                        }
+                        let base_clone = if !db.current_accounts_state.contains_key(&addr) {
+                            Some(init_entry.clone_without_storage())
+                        } else {
+                            None
+                        };
+                        let dst = match base_clone {
+                            Some(cloned) => db.current_accounts_state.entry(addr).or_insert(cloned),
+                            None => {
+                                db.current_accounts_state
+                                    .get_mut(&addr)
+                                    .ok_or(EvmError::from(VMError::Internal(
+                                        InternalError::AccountNotFound,
+                                    )))?
+                            }
+                        };
+                        if info_changed {
+                            dst.info = new_acct.info;
+                            dst.exists = new_acct.exists;
+                            dst.has_storage = new_acct.has_storage;
+                            dirty_account_info.insert(addr);
+                            if addr == coinbase {
+                                dirty_coinbase_non_fee = true;
+                            }
+                        }
+                        for (slot, _, new_val) in changed_slots {
+                            dst.storage.insert(slot, new_val);
+                            dirty_storage.insert((addr, slot));
+                        }
+                        dst.mark_modified();
+                    }
+
+                    if !spec.coinbase_touched_before_fee && !coinbase_fee.is_zero() {
+                        let cb = db.get_account_mut(coinbase)?;
+                        cb.info.balance = cb
+                            .info
+                            .balance
+                            .checked_add(coinbase_fee)
+                            .ok_or(EvmError::from(VMError::Internal(InternalError::Overflow)))?;
+                        wave_coinbase_fee_nonzero = true;
+                    }
+
+                    spec.report.ok_or_else(|| {
+                        EvmError::Custom("validated speculative tx missing report".to_string())
+                    })?
+                } else {
+                    conflicts += 1;
+                    Self::execute_tx_recording_dirty(
+                        tx,
+                        tx_sender,
+                        &block.header,
+                        db,
+                        vm_type,
+                        base_blob_fee_per_gas,
+                        shared_stack_pool,
+                        shared_memory_pool,
+                        shared_initcode_pool,
+                        crypto,
+                        evm_config,
+                        chain_id,
+                        stateless_validator,
+                        &mut dirty_account_info,
+                        &mut dirty_destroyed,
+                        &mut dirty_storage,
+                        &mut wave_coinbase_fee_nonzero,
+                        &mut dirty_coinbase_non_fee,
+                    )?
+                };
+
+                tx_gas_breakdowns.push(TxGasBreakdown::from_report(
+                    tx_idx,
+                    tx.hash(crypto),
+                    &report,
+                ));
+                *cumulative_gas_used += report.gas_spent;
+                *block_gas_used = block_gas_used.saturating_add(report.gas_used);
+
+                let mut receipt = Receipt::new(
+                    tx.tx_type(),
+                    matches!(report.result, TxResult::Success),
+                    *cumulative_gas_used,
+                    report.logs,
+                );
+                if matches!(tx, Transaction::FrameTransaction(_)) {
+                    receipt.payer = report.payer_address;
+                    receipt.frame_receipts = frame_receipts_from(report.frame_results);
+                }
+                receipts.push(receipt);
+            }
+
+            // Stream committed wave transitions to merkleizer and fold into `initial_accounts_state`.
+            LEVM::send_state_transitions_tx(merkleizer, db, queue_length)?;
+
+            // Adaptive circuit breaker: if > 50% of the wave conflicted (including the
+            // 16-tx probe wave), switch remaining txs to warmed sequential execution.
+            if chunk.len() >= OPTIMISTIC_PROBE_WAVE_SIZE && conflicts * 2 > chunk.len() {
+                use_parallel = false;
+            }
+            wave_start = wave_end;
+        }
+
+        Ok(())
+    }
+
+    /// Executes a single conflicting transaction sequentially against `db` and records its
+    /// actual account/storage writes into the wave's dirty sets so subsequent transactions
+    /// in the same wave accurately detect any transitive conflict.
+    #[cfg(feature = "rayon")]
+    #[allow(clippy::too_many_arguments)]
+    fn execute_tx_recording_dirty(
+        tx: &Transaction,
+        tx_sender: Address,
+        block_header: &BlockHeader,
+        db: &mut GeneralizedDatabase,
+        vm_type: VMType,
+        base_blob_fee_per_gas: U256,
+        stack_pool: &mut Vec<Stack>,
+        memory_pool: &mut Vec<Memory>,
+        initcode_pool: &mut Vec<InitcodeBuffer>,
+        crypto: &dyn Crypto,
+        config: EVMConfig,
+        chain_id: u64,
+        stateless_validator: Option<&dyn StatelessValidator>,
+        dirty_account_info: &mut FxHashSet<Address>,
+        dirty_destroyed: &mut FxHashSet<Address>,
+        dirty_storage: &mut FxHashSet<(Address, H256)>,
+        wave_coinbase_fee_nonzero: &mut bool,
+        dirty_coinbase_non_fee: &mut bool,
+    ) -> Result<ExecutionReport, EvmError> {
+        let coinbase = block_header.coinbase;
+        let pre_coinbase_info = db
+            .current_accounts_state
+            .get(&coinbase)
+            .or_else(|| db.initial_accounts_state.get(&coinbase))
+            .map(|a| a.info.clone());
+
+        let env = Self::setup_env_with_config(
+            tx,
+            tx_sender,
+            block_header,
+            config,
+            chain_id,
+            vm_type,
+            base_blob_fee_per_gas,
+        )?;
+        let mut vm = VM::new_pooled(
+            env,
+            db,
+            tx,
+            LevmCallTracer::disabled(),
+            vm_type,
+            crypto,
+            stateless_validator,
+            stack_pool,
+            memory_pool,
+            initcode_pool,
+        )?;
+        let result = vm.execute().map_err(VMError::into);
+
+        if result.is_ok() {
+            let backup = &vm.current_call_frame.call_frame_backup;
+            for (addr, orig_acct) in &backup.original_accounts_info {
+                let Some(cur) = vm.db.current_accounts_state.get(addr) else {
+                    continue;
+                };
+                if matches!(
+                    cur.status,
+                    AccountStatus::Destroyed | AccountStatus::DestroyedModified
+                ) {
+                    dirty_destroyed.insert(*addr);
+                    dirty_account_info.insert(*addr);
+                    if *addr == coinbase {
+                        *dirty_coinbase_non_fee = true;
+                    }
+                    continue;
+                }
+                if *addr == coinbase {
+                    let non_fee_changed = pre_coinbase_info.as_ref().is_none_or(|pre| {
+                        cur.info.nonce != pre.nonce || cur.info.code_hash != pre.code_hash
+                    }) || tx_sender == coinbase;
+                    if non_fee_changed {
+                        *dirty_coinbase_non_fee = true;
+                        dirty_account_info.insert(coinbase);
+                    } else if pre_coinbase_info
+                        .as_ref()
+                        .is_none_or(|pre| cur.info.balance != pre.balance)
+                    {
+                        *wave_coinbase_fee_nonzero = true;
+                    }
+                } else if cur.info != orig_acct.info
+                    || cur.exists != orig_acct.exists
+                    || cur.has_storage != orig_acct.has_storage
+                {
+                    dirty_account_info.insert(*addr);
+                }
+            }
+            for (addr, slots) in &backup.original_account_storage_slots {
+                for &slot in slots.keys() {
+                    dirty_storage.insert((*addr, slot));
+                }
+            }
+            for &addr in vm.substate.iter_selfdestruct() {
+                dirty_destroyed.insert(addr);
+                dirty_account_info.insert(addr);
+                if addr == coinbase {
+                    *dirty_coinbase_non_fee = true;
+                }
+            }
+        }
+
+        vm.reclaim_into(stack_pool, memory_pool, initcode_pool);
+        result
     }
 
     ///
@@ -3298,12 +3984,6 @@ impl LEVM {
         crypto: &dyn Crypto,
         cancelled: &AtomicBool,
     ) -> Result<(), EvmError> {
-        // Process the block in ascending chunks via an atomic cursor: each rayon worker
-        // recovers senders AND immediately warms accounts/storage for its chunk before
-        // grabbing the next chunk. This keeps both sender recovery and account/storage
-        // cache warming strictly ahead of sequential execution in block order (instead of
-        // waiting for all 1,390 recoveries before warming tx #0 in random HashMap order).
-        const WARM_CHUNK: usize = 16;
         let txs = &block.body.transactions;
         if !txs.is_empty() {
             let chain_config = store.get_chain_config()?;
@@ -3311,70 +3991,17 @@ impl LEVM {
             let chain_id = chain_config.chain_id;
             let base_blob_fee_per_gas =
                 get_base_fee_per_blob_gas(block.header.excess_blob_gas, &evm_config)?;
-
-            let num_chunks = txs.len().div_ceil(WARM_CHUNK);
-            let next_chunk = AtomicUsize::new(0);
-            let worker_count = rayon::current_num_threads().min(num_chunks).max(1);
-            let header = &block.header;
-            let store_ref = &store;
-            let next_ref = &next_chunk;
-
-            rayon::scope(|s| {
-                for _ in 0..worker_count {
-                    s.spawn(move |_| {
-                        let mut stack_pool = Vec::with_capacity(STACK_LIMIT);
-                        let mut memory_pool = Vec::with_capacity(1);
-                        let mut initcode_pool = Vec::new();
-                        let mut group_db = GeneralizedDatabase::new(store_ref.clone());
-
-                        while !cancelled.load(Ordering::Relaxed) {
-                            let chunk_idx = next_ref.fetch_add(1, Ordering::Relaxed);
-                            if chunk_idx >= num_chunks {
-                                break;
-                            }
-                            let start = chunk_idx * WARM_CHUNK;
-                            let end = (start + WARM_CHUNK).min(txs.len());
-
-                            // Recover senders for this chunk first, then warm each tx right away.
-                            let mut chunk_txs: Vec<(&Transaction, Address)> =
-                                Vec::with_capacity(end - start);
-                            for tx in &txs[start..end] {
-                                if cancelled.load(Ordering::Relaxed) {
-                                    return;
-                                }
-                                if let Ok(sender) = tx.sender(crypto) {
-                                    chunk_txs.push((tx, sender));
-                                }
-                            }
-                            for (tx, sender) in chunk_txs {
-                                if cancelled.load(Ordering::Relaxed) {
-                                    return;
-                                }
-                                let _ = Self::execute_tx_in_block(
-                                    tx,
-                                    sender,
-                                    header,
-                                    &mut group_db,
-                                    vm_type,
-                                    base_blob_fee_per_gas,
-                                    &mut stack_pool,
-                                    &mut memory_pool,
-                                    &mut initcode_pool,
-                                    true,
-                                    crypto,
-                                    evm_config,
-                                    chain_id,
-                                    None,
-                                );
-                            }
-                            // Reset mutable tx state between chunks so stale nonce/balance
-                            // mutations from chunk K don't interfere with chunk K+N.
-                            group_db.current_accounts_state.clear();
-                            group_db.initial_accounts_state.clear();
-                        }
-                    });
-                }
-            });
+            Self::warm_tx_slice_split(
+                txs,
+                &block.header,
+                store.clone(),
+                vm_type,
+                crypto,
+                evm_config,
+                chain_id,
+                base_blob_fee_per_gas,
+                cancelled,
+            );
         }
 
         let mut db = GeneralizedDatabase::new(store.clone());
@@ -3392,6 +4019,113 @@ impl LEVM {
             })?;
         }
         Ok(())
+    }
+
+    /// Split-role ascending warmer over an arbitrary transaction slice:
+    /// - ~25% of rayon workers drain ascending 8-tx pure sender-recovery chunks so ECDSA
+    ///   stays strictly ahead of sequential execution.
+    /// - The remaining workers immediately warm accounts/storage in ascending 16-tx chunks.
+    #[cfg(feature = "rayon")]
+    #[allow(clippy::too_many_arguments)]
+    fn warm_tx_slice_split(
+        txs: &[Transaction],
+        header: &BlockHeader,
+        store: Arc<dyn Database>,
+        vm_type: VMType,
+        crypto: &dyn Crypto,
+        evm_config: EVMConfig,
+        chain_id: u64,
+        base_blob_fee_per_gas: U256,
+        cancelled: &AtomicBool,
+    ) {
+        const RECOVER_CHUNK: usize = 8;
+        const WARM_CHUNK: usize = 16;
+        if txs.is_empty() {
+            return;
+        }
+        let num_recover_chunks = txs.len().div_ceil(RECOVER_CHUNK);
+        let next_recover = AtomicUsize::new(0);
+        let num_warm_chunks = txs.len().div_ceil(WARM_CHUNK);
+        let next_warm = AtomicUsize::new(0);
+        let worker_count = rayon::current_num_threads()
+            .min(num_recover_chunks.max(num_warm_chunks))
+            .max(1);
+        let recover_first_workers = if worker_count >= 2 {
+            (worker_count * 2 / 5).max(1)
+        } else {
+            0
+        };
+        let store_ref = &store;
+        let next_recover_ref = &next_recover;
+        let next_warm_ref = &next_warm;
+
+        rayon::scope(|s| {
+            for worker_id in 0..worker_count {
+                s.spawn(move |_| {
+                    if worker_id < recover_first_workers {
+                        while !cancelled.load(Ordering::Relaxed) {
+                            let chunk_idx = next_recover_ref.fetch_add(1, Ordering::Relaxed);
+                            if chunk_idx >= num_recover_chunks {
+                                break;
+                            }
+                            let start = chunk_idx * RECOVER_CHUNK;
+                            let end = (start + RECOVER_CHUNK).min(txs.len());
+                            for tx in &txs[start..end] {
+                                if cancelled.load(Ordering::Relaxed) {
+                                    return;
+                                }
+                                let _ = tx.sender(crypto);
+                            }
+                        }
+                    }
+
+                    if cancelled.load(Ordering::Relaxed) {
+                        return;
+                    }
+
+                    let mut stack_pool = Vec::with_capacity(STACK_LIMIT);
+                    let mut memory_pool = Vec::with_capacity(1);
+                    let mut initcode_pool = Vec::new();
+                    let mut group_db = GeneralizedDatabase::new(store_ref.clone());
+
+                    while !cancelled.load(Ordering::Relaxed) {
+                        let chunk_idx = next_warm_ref.fetch_add(1, Ordering::Relaxed);
+                        if chunk_idx >= num_warm_chunks {
+                            break;
+                        }
+                        let start = chunk_idx * WARM_CHUNK;
+                        let end = (start + WARM_CHUNK).min(txs.len());
+
+                        for tx in &txs[start..end] {
+                            if cancelled.load(Ordering::Relaxed) {
+                                return;
+                            }
+                            let Ok(sender) = tx.sender(crypto) else {
+                                continue;
+                            };
+                            let _ = Self::execute_tx_in_block(
+                                tx,
+                                sender,
+                                header,
+                                &mut group_db,
+                                vm_type,
+                                base_blob_fee_per_gas,
+                                &mut stack_pool,
+                                &mut memory_pool,
+                                &mut initcode_pool,
+                                true,
+                                crypto,
+                                evm_config,
+                                chain_id,
+                                None,
+                            );
+                        }
+                        group_db.current_accounts_state.clear();
+                        group_db.initial_accounts_state.clear();
+                    }
+                });
+            }
+        });
     }
 
     /// Speculatively executes an arbitrary transaction set against `header`'s
@@ -5866,6 +6600,481 @@ mod sequential_execution_reason_tests {
         assert_eq!(
             sequential_execution_reason(true, true, false),
             Some("disabled")
+        );
+    }
+}
+
+#[cfg(all(test, feature = "rayon"))]
+mod optimistic_parallel_tests {
+    use super::*;
+    use ethrex_common::types::{AccountState, BlockBody, ChainConfig, CodeMetadata};
+    use ethrex_common::utils::keccak;
+    use ethrex_crypto::NativeCrypto;
+    use ethrex_levm::errors::DatabaseError;
+    use ethrex_rlp::encode::PayloadRLPEncode;
+    use std::collections::BTreeMap;
+    use std::sync::mpsc::channel;
+
+    struct TestDb {
+        chain_config: ChainConfig,
+        accounts: FxHashMap<Address, (AccountState, Bytes)>,
+        storage: FxHashMap<(Address, H256), U256>,
+    }
+
+    impl TestDb {
+        fn new() -> Self {
+            let chain_config = ChainConfig {
+                chain_id: 1,
+                homestead_block: Some(0),
+                eip150_block: Some(0),
+                eip155_block: Some(0),
+                eip158_block: Some(0),
+                byzantium_block: Some(0),
+                constantinople_block: Some(0),
+                petersburg_block: Some(0),
+                istanbul_block: Some(0),
+                berlin_block: Some(0),
+                london_block: Some(0),
+                terminal_total_difficulty: Some(0),
+                terminal_total_difficulty_passed: true,
+                shanghai_time: Some(0),
+                cancun_time: Some(0),
+                prague_time: None,
+                amsterdam_time: None,
+                ..Default::default()
+            };
+            Self {
+                chain_config,
+                accounts: FxHashMap::default(),
+                storage: FxHashMap::default(),
+            }
+        }
+
+        fn add_account(&mut self, addr: Address, balance: U256, code: Bytes) {
+            let code_hash = if code.is_empty() {
+                *EMPTY_KECCAK_HASH
+            } else {
+                keccak(&code)
+            };
+            let state = AccountState {
+                nonce: 0,
+                balance,
+                storage_root: *ethrex_common::constants::EMPTY_TRIE_HASH,
+                code_hash,
+            };
+            self.accounts.insert(addr, (state, code));
+        }
+    }
+
+    impl Database for TestDb {
+        fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError> {
+            Ok(self
+                .accounts
+                .get(&address)
+                .map(|(s, _)| *s)
+                .unwrap_or_default())
+        }
+
+        fn get_storage_value(&self, address: Address, slot: H256) -> Result<U256, DatabaseError> {
+            Ok(self
+                .storage
+                .get(&(address, slot))
+                .copied()
+                .unwrap_or_default())
+        }
+
+        fn get_block_hash(&self, _: u64) -> Result<H256, DatabaseError> {
+            Ok(H256::zero())
+        }
+
+        fn get_chain_config(&self) -> Result<ChainConfig, DatabaseError> {
+            Ok(self.chain_config)
+        }
+
+        fn get_account_code(&self, code_hash: H256) -> Result<Code, DatabaseError> {
+            let crypto = NativeCrypto;
+            for (state, code) in self.accounts.values() {
+                if state.code_hash == code_hash && !code.is_empty() {
+                    return Ok(Code::from_bytecode(code.clone(), &crypto));
+                }
+            }
+            Ok(Code::from_bytecode(Bytes::new(), &crypto))
+        }
+
+        fn get_code_metadata(&self, code_hash: H256) -> Result<CodeMetadata, DatabaseError> {
+            for (state, code) in self.accounts.values() {
+                if state.code_hash == code_hash {
+                    return Ok(CodeMetadata {
+                        length: code.len() as u64,
+                    });
+                }
+            }
+            Ok(CodeMetadata { length: 0 })
+        }
+    }
+
+    fn key_and_address(seed: u8) -> ([u8; 32], Address) {
+        use k256::ecdsa::SigningKey;
+        let mut key = [0u8; 32];
+        key[31] = seed.max(1);
+        key[0] = seed.wrapping_mul(37).wrapping_add(1);
+        let sk = SigningKey::from_bytes(&key.into()).expect("valid key");
+        let pubkey = sk.verifying_key().to_encoded_point(false);
+        let hash = keccak(&pubkey.as_bytes()[1..]);
+        (key, Address::from_slice(&hash.0[12..]))
+    }
+
+    fn sign_tx(
+        key: [u8; 32],
+        nonce: u64,
+        to: Address,
+        value: U256,
+        data: Bytes,
+        gas_limit: u64,
+        priority_fee: u64,
+    ) -> Transaction {
+        use k256::ecdsa::SigningKey;
+        let mut tx = EIP1559Transaction {
+            chain_id: 1,
+            nonce,
+            max_priority_fee_per_gas: priority_fee,
+            max_fee_per_gas: 100 + priority_fee,
+            gas_limit,
+            to: TxKind::Call(to),
+            value,
+            data,
+            ..Default::default()
+        };
+        let mut encoded = vec![0x02];
+        tx.encode_payload(&mut encoded);
+        let msg_hash = keccak(&encoded);
+        let sk = SigningKey::from_bytes(&key.into()).expect("valid key");
+        let (sig, rec_id) = sk
+            .sign_prehash_recoverable(msg_hash.as_bytes())
+            .expect("sign");
+        tx.signature_y_parity = U256::from(u8::from(rec_id.is_y_odd()));
+        tx.signature_r = U256::from_big_endian(&sig.r().to_bytes());
+        tx.signature_s = U256::from_big_endian(&sig.s().to_bytes());
+        Transaction::EIP1559Transaction(tx)
+    }
+
+    fn run_block_and_collect(
+        store: Arc<dyn Database>,
+        block: &Block,
+        parallel: bool,
+    ) -> (
+        BlockExecutionResult,
+        BTreeMap<
+            Address,
+            (
+                Option<ethrex_common::types::AccountInfo>,
+                BTreeMap<H256, U256>,
+            ),
+        >,
+    ) {
+        let mut db = GeneralizedDatabase::new(store);
+        let (tx_ch, rx_ch) = channel();
+        let q = AtomicUsize::new(0);
+        let (res, _) = LEVM::execute_block_pipeline(
+            block,
+            &mut db,
+            VMType::L1,
+            Some(tx_ch),
+            &q,
+            &NativeCrypto,
+            None,
+            parallel,
+            None,
+        )
+        .expect("block execution succeeds");
+
+        // Fold streamed updates into a deterministic final state snapshot.
+        let mut final_state: BTreeMap<
+            Address,
+            (
+                Option<ethrex_common::types::AccountInfo>,
+                BTreeMap<H256, U256>,
+            ),
+        > = BTreeMap::new();
+        for batch in rx_ch {
+            for upd in batch {
+                let entry = final_state.entry(upd.address).or_default();
+                if upd.info.is_some() {
+                    entry.0 = upd.info;
+                }
+                for (slot, val) in upd.added_storage {
+                    entry.1.insert(slot, val);
+                }
+            }
+        }
+        (res, final_state)
+    }
+
+    #[test]
+    fn optimistic_parallel_matches_sequential_disjoint_and_conflicting_blocks() {
+        let mut raw_db = TestDb::new();
+        let (cb_key, coinbase) = key_and_address(250);
+        raw_db.add_account(coinbase, U256::from(10_000_000_000u64), Bytes::new());
+
+        // Contract A: stores COINBASE.balance into slot 0 (`COINBASE; BALANCE; PUSH1 0; SSTORE`)
+        let cb_reader = Address::from_low_u64_be(0xCAFE_0001);
+        raw_db.add_account(
+            cb_reader,
+            U256::zero(),
+            Bytes::from_static(&[0x41, 0x31, 0x60, 0x00, 0x55, 0x00]),
+        );
+
+        // Contract B: increments storage slot `calldataload(0)` by 1
+        // (`PUSH1 0; CALLDATALOAD; DUP1; SLOAD; PUSH1 1; ADD; SWAP1; SSTORE`)
+        let counter = Address::from_low_u64_be(0xCAFE_0002);
+        raw_db.add_account(
+            counter,
+            U256::zero(),
+            Bytes::from_static(&[
+                0x60, 0x00, 0x35, 0x80, 0x54, 0x60, 0x01, 0x01, 0x90, 0x55, 0x00,
+            ]),
+        );
+
+        let mut txs = Vec::new();
+        // 1) 48 disjoint ETH transfers + counter increments on distinct slots (conflict-free)
+        for i in 1u8..=48u8 {
+            let (sk, sender) = key_and_address(i);
+            raw_db.add_account(sender, U256::from(10_000_000_000u64), Bytes::new());
+            let mut slot_data = vec![0u8; 32];
+            slot_data[31] = i;
+            txs.push(sign_tx(
+                sk,
+                0,
+                counter,
+                U256::zero(),
+                Bytes::from(slot_data),
+                100_000,
+                5,
+            ));
+        }
+        // 2) Same-sender nonce chain + shared storage slot conflict on slot 1
+        let (sk1, _) = key_and_address(1);
+        let mut shared_slot = vec![0u8; 32];
+        shared_slot[31] = 1;
+        txs.push(sign_tx(
+            sk1,
+            1,
+            counter,
+            U256::zero(),
+            Bytes::from(shared_slot.clone()),
+            100_000,
+            7,
+        ));
+        let (sk2, _) = key_and_address(2);
+        txs.push(sign_tx(
+            sk2,
+            1,
+            counter,
+            U256::zero(),
+            Bytes::from(shared_slot),
+            100_000,
+            9,
+        ));
+        // 3) Transaction reading coinbase balance mid-block (must observe prior priority fees)
+        let (sk3, _) = key_and_address(3);
+        txs.push(sign_tx(
+            sk3,
+            1,
+            cb_reader,
+            U256::zero(),
+            Bytes::new(),
+            100_000,
+            3,
+        ));
+        // 4) Coinbase itself sending a transaction (tests `dirty_coinbase_non_fee`)
+        txs.push(sign_tx(
+            cb_key,
+            0,
+            Address::from_low_u64_be(0xBEEF),
+            U256::from(1234u64),
+            Bytes::new(),
+            21_000,
+            4,
+        ));
+        // 5) Another coinbase reader AFTER coinbase sent a tx
+        let (sk4, _) = key_and_address(4);
+        txs.push(sign_tx(
+            sk4,
+            1,
+            cb_reader,
+            U256::zero(),
+            Bytes::new(),
+            100_000,
+            2,
+        ));
+
+        let store: Arc<dyn Database> = Arc::new(raw_db);
+        let block = Block {
+            header: BlockHeader {
+                number: 1,
+                gas_limit: 30_000_000,
+                base_fee_per_gas: Some(10),
+                coinbase,
+                timestamp: 1_700_000_000,
+                ..Default::default()
+            },
+            body: BlockBody {
+                transactions: txs,
+                ommers: Vec::new(),
+                withdrawals: Some(Vec::new()),
+            },
+        };
+
+        assert!(should_use_optimistic_parallel(
+            &block.body.transactions,
+            false,
+            VMType::L1,
+            true
+        ));
+
+        let (seq_res, seq_state) = run_block_and_collect(Arc::clone(&store), &block, false);
+        let (par_res, par_state) = run_block_and_collect(Arc::clone(&store), &block, true);
+
+        assert_eq!(par_res.block_gas_used, seq_res.block_gas_used);
+        assert_eq!(par_res.receipts, seq_res.receipts);
+        assert_eq!(par_state, seq_state);
+        // Verify coinbase reader observed non-zero coinbase balance changes and counter slot 1 == 3.
+        let counter_slots = &par_state.get(&counter).expect("counter updated").1;
+        assert_eq!(
+            counter_slots.get(&H256::from_low_u64_be(1)),
+            Some(&U256::from(3))
+        );
+        let cb_reader_slots = &par_state.get(&cb_reader).expect("cb_reader updated").1;
+        assert!(
+            cb_reader_slots
+                .get(&H256::zero())
+                .is_some_and(|v| *v > U256::from(10_000_000_000u64))
+        );
+    }
+
+    #[test]
+    fn precheck_skips_single_target_identical_calldata_blocks() {
+        let token = Address::from_low_u64_be(0xD5CF);
+        let identical_calldata = Bytes::from(vec![0xa9, 0x05, 0x9c, 0xbb, 0, 0, 0, 1]);
+        let txs: Vec<Transaction> = (1u8..=40u8)
+            .map(|i| {
+                let (sk, _) = key_and_address(i);
+                sign_tx(
+                    sk,
+                    0,
+                    token,
+                    U256::zero(),
+                    identical_calldata.clone(),
+                    60_000,
+                    1,
+                )
+            })
+            .collect();
+        assert!(!should_use_optimistic_parallel(
+            &txs,
+            false,
+            VMType::L1,
+            true
+        ));
+    }
+
+    #[test]
+    #[ignore = "perf measurement: run with --release -- --ignored --nocapture"]
+    fn bench_optimistic_parallel_disjoint_contract_block() {
+        use std::time::Instant;
+        let mut raw_db = TestDb::new();
+        let (_, coinbase) = key_and_address(250);
+        raw_db.add_account(coinbase, U256::from(10_000_000_000u64), Bytes::new());
+
+        // Compute-heavy contract: reads slot `calldataload(0)`, runs a 64-iteration keccak+add loop,
+        // writes updated value to slot `calldataload(0)`.
+        // 00: PUSH1 0; CALLDATALOAD; DUP1; SLOAD; PUSH1 64
+        // 06: JUMPDEST; DUP1; ISZERO; PUSH1 0x1e; JUMPI
+        // 0b: PUSH1 1; SWAP1; SUB; SWAP1; DUP1; PUSH1 0; MSTORE; PUSH1 32; PUSH1 0; SHA3; ADD; SWAP1; PUSH1 0x06; JUMP
+        // 1e: JUMPDEST; POP; SWAP1; SSTORE; STOP
+        let contract = Address::from_low_u64_be(0xCAFE_1000);
+        raw_db.add_account(
+            contract,
+            U256::zero(),
+            Bytes::from_static(&[
+                0x60, 0x00, 0x35, 0x80, 0x54, 0x60, 0x40, // 0..7
+                0x5b, 0x80, 0x15, 0x60, 0x20, 0x57, // 7..13 (JUMPDEST=7, JUMPI -> 0x20)
+                0x60, 0x01, 0x90, 0x03, // 13..17: counter - 1
+                0x90, 0x80, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0x20, 0x01,
+                0x90, // 17..29
+                0x60, 0x07, 0x56, // 29..32: JUMP 7
+                0x5b, 0x50, 0x90, 0x55, 0x00, // 32..37 (JUMPDEST=0x20=32)
+            ]),
+        );
+
+        let n_senders = 200u8;
+        let mut keys = Vec::new();
+        for i in 1u8..=n_senders {
+            let (sk, sender) = key_and_address(i);
+            raw_db.add_account(sender, U256::from(100_000_000_000u64), Bytes::new());
+            keys.push((sk, sender));
+        }
+
+        // Build a 1,000-tx block (5 waves of 200 independent senders, distinct storage slots per tx).
+        let mut txs = Vec::with_capacity(1000);
+        for round in 0u64..5u64 {
+            for (idx, &(sk, _)) in keys.iter().enumerate() {
+                let mut slot_data = vec![0u8; 32];
+                let slot_id = round * 256 + (idx as u64) + 1;
+                slot_data[24..32].copy_from_slice(&slot_id.to_be_bytes());
+                txs.push(sign_tx(
+                    sk,
+                    round,
+                    contract,
+                    U256::zero(),
+                    Bytes::from(slot_data),
+                    200_000,
+                    5,
+                ));
+            }
+        }
+
+        let store: Arc<dyn Database> = Arc::new(raw_db);
+        let block = Block {
+            header: BlockHeader {
+                number: 1,
+                gas_limit: 200_000_000,
+                base_fee_per_gas: Some(10),
+                coinbase,
+                timestamp: 1_700_000_000,
+                ..Default::default()
+            },
+            body: BlockBody {
+                transactions: txs,
+                ommers: Vec::new(),
+                withdrawals: Some(Vec::new()),
+            },
+        };
+
+        // Warm sender cache first so we measure pure execution speedup cleanly.
+        for tx in &block.body.transactions {
+            let _ = tx.sender(&NativeCrypto);
+        }
+
+        let t0 = Instant::now();
+        let (seq_res, seq_state) = run_block_and_collect(Arc::clone(&store), &block, false);
+        let seq_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+        let t1 = Instant::now();
+        let (par_res, par_state) = run_block_and_collect(Arc::clone(&store), &block, true);
+        let par_ms = t1.elapsed().as_secs_f64() * 1000.0;
+
+        assert_eq!(par_res.block_gas_used, seq_res.block_gas_used);
+        assert_eq!(par_res.receipts, seq_res.receipts);
+        assert_eq!(par_state, seq_state);
+        println!(
+            "1000-tx disjoint compute block ({:.1} Mgas): seq={:.2}ms ({:.2} Ggas/s) vs par={:.2}ms ({:.2} Ggas/s) -> {:.2}x speedup",
+            seq_res.block_gas_used as f64 / 1e6,
+            seq_ms,
+            (seq_res.block_gas_used as f64 / 1e9) / (seq_ms / 1000.0),
+            par_ms,
+            (par_res.block_gas_used as f64 / 1e9) / (par_ms / 1000.0),
+            seq_ms / par_ms
         );
     }
 }

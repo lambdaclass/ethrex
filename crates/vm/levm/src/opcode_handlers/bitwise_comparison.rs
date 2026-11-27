@@ -304,7 +304,7 @@ fn store_u64(slot: &mut U256, value: u64) {
 /// stays in registers: a limb index computed at run time sends it through a stack
 /// temporary, which the next load has to wait on.
 #[inline(always)]
-fn shift_right(value: &U256, shift: u8, fill: u64) -> U256 {
+pub(crate) fn shift_right(value: &U256, shift: u8, fill: u64) -> U256 {
     let bits = u32::from(shift % 64);
     match shift / 64 {
         0 => shift_right_words::<0>(&value.0, bits, fill),
@@ -316,7 +316,7 @@ fn shift_right(value: &U256, shift: u8, fill: u64) -> U256 {
 
 /// `value << shift`, see [`shift_right`].
 #[inline(always)]
-fn shift_left(value: &U256, shift: u8) -> U256 {
+pub(crate) fn shift_left(value: &U256, shift: u8) -> U256 {
     let bits = u32::from(shift % 64);
     match shift / 64 {
         0 => shift_left_words::<0>(&value.0, bits),

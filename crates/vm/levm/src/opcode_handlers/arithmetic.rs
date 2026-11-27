@@ -250,7 +250,7 @@ impl OpcodeHandler for OpClzHandler {
     clippy::indexing_slicing,
     reason = "i + j < 4, and a 64x64-bit product plus two words fits in 128 bits"
 )]
-fn wrapping_mul(a: &U256, b: &U256) -> U256 {
+pub(crate) fn wrapping_mul(a: &U256, b: &U256) -> U256 {
     let mut product = [0u64; 4];
     for i in 0..4 {
         let mut carry = 0u64;

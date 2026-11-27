@@ -65,6 +65,7 @@
 //! ```
 
 pub mod call_frame;
+pub(crate) mod compiled_ir;
 pub mod constants;
 pub mod db;
 pub mod debug;
