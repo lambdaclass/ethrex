@@ -88,6 +88,10 @@ pub struct Metrics {
     pub healing_empty_try_recv: AtomicU64,
     pub global_state_trie_leafs_healed: AtomicU64,
     pub global_storage_tries_leafs_healed: AtomicU64,
+    /// Trie nodes downloaded while healing, leaves included. Healing can go a long time
+    /// without reaching a leaf, so these show progress when the leaf counters stand still.
+    pub healing_state_nodes_downloaded: AtomicU64,
+    pub healing_storage_nodes_downloaded: AtomicU64,
     pub heal_end_time: Arc<Mutex<Option<SystemTime>>>,
     pub heal_start_time: Arc<Mutex<Option<SystemTime>>>,
 
@@ -760,6 +764,8 @@ impl Default for Metrics {
             healing_empty_try_recv: AtomicU64::new(1),
             global_state_trie_leafs_healed: AtomicU64::new(0),
             global_storage_tries_leafs_healed: AtomicU64::new(0),
+            healing_state_nodes_downloaded: AtomicU64::new(0),
+            healing_storage_nodes_downloaded: AtomicU64::new(0),
             heal_end_time: Arc::new(Mutex::new(None)),
             heal_start_time: Arc::new(Mutex::new(None)),
 

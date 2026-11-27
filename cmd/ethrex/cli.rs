@@ -1364,7 +1364,15 @@ async fn add_queued_blocks(
     blockchain
         .add_blocks_in_batch(mem::take(queued), &[], CancellationToken::new())
         .await
-        .map_err(|(err, _)| err)
+        .map_err(|(err, failure)| {
+            if let Some(failure) = failure {
+                warn!(
+                    "Failed to add block {} with hash {:#x}",
+                    failure.failed_block_number, failure.failed_block_hash
+                );
+            }
+            err
+        })
 }
 
 pub async fn import_blocks_bench(

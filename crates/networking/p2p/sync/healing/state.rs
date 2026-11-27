@@ -233,6 +233,9 @@ async fn heal_state_trie(
                         .iter()
                         .filter(|node| matches!(node, Node::Leaf(_)))
                         .count() as u64;
+                    METRICS
+                        .healing_state_nodes_downloaded
+                        .fetch_add(nodes.len() as u64, Ordering::Relaxed);
                     nodes_to_heal.push((nodes, batch));
                     downloads_success += 1;
                     peers.peer_table.record_success(peer_id)?;

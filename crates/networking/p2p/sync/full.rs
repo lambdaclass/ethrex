@@ -725,7 +725,10 @@ async fn add_blocks_in_batch(
         add_blocks(blockchain.clone(), blocks, bals, final_batch, cancel_token).await
     {
         if let Some(batch_failure) = batch_failure {
-            warn!("Failed to add block during FullSync: {err}");
+            warn!(
+                "Failed to add block {} ({:#x}) during FullSync: {err}",
+                batch_failure.failed_block_number, batch_failure.failed_block_hash
+            );
             // Since running the batch failed we set the failing block and its descendants
             // with having an invalid ancestor on the following cases.
             if let ChainError::InvalidBlock(_) = err {
@@ -806,6 +809,7 @@ async fn run_blocks_pipeline(
             .unwrap_or_default();
         for (block, bal) in blocks.into_iter().zip(bals.into_iter()) {
             let block_hash = block.hash();
+            let block_number = block.header.number;
             blockchain
                 .add_block_pipeline_bounded(block, bal.map(Arc::new), DB_COMMIT_THRESHOLD)
                 .map(|_| ())
@@ -815,6 +819,7 @@ async fn run_blocks_pipeline(
                         Some(BatchBlockProcessingFailure {
                             last_valid_hash,
                             failed_block_hash: block_hash,
+                            failed_block_number: block_number,
                         }),
                     )
                 })?;

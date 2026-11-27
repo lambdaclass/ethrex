@@ -345,6 +345,10 @@ pub async fn heal_storage_trie(
                     continue;
                 };
 
+                METRICS
+                    .healing_storage_nodes_downloaded
+                    .fetch_add(nodes_from_peer.len() as u64, Ordering::Relaxed);
+
                 process_node_responses(
                     &mut nodes_from_peer,
                     &mut state.download_queue,

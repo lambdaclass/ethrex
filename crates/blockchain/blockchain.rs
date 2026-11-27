@@ -480,6 +480,7 @@ pub const DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT: usize = 64;
 pub struct BatchBlockProcessingFailure {
     pub last_valid_hash: H256,
     pub failed_block_hash: H256,
+    pub failed_block_number: u64,
 }
 
 fn log_batch_progress(batch_size: u32, current_block: u32) {
@@ -3192,7 +3193,7 @@ impl Blockchain {
     /// If an error occurs, returns a tuple containing:
     /// - The error type ([`ChainError`]).
     /// - [`BatchBlockProcessingFailure`] (if the error was caused by block processing), carrying
-    ///   the failed block hash and the last successfully-imported block hash.
+    ///   the failed block hash and number, and the last successfully-imported block hash.
     ///
     /// `bals` holds the per-block Block Access Lists fetched during sync, aligned by index with
     /// `blocks`. Pass an empty slice when no BALs are available (e.g. block import from RLP); the
@@ -3254,6 +3255,7 @@ impl Blockchain {
                     err,
                     Some(BatchBlockProcessingFailure {
                         failed_block_hash: block_hash,
+                        failed_block_number: block_number,
                         last_valid_hash,
                     }),
                 ));

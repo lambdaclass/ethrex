@@ -436,7 +436,7 @@ pub async fn request_bytecodes(
             } = result;
 
             debug!(
-                "Downloaded {} bytecodes from peer {peer_id} (current count: {downloaded_count})",
+                "Downloaded {} bytecodes from peer {peer_id}, chunk: {start_index} - {remaining_start} (current count: {downloaded_count})",
                 bytecodes.len(),
             );
 
@@ -747,7 +747,9 @@ pub async fn request_storage_ranges(
             }
 
             if remaining_start < remaining_end {
-                debug!("Failed to download entire chunk from peer {peer_id}");
+                debug!(
+                    "Failed to download entire chunk from peer {peer_id}, remaining accounts: {remaining_start} - {remaining_end}"
+                );
                 if hash_start.is_zero() {
                     // Task is common storage range request
                     let task = StorageTask {
@@ -989,7 +991,9 @@ pub async fn request_storage_ranges(
                 .storage_leaves_downloaded
                 .inc_by(effective_slots as u64);
 
-            debug!("Downloaded {n_storages} storages ({n_slots} slots) from peer {peer_id}");
+            debug!(
+                "Downloaded {n_storages} storages ({n_slots} slots) from peer {peer_id}, starting at account {start_index}"
+            );
             debug!(
                 "Total tasks: {task_count}, completed tasks: {completed_tasks}, queued tasks: {}",
                 tasks_queue_not_started.len()
