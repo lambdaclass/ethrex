@@ -286,9 +286,9 @@ pub fn verify_cell_kzg_proof_batch_partial(
 ) -> Result<bool, KzgError> {
     #[cfg(not(feature = "c-kzg"))]
     {
-        return Err(KzgError::Unimplemented(
+        Err(KzgError::Unimplemented(
             "verify_cell_kzg_proof_batch_partial requires the c-kzg feature".into(),
-        ));
+        ))
     }
     #[cfg(feature = "c-kzg")]
     {

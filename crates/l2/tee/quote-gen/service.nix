@@ -15,7 +15,7 @@ let
       # Fixed-output hash of the toolchain in rust-toolchain.toml; must be
       # recomputed on every toolchain bump (build with lib.fakeSha256 and take
       # the "got:" hash).
-      sha256 = "sha256-vra6TkHITpwRyA5oBKAHSX0Mi6CBDNQD+ryPSpxFsfg=";
+      sha256 = "sha256-A1abGIbOtcBSdrUMhDGrER3pRM1hQP4fp9gh3Y4PKc8=";
   };
   rustPlatform = pkgs.makeRustPlatform {
     cargo = toolchain;
