@@ -271,7 +271,7 @@ impl NodeRef {
         &mut self,
         path: Nibbles,
         acc: &mut Vec<(Nibbles, Vec<u8>)>,
-        crypto: &dyn Crypto,
+        crypto: &(impl Crypto + ?Sized),
     ) -> NodeHash {
         match *self {
             NodeRef::Node(ref mut node, ref mut hash) => {
@@ -303,18 +303,22 @@ impl NodeRef {
         }
     }
 
-    pub fn compute_hash(&self, crypto: &dyn Crypto) -> NodeHash {
+    pub fn compute_hash(&self, crypto: &(impl Crypto + ?Sized)) -> NodeHash {
         *self.compute_hash_ref(crypto)
     }
 
-    pub fn compute_hash_ref(&self, crypto: &dyn Crypto) -> &NodeHash {
+    pub fn compute_hash_ref(&self, crypto: &(impl Crypto + ?Sized)) -> &NodeHash {
         match self {
             NodeRef::Node(node, hash) => hash.get_or_init(|| node.compute_hash(crypto)),
             NodeRef::Hash(hash) => hash,
         }
     }
 
-    pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>, crypto: &dyn Crypto) -> &NodeHash {
+    pub fn compute_hash_no_alloc(
+        &self,
+        buf: &mut Vec<u8>,
+        crypto: &(impl Crypto + ?Sized),
+    ) -> &NodeHash {
         match self {
             NodeRef::Node(node, hash) => {
                 hash.get_or_init(|| node.compute_hash_no_alloc(buf, crypto))
@@ -323,7 +327,7 @@ impl NodeRef {
         }
     }
 
-    pub fn memoize_hashes(&self, buf: &mut Vec<u8>, crypto: &dyn Crypto) {
+    pub fn memoize_hashes(&self, buf: &mut Vec<u8>, crypto: &(impl Crypto + ?Sized)) {
         if let NodeRef::Node(node, hash) = &self
             && hash.get().is_none()
         {
@@ -511,7 +515,7 @@ impl Node {
     }
 
     /// Computes the node's hash
-    pub fn compute_hash(&self, crypto: &dyn Crypto) -> NodeHash {
+    pub fn compute_hash(&self, crypto: &(impl Crypto + ?Sized)) -> NodeHash {
         let mut buf = Vec::new();
         self.memoize_hashes(&mut buf, crypto);
         match self {
@@ -522,7 +526,11 @@ impl Node {
     }
 
     /// Computes the node's hash
-    pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>, crypto: &dyn Crypto) -> NodeHash {
+    pub fn compute_hash_no_alloc(
+        &self,
+        buf: &mut Vec<u8>,
+        crypto: &(impl Crypto + ?Sized),
+    ) -> NodeHash {
         self.memoize_hashes(buf, crypto);
         match self {
             Node::Branch(n) => n.compute_hash_no_alloc(buf, crypto),
@@ -533,7 +541,7 @@ impl Node {
 
     /// Recursively memoizes the hashes of all nodes of the subtrie that has
     /// `self` as root (post-order traversal)
-    pub fn memoize_hashes(&self, buf: &mut Vec<u8>, crypto: &dyn Crypto) {
+    pub fn memoize_hashes(&self, buf: &mut Vec<u8>, crypto: &(impl Crypto + ?Sized)) {
         match self {
             Node::Branch(n) => {
                 for child in &n.choices {
