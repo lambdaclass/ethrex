@@ -74,8 +74,12 @@ impl RpcHandler for LogsFilter {
             Some([param]) => {
                 // Split the object into its members, each kept as raw JSON and parsed
                 // straight into its own type below.
-                let param = serde_json::from_str::<HashMap<String, Box<RawValue>>>(param.get())
+                let mut param = serde_json::from_str::<HashMap<String, Box<RawValue>>>(param.get())
                     .map_err(|_| RpcErr::BadParams("Param is not a object".to_owned()))?;
+                // Every field is optional, and a JSON null means the same as an absent
+                // field, as in geth. Dropping nulls here also keeps them out of the
+                // `blockHash` exclusivity check below.
+                param.retain(|_, value| value.get() != "null");
                 let from_block = param
                     .get("fromBlock")
                     .map(|block_number| BlockIdentifier::parse_param(block_number, 0))
@@ -876,6 +880,52 @@ mod tests {
                 ),
                 "expected {extra} alongside blockHash to be rejected"
             );
+        }
+    }
+
+    #[test]
+    fn test_get_logs_null_fields_are_unset() {
+        // A JSON null is the same as an absent field, as in geth.
+        let params = Some(vec![json!({
+            "fromBlock": null,
+            "toBlock": null,
+            "blockHash": null
+        })]);
+        let request = LogsFilter::parse(&raw_params(&params)).unwrap();
+
+        assert!(
+            matches!(request.from_block, BlockIdentifier::Tag(BlockTag::Latest)),
+            "{request:?}"
+        );
+        assert!(
+            matches!(request.to_block, BlockIdentifier::Tag(BlockTag::Latest)),
+            "{request:?}"
+        );
+        assert!(request.block_hash.is_none(), "{request:?}");
+    }
+
+    #[test]
+    fn test_get_logs_null_from_block_with_to_block() {
+        let params = Some(vec![json!({"fromBlock": null, "toBlock": "latest"})]);
+        let request = LogsFilter::parse(&raw_params(&params)).unwrap();
+
+        assert!(
+            matches!(request.from_block, BlockIdentifier::Tag(BlockTag::Latest)),
+            "{request:?}"
+        );
+    }
+
+    #[test]
+    fn test_get_logs_block_hash_with_null_range_is_accepted() {
+        // A null range bound is unset, so it does not conflict with `blockHash`.
+        for extra in ["fromBlock", "toBlock"] {
+            let params = Some(vec![json!({
+                "blockHash": "0x0000000000000000000000000000000000000000000000000000000000000001",
+                extra: null
+            })]);
+            let request = LogsFilter::parse(&raw_params(&params))
+                .unwrap_or_else(|err| panic!("expected null {extra} to be accepted: {err:?}"));
+            assert_eq!(request.block_hash, Some(H256::from_low_u64_be(1)));
         }
     }
 
