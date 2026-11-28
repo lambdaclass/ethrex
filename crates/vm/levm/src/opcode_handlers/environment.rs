@@ -62,6 +62,7 @@ impl OpcodeHandler for OpBalanceHandler {
             )?)?;
 
         // State access AFTER gas check passes
+        vm.db.observe_balance(address);
         let account_balance = vm.db.get_account(address)?.info.balance;
 
         // Record address touch for BAL (after gas check passes)

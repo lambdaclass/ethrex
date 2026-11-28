@@ -351,6 +351,47 @@ jobs:
           fi
           echo "statelessOutputBytes match ($expected_len bytes, plus $padding bytes of runtime zero padding)"
 
+      # The run above does not show that the ZisK guest can be proven. ere-server
+      # executes on ZisK's Fast emulator, the smallest of the emulators ZisK
+      # generates from an ELF. Proving runs the minimal-trace, ROM-histogram and
+      # memory-operations emulators, which are larger, and ZisK links every one
+      # of them below a fixed address (0x0FF00000 in 1.4.0-alpha, which leaves
+      # about 251 MiB per emulator). A guest can pass the check above and still
+      # outgrow that limit, which is how v32.0.0-rc.1 published a guest that
+      # could not be set up for proving (issue #7561).
+      #
+      # `cargo-zisk execute --asm` builds the proving emulators and then starts
+      # them. Only the build is checked here: the build peaks at about 7 GiB of
+      # memory, but the started emulators lock more than this runner has (the
+      # whole command peaks at about 17 GiB), and the one ZisK command that
+      # builds without starting (`cargo-zisk setup`) needs the proving key. So
+      # the start is made to fail at once with a zero `memlock` limit, the exit
+      # status is ignored, and the step passes only if ZisK reported that it
+      # generated every emulator. ere-server is removed first to give its memory
+      # back, and the memory limit keeps a build that outgrows the runner from
+      # taking the runner down with it. `--memory-swap` is set to the same value
+      # because Docker otherwise lets the container use as much swap again.
+      - name: Build the ZisK proving emulators
+        if: matrix.zkvm == 'zisk'
+        run: |
+          docker rm -f ere-server > /dev/null 2>&1 || true
+          docker run --rm \
+            --memory 12g \
+            --memory-swap 12g \
+            --ulimit memlock=0:0 \
+            -v $PWD/output:/output \
+            --entrypoint cargo-zisk \
+            ghcr.io/eth-act/ere/ere-server-zisk:${ERE_TAG} \
+            execute \
+            --elf /output/${{ steps.artifact.outputs.name }}.elf \
+            --asm \
+            2>&1 | tee zisk-proving-emulators.log || true
+          if ! grep -q "ASM binaries generated" zisk-proving-emulators.log; then
+            echo "::error::ZisK could not build the proving emulators for this ELF"
+            exit 1
+          fi
+          echo "ZisK built every proving emulator"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v6.0.0
         with:

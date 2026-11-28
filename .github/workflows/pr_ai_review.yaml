@@ -1,66 +1,54 @@
-# AI Code Review using lambdaclass/actions reusable workflows
+# AI security review using lambdaclass/actions' multi-model reusable workflow.
 #
-# Triggers:
-# - Automatically on PR open (non-draft) or when marked as ready for review
-# - On-demand via PR comments: /review for all, or /kimi, /codex, /claude, /deepseek, /gemini, /grok (requires write access)
+# Several models review the PR in parallel, a judge checks their findings
+# against the code, and one comment is posted (15-35 minutes per review).
+# The prompts live in lambdaclass/actions (ai-review/prompts/), pinned below.
+# Docs: https://github.com/lambdaclass/actions#multi-model-pr-review
 #
-# Custom prompt: .github/prompts/ai-review.md
+# Triggers (never automatic):
+# - Comment `/review` on a PR (needs to be on the default branch to work).
+#   `/review budget=N` raises the USD budget; `/review continue` finishes a
+#   review that stopped at its budget or time limit.
+# - Add a label starting with `ai-review` to a PR.
 #
 # Required secrets:
-# - KIMI_API_KEY: For Kimi reviews (https://platform.moonshot.ai/)
-# - OPENAI_API_KEY: For Codex reviews (https://platform.openai.com/)
-# - ANTHROPIC_API_KEY: For Claude reviews (https://console.anthropic.com/)
-# - DEEPSEEK_API_KEY: For DeepSeek reviews (https://platform.deepseek.com/)
-# - GEMINI_API_KEY: For Gemini reviews (https://aistudio.google.com/apikey)
-# - XAI_API_KEY: For Grok reviews (https://console.x.ai/)
+# - OPENROUTER_API_KEY: every model but Claude. Must belong to the OpenRouter
+#   account holding the `air-*` provider presets; its credit limit is the hard
+#   spend ceiling.
+# - ANTHROPIC_API_KEY: the Opus reviewer.
 
-name: AI Code Review
+name: AI Review
 
 on:
-  pull_request:
-    types: [opened, ready_for_review]
   issue_comment:
     types: [created]
+  pull_request:
+    types: [labeled]
 
-permissions:
-  contents: read
-  pull-requests: write
-  issues: write
-  id-token: write
+permissions: {}
 
 jobs:
-  kimi-review:
-    if: github.event.pull_request.draft == false
-    uses: lambdaclass/actions/.github/workflows/ai-review-kimi.yml@v1
+  review:
+    # Adding a label needs triage or write access. Fork PRs are refused here and again in the workflow.
+    if: >
+      (
+        github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request &&
+        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
+        (github.event.comment.body == '/review' || startsWith(github.event.comment.body, '/review ') || startsWith(github.event.comment.body, fromJSON('"/review\n"')) || startsWith(github.event.comment.body, fromJSON('"/review\r"')))
+      ) ||
+      (
+        github.event_name == 'pull_request' &&
+        startsWith(github.event.label.name, 'ai-review') &&
+        github.event.pull_request.head.repo.full_name == github.repository
+      )
+    uses: lambdaclass/actions/.github/workflows/pr_review_multi.yml@5917ad124e0079a7cc7ac2245f390b65a4944e03 # v2.2.0
+    permissions:
+      contents: read
+      pull-requests: write
+      actions: read
+    with:
+      command: /review
     secrets:
-      KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
-
-  codex-review:
-    if: github.event.pull_request.draft == false
-    uses: lambdaclass/actions/.github/workflows/ai-review-codex.yml@v1
-    secrets:
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-
-  claude-review:
-    if: github.event.pull_request.draft == false
-    uses: lambdaclass/actions/.github/workflows/ai-review-claude.yml@v1
-    secrets:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-
-  deepseek-review:
-    if: github.event.pull_request.draft == false
-    uses: lambdaclass/actions/.github/workflows/ai-review-deepseek.yml@v1
-    secrets:
-      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-
-  gemini-review:
-    if: github.event.pull_request.draft == false
-    uses: lambdaclass/actions/.github/workflows/ai-review-gemini.yml@v1
-    secrets:
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-
-  grok-review:
-    if: github.event.pull_request.draft == false
-    uses: lambdaclass/actions/.github/workflows/ai-review-grok.yml@v1
-    secrets:
-      XAI_API_KEY: ${{ secrets.XAI_API_KEY }}

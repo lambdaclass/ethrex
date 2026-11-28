@@ -160,6 +160,7 @@ impl Evm {
         queue_length: &AtomicUsize,
         bal: Option<Arc<BlockAccessList>>,
         bal_parallel_exec_enabled: bool,
+        warmed: Option<&levm::WarmedTxs>,
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         LEVM::execute_block_pipeline(
             block,
@@ -171,6 +172,7 @@ impl Evm {
             bal,
             bal_parallel_exec_enabled,
             self.stateless_validator.as_deref(),
+            warmed,
         )
     }
 

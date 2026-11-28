@@ -167,6 +167,7 @@ impl OpcodeHandler for OpSelfBalanceHandler {
             .increase_consumed_gas(gas_cost::SELFBALANCE)?;
 
         let address = vm.current_call_frame.to;
+        vm.db.observe_balance(address);
         let balance = vm.db.get_account(address)?.info.balance;
 
         // Record address touch for BAL per EIP-7928

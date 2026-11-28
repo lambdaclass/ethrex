@@ -166,7 +166,8 @@ const STATE_SHARD_PREFETCH_THRESHOLD: usize = 4;
 const STREAM_STORAGE_PREFETCH_THRESHOLD: usize = 4;
 // Cap on the per-worker, per-trie slot buffer before an opportunistic mid-routing
 // flush (one sorted `prefetch_sorted` + the inserts). Bounds transient memory for
-// very heavy single-account blocks; smaller buffers just flush once at RoutingDone.
+// very heavy single-account blocks; smaller buffers flush when the worker is idle after
+// the block warmer is done, and what is left at RoutingDone.
 const STREAM_STORAGE_FLUSH_BATCH: usize = 1024;
 /// Default mempool occupancy percentage (0-100) at which gapped-nonce
 /// transaction admission is denied. Set to 100 to disable the check.
@@ -291,7 +292,36 @@ pub struct Blockchain {
     /// Cache handoff slot from the mempool prewarmer to
     /// `execute_block_pipeline`; see `PrewarmedCache` and `crate::prewarm`.
     prewarmed: PrewarmedCache,
+    /// State cache entries left by the last executed block, brought up to its post-state,
+    /// for its child to start from; see `CarriedCache`.
+    carried: CarriedCache,
 }
+
+/// A block's state cache entries carried to its child. Keyed like [`PrewarmedEntry`] by
+/// the block the entries describe the state after, and by fork for the same reason.
+#[derive(Default)]
+pub(crate) struct CarriedCache(std::sync::Mutex<Option<CarriedState>>);
+
+pub(crate) struct CarriedState {
+    block_hash: H256,
+    fork: Fork,
+    entries: ethrex_vm::backends::levm::CarriedEntries,
+}
+
+impl std::fmt::Debug for CarriedCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let state = match self.0.lock() {
+            Ok(slot) => slot.as_ref().map(|state| (state.block_hash, state.fork)),
+            Err(_) => None,
+        };
+        f.debug_tuple("CarriedCache").field(&state).finish()
+    }
+}
+
+/// Shallowest trie level read when prefetching the paths of a block's speculative writes. The
+/// top levels are shared by every path and stay cached, so probing them only spends lookups.
+#[cfg(feature = "rayon")]
+const SPECULATIVE_TRIE_PREFETCH_MIN_DEPTH: usize = 3;
 
 /// Newtype around the prewarmer's cache-handoff slot so `Blockchain` can keep
 /// deriving `Debug` (`dyn LevmDatabase` has no `Debug` impl).
@@ -623,6 +653,7 @@ impl Blockchain {
             options: blockchain_opts,
             merkle_pool: OnceLock::new(),
             prewarmed: PrewarmedCache::default(),
+            carried: CarriedCache::default(),
         }
     }
 
@@ -651,6 +682,7 @@ impl Blockchain {
             },
             merkle_pool: OnceLock::new(),
             prewarmed: PrewarmedCache::default(),
+            carried: CarriedCache::default(),
         }
     }
 
@@ -701,6 +733,7 @@ impl Blockchain {
             options,
             merkle_pool: OnceLock::new(),
             prewarmed: PrewarmedCache::default(),
+            carried: CarriedCache::default(),
         }
     }
 
@@ -915,6 +948,11 @@ impl Blockchain {
                 (entry.parent_hash == block.header.parent_hash && entry.fork == block_fork)
                     .then_some(entry.cache)
             });
+        // The mempool prewarmer already read the state of the transactions it saw, so what the
+        // block warmer misses in its cache is little, and discovery passes would only take
+        // cores from execution.
+        #[cfg(feature = "rayon")]
+        let discovery = prewarmed.is_none();
         let caching_store: Arc<dyn ethrex_vm::backends::LevmDatabase> = match prewarmed {
             Some(cache) => cache,
             None => Arc::new(CachingDatabase::new(
@@ -923,10 +961,39 @@ impl Blockchain {
             )),
         };
 
+        // Start from the state the parent block's execution left cached, brought up to the
+        // parent's post-state. Only the sequential path records its state changes on the
+        // cache, and witness collection must start cold, as above.
+        let carry = bal.is_none() && !collect_witness;
+        // Execution recovers senders one at a time as it reaches them, relying on the warmer
+        // to recover them all in parallel first. Witness collection runs no warmer, so recover
+        // them in parallel here instead; a failure is reported by execution.
+        if collect_witness {
+            let _ = block.body.get_transactions_with_sender(&NativeCrypto);
+        }
+        let carried = &self.carried;
+        let block_fork = chain_config.fork(block.header.timestamp);
+        // Without a BAL, execution takes the warmer's result for each transaction that read
+        // nothing an earlier transaction changed. Witness collection runs no warmer.
+        let warmed = (bal.is_none() && !collect_witness)
+            .then(|| ethrex_vm::backends::levm::WarmedTxs::new(block.body.transactions.len()));
+        let warmed = warmed.as_ref();
+        if carry
+            && let Ok(mut slot) = self.carried.0.lock()
+            && let Some(state) = slot.take()
+            && state.block_hash == block.header.parent_hash
+            && state.fork == block_fork
+        {
+            caching_store.seed_entries(state.entries);
+        }
+
         // Replace the VM's store with the caching version
         vm.db.store = caching_store.clone();
 
         let cancelled = AtomicBool::new(false);
+        // Set once the block warmer is done; until then merkle workers leave storage slots
+        // buffered, so their trie reads don't compete with warming for the disk and cores.
+        let warming_done = AtomicBool::new(!cfg!(feature = "rayon"));
         // Witness collection also forces sequential execution: parallel lanes
         // re-read in-block-created state (e.g. a code deployed by an earlier
         // tx) from the logged store, while sequential execution serves it from
@@ -1042,6 +1109,7 @@ impl Blockchain {
                 #[cfg(feature = "rayon")]
                 let vm_type = vm.vm_type;
                 let cancelled_ref = &cancelled;
+                let warming_done_ref = &warming_done;
                 #[cfg(feature = "rayon")]
                 let bal_prefetch_enabled = self.options.bal_prefetch_enabled;
                 #[cfg(feature = "rayon")]
@@ -1078,22 +1146,48 @@ impl Blockchain {
                                             vm_type,
                                             &NativeCrypto,
                                             cancelled_ref,
+                                            None,
+                                            None,
+                                            false,
                                         ) {
                                             debug!("Block warming failed (non-fatal): {e}");
                                         }
                                     }
                                 } else {
-                                    // Pre-Amsterdam / P2P sync: speculative tx re-execution
+                                    // Pre-Amsterdam / P2P sync: speculative tx re-execution.
+                                    // Without a BAL the merkleizer's write set is unknown up
+                                    // front, so the warmer reports what each unit wrote and its
+                                    // trie paths are read on the warming I/O pool, ahead of the
+                                    // merkleizer's walk.
+                                    let storage = &self.storage;
+                                    let warm_trie_paths =
+                                        |slots: Vec<(Address, H256)>, accounts: Vec<Address>| {
+                                            if slots.is_empty() && accounts.is_empty() {
+                                                return;
+                                            }
+                                            let storage = storage.clone();
+                                            ethrex_vm::backends::levm::spawn_warm_io(move || {
+                                                let _ = storage.prefetch_trie_nodes(
+                                                    &slots,
+                                                    &accounts,
+                                                    SPECULATIVE_TRIE_PREFETCH_MIN_DEPTH,
+                                                );
+                                            });
+                                        };
                                     if let Err(e) = LEVM::warm_block(
                                         block,
                                         caching_store,
                                         vm_type,
                                         &NativeCrypto,
                                         cancelled_ref,
+                                        Some(&warm_trie_paths),
+                                        warmed,
+                                        discovery,
                                     ) {
                                         debug!("Block warming failed (non-fatal): {e}");
                                     }
                                 }
+                                warming_done_ref.store(true, Ordering::Relaxed);
                                 start.elapsed()
                             })
                             .map_err(|e| {
@@ -1101,6 +1195,10 @@ impl Blockchain {
                             })
                     })
                     .transpose()?;
+                #[cfg(feature = "rayon")]
+                if warm_handle.is_none() {
+                    warming_done_ref.store(true, Ordering::Relaxed);
+                }
 
                 // Warm the merkleizer's trie-node reads concurrently with execution
                 // instead of up front. Touches different CFs than execution, so no
@@ -1122,7 +1220,7 @@ impl Blockchain {
                                 // warm) just means the merkleizer cold-reads that node;
                                 // it never affects block output, so a failure must not
                                 // propagate into block processing.
-                                let _ = storage.prefetch_trie_nodes(&slots, &accounts);
+                                let _ = storage.prefetch_trie_nodes(&slots, &accounts, 0);
                             })
                             .inspect_err(|e| debug!("trie-node prefetch spawn failed: {e}"))
                             .ok()
@@ -1165,6 +1263,7 @@ impl Blockchain {
                             queue_length_ref,
                             bal,
                             bal_parallel_exec_enabled,
+                            warmed,
                         );
                         cancelled_ref.store(true, Ordering::Relaxed);
                         let (execution_result, produced_bal) = result?;
@@ -1229,6 +1328,18 @@ impl Blockchain {
                             return Err(InvalidBlockError::BlockAccessListHashMismatch.into());
                         }
 
+                        // Leave this block's cache, brought up to its post-state, for its child.
+                        if carry
+                            && let Some(entries) = vm.db.store.take_entries()
+                            && let Ok(mut slot) = carried.0.lock()
+                        {
+                            *slot = Some(CarriedState {
+                                block_hash: block.hash(),
+                                fork: block_fork,
+                                entries: ethrex_vm::backends::levm::carry_block_writes(entries),
+                            });
+                        }
+
                         let exec_end_instant = Instant::now();
                         Ok((execution_result, produced_bal, exec_end_instant))
                     })
@@ -1286,6 +1397,7 @@ impl Blockchain {
                                 queue_length_ref,
                                 max_queue_length_ref,
                                 collect_witness,
+                                warming_done_ref,
                             )?,
                         };
                         let merkle_end_instant = Instant::now();
@@ -1374,6 +1486,7 @@ impl Blockchain {
         queue_length: &AtomicUsize,
         max_queue_length: &mut usize,
         collect_witness: bool,
+        warming_done: &AtomicBool,
     ) -> Result<(AccountUpdatesList, Option<Vec<AccountUpdate>>), StoreError> {
         let parent_state_root = parent_header.state_root;
 
@@ -1412,6 +1525,7 @@ impl Blockchain {
                             i as u8,
                             all_senders,
                             shutdown_rx,
+                            warming_done,
                         )
                     }));
                     let result = match result {
@@ -4588,6 +4702,7 @@ fn handle_subtrie(
     index: u8,
     worker_senders: Vec<cb::Sender<WorkerRequest>>,
     shutdown_rx: cb::Receiver<()>,
+    warming_done: &AtomicBool,
 ) -> Result<(), StoreError> {
     let mut state_trie = storage.open_state_trie(parent_state_root)?;
     let mut storage_nodes: Vec<(H256, Vec<TrieNode>)> = vec![];
@@ -4669,6 +4784,22 @@ fn handle_subtrie(
                         return Err(StoreError::Custom("shard worker shutdown".into()));
                     }
                     if dirty {
+                        // Once warming is done, apply the buffered slots while execution
+                        // still runs, so the drain after its last update only has what
+                        // arrived since. Batches of one trie apply in arrival order, so the
+                        // last write still wins.
+                        if !collecting_storages && warming_done.load(Ordering::Relaxed) {
+                            for (prefix, (root, slots)) in storage_buffer.drain() {
+                                flush_storage_buffer(
+                                    &mut storage_tries,
+                                    &storage,
+                                    parent_state_root,
+                                    prefix,
+                                    root,
+                                    slots,
+                                )?;
+                            }
+                        }
                         // Pre-collect state trie — safe during storage
                         // collection too, since StorageShard resolution only
                         // dirties specific paths that get re-committed later.
