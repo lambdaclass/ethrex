@@ -1491,11 +1491,12 @@ impl<'a> VM<'a> {
 
         // Evict codes the region inserted, mirroring `restore_cache_state`: a stale
         // by-hash cache entry would hide a later read of the same hash from the store.
+        // Codes the block access list provided are kept (see `evict_reverted_code`).
         for code_hash in backup
             .inserted_code_hashes
             .split_off(marker.code_hashes_len)
         {
-            self.db.codes.remove(&code_hash);
+            self.db.evict_reverted_code(&code_hash);
         }
 
         self.current_call_frame.call_frame_backup = backup;

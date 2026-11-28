@@ -93,7 +93,8 @@ use ethrex_common::validate_block_access_list_size;
 use ethrex_common::{Address, H256, U256};
 pub use ethrex_common::{
     get_total_blob_gas, validate_block_access_list_hash, validate_block_pre_execution,
-    validate_gas_used, validate_receipts_root_and_logs_bloom, validate_requests_hash,
+    validate_burned_fees, validate_gas_used, validate_receipts_root_and_logs_bloom,
+    validate_requests_hash, validate_supplied_block_access_list,
 };
 use ethrex_crypto::NativeCrypto;
 use ethrex_metrics::metrics;
@@ -832,6 +833,7 @@ impl Blockchain {
             &NativeCrypto,
         )?;
         validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
+        validate_burned_fees(&block.header, &chain_config, execution_result.burned_fees)?;
         if let Some(bal) = &bal {
             validate_block_access_list_hash(
                 &block.header,
@@ -1289,6 +1291,11 @@ impl Blockchain {
                             &block.header,
                             &chain_config,
                             &execution_result.requests,
+                        )?;
+                        validate_burned_fees(
+                            &block.header,
+                            &chain_config,
+                            execution_result.burned_fees,
                         )?;
                         // EIP-7928 block_access_list_hash commitment check.
                         //
@@ -3347,14 +3354,20 @@ impl Blockchain {
             let block_gas_used = block.header.gas_used;
             let block_tx_count = block.body.transactions.len();
 
-            // Pass the peer-provided BAL only if it matches the header commitment: on the pipeline
-            // path a matching BAL drives parallel execution and is persisted for eth/71 serving.
-            // A missing/mismatched BAL yields `None`, and the pipeline rebuilds it.
+            // Pass the peer-provided BAL only if it is the one the header commits to, in
+            // canonical order: on the pipeline path it drives parallel execution and is
+            // persisted for eth/71 serving. A missing or invalid BAL yields `None`, and the
+            // pipeline rebuilds it.
             let bal = bals
                 .get(i)
                 .and_then(|bal| bal.as_ref())
                 .filter(|bal| {
-                    bal.matches_commitment(block.header.block_access_list_hash, &NativeCrypto)
+                    validate_supplied_block_access_list(
+                        bal,
+                        block.header.block_access_list_hash,
+                        &NativeCrypto,
+                    )
+                    .is_ok()
                 })
                 .cloned()
                 .map(Arc::new);

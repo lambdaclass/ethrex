@@ -360,6 +360,9 @@ pub async fn download_state(
                 .await
                 .phase_progress
                 .insert("snap2_ranges_remaining".to_string(), tasks.len() as u64);
+            // A published batch moves the frontier, which is the progress the stall
+            // timeout below measures, whether or not it finished a whole range.
+            progress_at = SystemTime::now();
             continue;
         }
 

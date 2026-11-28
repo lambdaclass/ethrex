@@ -48,6 +48,7 @@ use crate::{
     new_evm,
     vm::StoreVmDatabase,
 };
+use ethrex_vm::TX_BASE_COST_AMSTERDAM;
 
 use thiserror::Error;
 use tracing::{debug, warn};
@@ -908,9 +909,17 @@ impl Blockchain {
         // Fetch mempool transactions
         let (mut plain_txs, mut blob_txs) = self.fetch_mempool_transactions(context)?;
         // Execute and add transactions to payload (if suitable)
+        // The least gas any transaction can take at this fork: 21,000 before Amsterdam, and the
+        // 12,000 an EIP-2780 self-transfer takes from it. Ending the block at 21,000 left out a
+        // pending self-transfer that fits in the last 12,000 to 20,999 gas.
+        let lowest_transaction_gas = if context.is_amsterdam {
+            TX_BASE_COST_AMSTERDAM
+        } else {
+            TX_GAS_COST
+        };
         loop {
             // Check if we have enough gas to run more transactions
-            if context.remaining_gas < TX_GAS_COST {
+            if context.remaining_gas < lowest_transaction_gas {
                 debug!("No more gas to run transactions");
                 break;
             };
