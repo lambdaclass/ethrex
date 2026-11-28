@@ -31,7 +31,7 @@ use spawned_concurrency::{
     actor,
     error::ActorError,
     protocol,
-    tasks::{Actor, ActorRef, ActorStart as _, Context, Handler, Response, send_message_on},
+    tasks::{Actor, ActorRef, ActorStart as _, Context, Handler, Response},
 };
 use std::{
     net::IpAddr,
@@ -590,14 +590,9 @@ impl PeerTableServer {
         }
     }
 
-    #[started]
-    async fn started(&mut self, ctx: &Context<Self>) {
-        send_message_on(
-            ctx.clone(),
-            tokio::signal::ctrl_c(),
-            peer_table_server_protocol::Shutdown,
-        );
-    }
+    // Unlike the discovery server and the RLPx initiator, the table does not stop itself
+    // on Ctrl-C: the node's shutdown still reads the connected peers from it, after
+    // flushing the database, to store them in `node_config.json`.
 
     // === Send handlers ===
 
