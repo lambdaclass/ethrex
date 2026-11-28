@@ -21,6 +21,7 @@ use crate::{
         snap::{Snap2BlockAccessLists, Snap2GetBlockAccessLists},
     },
 };
+use ethrex_common::validate_supplied_block_access_list;
 use ethrex_common::{
     H256,
     types::{
@@ -1160,10 +1161,10 @@ fn truncate_to_single_chain(block_headers: &mut Vec<BlockHeader>) -> usize {
     dropped
 }
 
-/// Replaces with `None` every block access list that is not canonically ordered or does not
-/// hash to the `block_access_list_hash` of the header at the same position, and returns
-/// whether it replaced any. A wrong list must never reach execution: full sync runs a block
-/// with the list it is given, and a wrong one can get a valid block rejected as invalid.
+/// Replaces with `None` every block access list that is not the one the header at the same
+/// position commits to (see [`validate_supplied_block_access_list`]), and returns whether it
+/// replaced any. A wrong list must never reach execution: full sync runs a block with the
+/// list it is given.
 fn drop_mismatched_block_access_lists(
     block_access_lists: &mut [Option<BlockAccessList>],
     block_headers: &[BlockHeader],
@@ -1171,8 +1172,8 @@ fn drop_mismatched_block_access_lists(
     let mut dropped = false;
     for (bal, header) in block_access_lists.iter_mut().zip(block_headers) {
         if bal.as_ref().is_some_and(|bal| {
-            bal.validate_ordering().is_err()
-                || !bal.matches_commitment(header.block_access_list_hash, &NativeCrypto)
+            validate_supplied_block_access_list(bal, header.block_access_list_hash, &NativeCrypto)
+                .is_err()
         }) {
             *bal = None;
             dropped = true;

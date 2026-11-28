@@ -7,7 +7,7 @@ use std::{
 };
 
 use ethrex_blockchain::Blockchain;
-use ethrex_common::H256;
+use ethrex_common::{H256, types::ChainConfig};
 use ethrex_storage::Store;
 use tokio::{
     sync::Mutex,
@@ -24,6 +24,7 @@ use crate::{
         BackfillConfig, HistoryChain, SyncDiagnostics, SyncMode, Syncer,
         reconcile_history_bounds_when_synced, run_history_backfill, sync_head_executed,
     },
+    utils::current_unix_time,
 };
 
 /// How long to wait for a forkchoice head to arrive via `engine_newPayload` before
@@ -81,16 +82,11 @@ impl SyncManager {
         let backfill_cancel = cancel_token.clone();
         let backfill_blockchain = blockchain.clone();
 
-        // Only a snap/1 state sync depends on `GetTrieNodes`, and that is the
-        // sync this node runs exactly when its chain has no Amsterdam, since
-        // snap/2 reconciles with access lists that do not exist before it.
-        //
-        // Keying this on "a snap sync is running" instead would be circular and
-        // would strand the snap/2 path permanently: withholding snap/2 means
-        // never negotiating it, which means never finding a snap/2 peer, which
-        // means always falling back to snap/1 and never clearing the flag.
-        let needs_trie_nodes = snap_enabled.load(Ordering::Relaxed)
-            && store.get_chain_config().amsterdam_time.is_none();
+        let needs_trie_nodes = state_sync_needs_trie_nodes(
+            snap_enabled.load(Ordering::Relaxed),
+            &store.get_chain_config(),
+            current_unix_time(),
+        );
         blockchain.set_state_sync_needs_trie_nodes(needs_trie_nodes);
 
         // Fetch checkpoint once to avoid duplicate DB reads
@@ -397,4 +393,65 @@ async fn wait_for_newpayload_heal(store: &Store, last_fcu_head: &Arc<Mutex<H256>
         sleep(NEWPAYLOAD_HEAL_POLL).await;
     }
     false
+}
+
+/// Whether a snap sync starting at `now` depends on `GetTrieNodes`, which decides whether
+/// snap/2 is withheld from peers until the sync commits to the snap/2 path.
+///
+/// Only a snap/1 state sync asks for trie nodes, and that is the sync this node runs
+/// exactly when Amsterdam is not active yet: snap/2 reconciles with access lists, which a
+/// pivot before the fork does not have, so a sync that starts before the fork runs snap/1,
+/// and one that crosses the fork finishes on snap/1, which peers keep serving.
+///
+/// Keying this on "a snap sync is running" instead would be circular and would strand the
+/// snap/2 path permanently: withholding snap/2 means never negotiating it, which means never
+/// finding a snap/2 peer, which means always falling back to snap/1 and never clearing the
+/// flag.
+pub(crate) fn state_sync_needs_trie_nodes(
+    snap_enabled: bool,
+    chain_config: &ChainConfig,
+    now: u64,
+) -> bool {
+    snap_enabled && !chain_config.is_amsterdam_activated(now)
+}
+
+#[cfg(test)]
+mod trie_node_dependency_tests {
+    use super::*;
+
+    fn config_with_amsterdam_at(amsterdam_time: Option<u64>) -> ChainConfig {
+        ChainConfig {
+            amsterdam_time,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_snap_sync_before_the_fork_needs_trie_nodes() {
+        for amsterdam_time in [None, Some(2_000)] {
+            assert!(state_sync_needs_trie_nodes(
+                true,
+                &config_with_amsterdam_at(amsterdam_time),
+                1_000
+            ));
+        }
+    }
+
+    #[test]
+    fn a_snap_sync_after_the_fork_does_not_need_trie_nodes() {
+        assert!(!state_sync_needs_trie_nodes(
+            true,
+            &config_with_amsterdam_at(Some(1_000)),
+            1_000
+        ));
+    }
+
+    #[test]
+    fn a_full_sync_never_needs_trie_nodes() {
+        assert!(!state_sync_needs_trie_nodes(
+            false,
+            &config_with_amsterdam_at(None),
+            1_000
+        ));
+    }
 }

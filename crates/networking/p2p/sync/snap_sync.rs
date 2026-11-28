@@ -124,6 +124,14 @@ pub async fn sync_cycle_snap(
     datadir: &Path,
     diagnostics: &Arc<tokio::sync::RwLock<super::SyncDiagnostics>>,
 ) -> Result<(), SyncError> {
+    // Decided again on every cycle, so a node started before the fork offers snap/2
+    // once Amsterdam is active, and a cycle restarted from full sync withholds it.
+    blockchain.set_state_sync_needs_trie_nodes(crate::sync_manager::state_sync_needs_trie_nodes(
+        true,
+        &store.get_chain_config(),
+        crate::utils::current_unix_time(),
+    ));
+
     // Request all block headers between the current head and the sync head
     // We will begin from the current head so that we download the earliest state first
     // This step is not parallelized
@@ -245,6 +253,7 @@ pub async fn sync_cycle_snap(
             // Too few blocks for a snap sync, switching to full sync
             info!("Sync head is found, switching to FullSync");
             snap_enabled.store(false, Ordering::Relaxed);
+            blockchain.set_state_sync_needs_trie_nodes(false);
             return super::full::sync_cycle_full(
                 peers,
                 blockchain,
@@ -291,6 +300,9 @@ pub async fn sync_cycle_snap(
 
     store.clear_snap_state().await?;
     snap_enabled.store(false, Ordering::Relaxed);
+    // The state sync is over and asks for no more trie nodes, so new connections
+    // can be offered snap/2 again.
+    blockchain.set_state_sync_needs_trie_nodes(false);
 
     Ok(())
 }

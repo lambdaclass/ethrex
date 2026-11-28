@@ -369,6 +369,9 @@ async fn parallel_path_rejects_pre_exec_entry_for_untouched_account() {
         AccountChanges::new(SPURIOUS_ADDRESS)
             .with_balance_changes(vec![BalanceChange::new(0, U256::zero())]),
     );
+    // Keep the list canonically ordered: the parallel path checks the order before
+    // seeding, and this test pins the content check behind it.
+    accounts.sort_by_key(|a| a.address);
     let mutated_bal = Arc::new(BlockAccessList::from_accounts(accounts));
 
     // Root unaffected (balance 0 for an empty account is a no-op leaf), so only
@@ -570,14 +573,17 @@ async fn parallel_path_rejects_noop_storage_entry() {
     // Inject a spurious no-op StorageChange for slot 0 at bal_idx=1, claiming
     // a "change" to exactly its pre-block value (7).
     let mut accounts = bal.accounts().to_vec();
-    accounts
+    let reader = accounts
         .iter_mut()
         .find(|a| a.address == READER_CONTRACT_ADDRESS)
-        .unwrap()
-        .storage_changes = vec![SlotChange::with_changes(
+        .unwrap();
+    reader.storage_changes = vec![SlotChange::with_changes(
         U256::zero(),
         vec![StorageChange::new(1, U256::from(7))],
     )];
+    // A slot may not be in both lists, and the parallel path checks that before
+    // seeding; this test pins the content check behind it.
+    reader.storage_reads.retain(|slot| !slot.is_zero());
     let mutated_bal = Arc::new(BlockAccessList::from_accounts(accounts));
 
     // Root is unaffected: the injected value equals the slot's existing

@@ -295,6 +295,13 @@ async fn heal_state_trie(
                         }
                         logged_no_free_peers_count -= 1;
 
+                        // With no peer to send the batch to, nothing else ends the pass, so
+                        // the deadline is checked here too: a stale pass returns and the next
+                        // cycle picks a new pivot.
+                        if current_unix_time() > staleness_timestamp {
+                            is_stale = true;
+                        }
+
                         // Sleep a bit to avoid busy polling
                         tokio::time::sleep(Duration::from_millis(10)).await;
                         continue;
@@ -526,6 +533,72 @@ pub fn node_pending_children(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::sync::Arc;
+
+    use ethrex_blockchain::Blockchain;
+    use ethrex_storage::EngineType;
+    use secp256k1::SecretKey;
+    use tokio_util::task::TaskTracker;
+
+    use crate::{
+        network::P2PContext,
+        peer_table::{PeerTableServer, TARGET_PEERS},
+        rlpx::initiator::RLPxInitiator,
+        types::{NetworkConfig, Node},
+    };
+
+    async fn peerless_handler(store: Store) -> PeerHandler {
+        let peer_table = PeerTableServer::spawn(H256::random(), TARGET_PEERS, store.clone());
+        let local_node = Node::new(
+            "127.0.0.1".parse().expect("valid address"),
+            30303,
+            30303,
+            Default::default(),
+        );
+        let context = P2PContext::new(
+            local_node.clone(),
+            NetworkConfig::from_node(&local_node),
+            TaskTracker::default(),
+            SecretKey::from_byte_array(&[0xcd; 32]).expect("32 bytes, within curve order"),
+            peer_table.clone(),
+            store.clone(),
+            Arc::new(Blockchain::for_test_harness(store)),
+            String::new(),
+            None,
+            1000,
+            100.0,
+        )
+        .expect("p2p context");
+        PeerHandler::new(peer_table, RLPxInitiator::spawn_on_thread(context))
+    }
+
+    /// With no peer to heal from, a pass past its deadline must still end, so the sync can
+    /// move to a new pivot.
+    #[tokio::test]
+    async fn state_healing_without_peers_stops_at_the_deadline() {
+        let store = Store::new("", EngineType::InMemory).expect("in-memory store");
+        let peers = peerless_handler(store.clone()).await;
+        let collector_dir = tempfile::tempdir().expect("temp dir");
+        let mut code_hash_collector = CodeHashCollector::new(collector_dir.path().to_path_buf());
+        let mut storage_accounts = AccountStorageRoots::default();
+        let mut global_leafs_healed = 0;
+
+        let healing = heal_state_trie_wrap(
+            H256::repeat_byte(0x11),
+            store,
+            &peers,
+            current_unix_time().saturating_sub(1),
+            &mut global_leafs_healed,
+            &mut storage_accounts,
+            &mut code_hash_collector,
+        );
+        let done = tokio::time::timeout(Duration::from_secs(10), healing)
+            .await
+            .expect("healing returns once its deadline has passed")
+            .expect("healing does not fail");
+        assert!(!done, "nothing was healed");
+    }
 
     fn metadata_at_depth(depth: usize) -> RequestMetadata {
         RequestMetadata {

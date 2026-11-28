@@ -700,6 +700,8 @@ pub enum InvalidBlockHeaderError {
     SlotNumberNotPresent,
     #[error("Slot number is present")]
     SlotNumberPresent,
+    #[error("Burned fees is present")]
+    BurnedFeesPresent,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -858,12 +860,23 @@ pub fn validate_prague_header_fields(
         if header.slot_number.is_none() {
             return Err(InvalidBlockHeaderError::SlotNumberNotPresent);
         }
+        // EIP-8079: burned_fees is an LStar header field. The RLP decoder takes any
+        // trailing item as it, so a header before LStar may not carry one. From LStar
+        // on, its value is checked against execution (`validate_burned_fees`), which
+        // also rejects a header without it; the stateless path only fills it in after
+        // executing, so its presence is not required here.
+        if !chain_config.is_lstar_activated(header.timestamp) && header.burned_fees.is_some() {
+            return Err(InvalidBlockHeaderError::BurnedFeesPresent);
+        }
     } else {
         if header.block_access_list_hash.is_some() {
             return Err(InvalidBlockHeaderError::BlockAccessListHashPresent);
         }
         if header.slot_number.is_some() {
             return Err(InvalidBlockHeaderError::SlotNumberPresent);
+        }
+        if header.burned_fees.is_some() {
+            return Err(InvalidBlockHeaderError::BurnedFeesPresent);
         }
     }
     Ok(())
@@ -895,6 +908,9 @@ pub fn validate_cancun_header_fields(
     if header.slot_number.is_some() {
         return Err(InvalidBlockHeaderError::SlotNumberPresent);
     }
+    if header.burned_fees.is_some() {
+        return Err(InvalidBlockHeaderError::BurnedFeesPresent);
+    }
     Ok(())
 }
 
@@ -920,6 +936,9 @@ pub fn validate_pre_cancun_header_fields(
     }
     if header.slot_number.is_some() {
         return Err(InvalidBlockHeaderError::SlotNumberPresent);
+    }
+    if header.burned_fees.is_some() {
+        return Err(InvalidBlockHeaderError::BurnedFeesPresent);
     }
     Ok(())
 }

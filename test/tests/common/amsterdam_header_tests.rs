@@ -167,3 +167,81 @@ fn calc_excess_blob_gas_large_base_fee_matches_u256_math() {
             / schedule.max as u64;
     assert_eq!(result, expected);
 }
+
+// ==================== EIP-8079: burned_fees presence ====================
+
+/// ChainConfig with every fork through LStar active at genesis.
+fn lstar_config() -> ChainConfig {
+    ChainConfig {
+        hegota_time: Some(0),
+        lstar_time: Some(0),
+        ..amsterdam_config()
+    }
+}
+
+/// A pre-LStar Amsterdam header carrying `burned_fees` has more fields than its fork
+/// defines; the positional RLP decoder would otherwise take any 24th field as the LStar
+/// one.
+#[test]
+fn amsterdam_header_with_burned_fees_is_rejected() {
+    let cfg = amsterdam_config();
+    let parent = base_header();
+    let mut header = base_header();
+    header.burned_fees = Some(1);
+
+    let err = validate_prague_header_fields(&header, &parent, &cfg)
+        .expect_err("pre-LStar header carrying burned_fees must be rejected");
+    assert!(matches!(err, InvalidBlockHeaderError::BurnedFeesPresent));
+}
+
+/// An LStar header without `burned_fees` passes header validation: the value check after
+/// execution rejects it, and the stateless path fills the field in only after executing.
+#[test]
+fn lstar_header_missing_burned_fees_is_left_to_the_value_check() {
+    let cfg = lstar_config();
+    let parent = base_header();
+    let header = base_header();
+
+    validate_prague_header_fields(&header, &parent, &cfg)
+        .expect("burned_fees presence is not checked before execution");
+}
+
+#[test]
+fn lstar_header_with_burned_fees_is_accepted() {
+    let cfg = lstar_config();
+    let parent = base_header();
+    let mut header = base_header();
+    header.burned_fees = Some(0);
+
+    validate_prague_header_fields(&header, &parent, &cfg)
+        .expect("LStar header with burned_fees must validate");
+}
+
+#[test]
+fn prague_header_with_burned_fees_is_rejected() {
+    let cfg = prague_only_config();
+    let parent = base_header();
+    let mut header = base_header();
+    header.block_access_list_hash = None;
+    header.slot_number = None;
+    header.burned_fees = Some(1);
+
+    let err = validate_prague_header_fields(&header, &parent, &cfg)
+        .expect_err("pre-Amsterdam header carrying burned_fees must be rejected");
+    assert!(matches!(err, InvalidBlockHeaderError::BurnedFeesPresent));
+}
+
+#[test]
+fn cancun_header_with_burned_fees_is_rejected() {
+    let cfg = amsterdam_config();
+    let parent = base_header();
+    let mut header = base_header();
+    header.block_access_list_hash = None;
+    header.slot_number = None;
+    header.requests_hash = None;
+    header.burned_fees = Some(1);
+
+    let err = validate_cancun_header_fields(&header, &parent, &cfg)
+        .expect_err("Cancun header carrying burned_fees must be rejected");
+    assert!(matches!(err, InvalidBlockHeaderError::BurnedFeesPresent));
+}

@@ -151,6 +151,46 @@ pub fn validate_requests_hash(
     Ok(())
 }
 
+/// Validates a block access list a peer supplied for a block, before anything uses it: it
+/// must be canonically ordered, carry no oversized code, and match the header's commitment.
+///
+/// The commitment alone is not enough: it is computed over a re-sorted encoding, so it
+/// accepts any permutation of the canonical list, and the parallel executor seeds each
+/// transaction's starting state by binary search over the list's entries, which assumes
+/// the canonical order. The engine API runs the same checks on the lists it is handed.
+pub fn validate_supplied_block_access_list(
+    bal: &crate::types::block_access_list::BlockAccessList,
+    commitment: Option<crate::H256>,
+    crypto: &dyn Crypto,
+) -> Result<(), String> {
+    bal.validate_ordering()?;
+    validate_bal_code_sizes(bal, crate::constants::AMSTERDAM_MAX_CODE_SIZE)
+        .map_err(|err| err.to_string())?;
+    if !bal.matches_commitment(commitment, crypto) {
+        return Err("block access list does not match the header's commitment".to_string());
+    }
+    Ok(())
+}
+
+/// Validates that the burned fees match the block header (LStar+, EIP-8079).
+///
+/// Whether the field may be present at all for the block's fork is checked before
+/// execution by the header validators; here the value the block commits to is compared
+/// with the one execution computed, as the receipts root and requests hash are.
+pub fn validate_burned_fees(
+    header: &BlockHeader,
+    chain_config: &ChainConfig,
+    computed_burned_fees: Option<u64>,
+) -> Result<(), InvalidBlockError> {
+    if !chain_config.is_lstar_activated(header.timestamp) {
+        return Ok(());
+    }
+    if header.burned_fees != computed_burned_fees {
+        return Err(InvalidBlockError::BurnedFeesMismatch);
+    }
+    Ok(())
+}
+
 /// Helper to validate that all indices in an iterator are within bounds.
 fn validate_bal_indices(
     indices: impl Iterator<Item = u32>,
