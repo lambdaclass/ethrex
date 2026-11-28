@@ -151,9 +151,13 @@ pub fn seed_one_address_info_from_bal(
         }
     }
 
-    // Insert code object after acc borrow is released.
+    // Insert code object after acc borrow is released. The entry may already be there
+    // because a frame still running deployed the same bytes; record the hash either way, so
+    // that frame's revert keeps it. `code_from_bal` yields no code object only for empty
+    // code, which the store always serves.
     if let Some((hash, Some(code_obj))) = code_update {
         db.codes.entry(hash).or_insert(code_obj);
+        db.bal_seeded_code_hashes.insert(hash);
     }
 
     Ok(true)
@@ -219,6 +223,9 @@ pub struct GeneralizedDatabase {
     pub shared_base: Option<Arc<CacheDB>>,
     /// Seeded: deployed code is called by hash, and its deployer can grind the hash.
     pub codes: SeededHashMap<H256, Code>,
+    /// Hashes of the codes the block access list provided to `codes`. A frame revert keeps
+    /// these entries even when the frame inserted them (see [`Self::evict_reverted_code`]).
+    pub(crate) bal_seeded_code_hashes: SeededHashSet<H256>,
     pub code_metadata: SeededHashMap<H256, CodeMetadata>,
     pub tx_backup: Option<CallFrameBackup>,
     /// Optional BAL recorder for EIP-7928 Block Access List recording.
@@ -247,6 +254,7 @@ impl GeneralizedDatabase {
             shared_base: None,
             tx_backup: None,
             codes: Default::default(),
+            bal_seeded_code_hashes: Default::default(),
             code_metadata: Default::default(),
             bal_recorder: None,
             skip_initial_tracking: false,
@@ -278,6 +286,7 @@ impl GeneralizedDatabase {
             shared_base: Some(shared_base),
             tx_backup: None,
             codes: SeededHashMap::with_capacity_and_hasher(capacity / 4, Default::default()),
+            bal_seeded_code_hashes: Default::default(),
             code_metadata: Default::default(),
             bal_recorder: None,
             skip_initial_tracking: true,
@@ -338,6 +347,7 @@ impl GeneralizedDatabase {
             shared_base: None,
             tx_backup: None,
             codes,
+            bal_seeded_code_hashes: Default::default(),
             code_metadata: Default::default(),
             bal_recorder: None,
             skip_initial_tracking: false,
@@ -480,6 +490,19 @@ impl GeneralizedDatabase {
         let acc = self.load_account(address)?;
         acc.mark_modified();
         Ok(acc)
+    }
+
+    /// Evicts a code a reverted frame inserted into the by-hash cache, so a later read of the
+    /// same hash goes to the store and is recorded in an execution witness. A code the block
+    /// access list provided is kept: the store may not hold code deployed earlier in the block
+    /// yet, so the seeded account's reads rely on the cache entry. If the seed ran first, the
+    /// frame never tracked the hash, so keeping the entry makes both orderings leave the same
+    /// cache.
+    #[inline]
+    pub(crate) fn evict_reverted_code(&mut self, code_hash: &H256) {
+        if !self.bal_seeded_code_hashes.contains(code_hash) {
+            self.codes.remove(code_hash);
+        }
     }
 
     /// Gets code immutably given the code hash.
@@ -629,7 +652,12 @@ impl GeneralizedDatabase {
             // Edge cases that can make this true:
             //   1. Account was destroyed and created again afterwards.
             //   2. Account was destroyed but then was sent ETH, so it's not going to be completely removed from the trie.
-            let was_destroyed = new_state_account.status == AccountStatus::DestroyedModified;
+            // A `Destroyed` account may hold slots too: a reverted re-creation puts back
+            // the zeros its writes replaced, and those have no old value either.
+            let was_destroyed = matches!(
+                new_state_account.status,
+                AccountStatus::Destroyed | AccountStatus::DestroyedModified
+            );
             // Only emit removed_storage if the account actually had storage in the trie.
             // If it didn't (e.g. account was created within the batch), there's nothing to
             // remove, and emitting removed_storage=true would cause a spurious empty
@@ -683,6 +711,7 @@ impl GeneralizedDatabase {
         self.initial_accounts_state.clear();
         self.current_accounts_state.clear();
         self.codes.clear();
+        self.bal_seeded_code_hashes.clear();
         self.code_metadata.clear();
         Ok(account_updates)
     }
@@ -733,31 +762,68 @@ impl GeneralizedDatabase {
                 None
             };
 
-            // Account will have only its storage removed if it was Destroyed and then modified
-            // Edge cases that can make this true:
+            // Whether the diff baseline is already a post-destruction state: an earlier
+            // batch of this block destroyed the account, and the fold below carried the
+            // status over so reads of slots not written since keep returning zero instead
+            // of the stale storage still in the store. The baseline's storage then holds
+            // every slot committed since the destruction, and a slot absent from it is
+            // zero, so this batch diffs against those committed values, and a write of
+            // zero to a committed slot is a deletion.
+            let baseline_destroyed = matches!(
+                initial_state_account.status,
+                AccountStatus::Destroyed | AccountStatus::DestroyedModified
+            );
+            let currently_destroyed = matches!(
+                new_state_account.status,
+                AccountStatus::Destroyed | AccountStatus::DestroyedModified
+            );
+            // Destroyed within this batch: whatever storage it had, in the trie or
+            // committed by earlier batches, is gone, so every slot's old value is zero.
+            // Edge cases that make this true for an account still holding slots:
             //   1. Account was destroyed and created again afterwards.
             //   2. Account was destroyed but then was sent ETH, so it's not going to be completely removed from the trie.
-            let was_destroyed = new_state_account.status == AccountStatus::DestroyedModified;
+            //   3. A re-creation of a `Destroyed` account was reverted, which puts back
+            //      the zeros its writes replaced.
+            let destroyed_this_batch = currently_destroyed && !baseline_destroyed;
             // Only emit removed_storage if the account actually had storage in the trie.
             // If it didn't (e.g. account was created within the batch), there's nothing to
             // remove, and emitting removed_storage=true would cause a spurious empty
             // account to be inserted into the state trie.
-            let removed_storage = was_destroyed && initial_state_account.has_storage;
+            let removed_storage = destroyed_this_batch && initial_state_account.has_storage;
 
             // 2. Storage has been updated if the current value is different from the one before execution.
             let mut added_storage: SeededHashMap<_, _> = Default::default();
 
             for (key, new_value) in &new_state_account.storage {
-                let old_value = if !was_destroyed {
-                    initial_state_account.storage.get(key).ok_or_else(|| { VMError::Internal(InternalError::Custom(format!("Failed to get old value from account's initial storage for address: {address}")))})?
-                } else {
+                let old_value = if destroyed_this_batch {
                     // There's not an "old value" if the contract was destroyed and re-created.
-                    &ZERO_U256
+                    ZERO_U256
+                } else if baseline_destroyed {
+                    initial_state_account
+                        .storage
+                        .get(key)
+                        .copied()
+                        .unwrap_or(ZERO_U256)
+                } else {
+                    *initial_state_account.storage.get(key).ok_or_else(|| { VMError::Internal(InternalError::Custom(format!("Failed to get old value from account's initial storage for address: {address}")))})?
                 };
 
-                if new_value != old_value {
+                if *new_value != old_value {
                     added_storage.insert(*key, *new_value);
                     storage_updated = true;
+                }
+            }
+
+            // The account is loaded with a full copy of a post-destruction baseline, so a
+            // slot the baseline committed that the account no longer holds was cleared by
+            // a destruction within this batch: delete it from the trie, where it is the
+            // only storage the account has left.
+            if baseline_destroyed && currently_destroyed {
+                for (key, old_value) in &initial_state_account.storage {
+                    if !old_value.is_zero() && !new_state_account.storage.contains_key(key) {
+                        added_storage.insert(*key, ZERO_U256);
+                        storage_updated = true;
+                    }
                 }
             }
 

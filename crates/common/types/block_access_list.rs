@@ -933,39 +933,47 @@ impl BlockAccessListRecorder {
     /// Per EIP-7928: "If a storage slot's value is changed but its post-transaction value
     /// is equal to its pre-transaction value, the slot MUST NOT be recorded as modified."
     /// Net-zero writes are converted to reads instead.
+    ///
+    /// The work is proportional to the current transaction's writes, never to the
+    /// block's: indices only grow, so a slot's entries from this transaction are a
+    /// suffix of its history, and the journal holds the history's length before this
+    /// transaction's first push.
     fn filter_net_zero_storage(&mut self) {
-        let current_idx = self.current_index;
+        let history_before_tx = Self::first_lengths(
+            self.storage_writes_journal
+                .iter()
+                .map(|(addr, slot, len)| ((*addr, *slot), *len)),
+        );
 
-        // Collect slots that need to be converted from writes to reads
-        let mut slots_to_convert: Vec<(Address, U256)> = Vec::new();
+        // Collect slots that need to be converted from writes to reads, with the
+        // history length to cut them back to
+        let mut slots_to_convert: Vec<(Address, U256, usize)> = Vec::new();
 
         for ((addr, slot), pre_value) in &self.tx_initial_storage {
-            // Check if there are writes for this slot in the current transaction
+            // A slot without a journal entry was not written in this transaction (or
+            // the write was reverted), so there is nothing to filter
+            let Some(&boundary) = history_before_tx.get(&(*addr, *slot)) else {
+                continue;
+            };
+            // The last entry is this transaction's final value: everything from the
+            // boundary on is this transaction's
             if let Some(slots) = self.storage_writes.get(addr)
                 && let Some(changes) = slots.get(slot)
+                && changes.len() > boundary
+                && let Some((_, final_val)) = changes.last()
+                && final_val == pre_value
             {
-                // Find the final value for this transaction
-                // (last entry with current_idx, or no entry means no change in this tx)
-                let final_value = changes
-                    .iter()
-                    .rfind(|(idx, _)| *idx == current_idx)
-                    .map(|(_, val)| *val);
-
-                if let Some(final_val) = final_value
-                    && final_val == *pre_value
-                {
-                    // Net-zero: final value equals pre-transaction value
-                    slots_to_convert.push((*addr, *slot));
-                }
+                // Net-zero: final value equals pre-transaction value
+                slots_to_convert.push((*addr, *slot, boundary));
             }
         }
 
         // Convert net-zero writes to reads
-        for (addr, slot) in slots_to_convert {
+        for (addr, slot, boundary) in slots_to_convert {
             // Remove the write entries for the current transaction
             if let Some(slots) = self.storage_writes.get_mut(&addr) {
                 if let Some(changes) = slots.get_mut(&slot) {
-                    changes.retain(|(idx, _)| *idx != current_idx);
+                    changes.truncate(boundary);
                     // If no changes remain for this slot, remove the slot entry
                     if changes.is_empty() {
                         slots.remove(&slot);
@@ -978,9 +986,11 @@ impl BlockAccessListRecorder {
             }
 
             // If this slot was promoted from read to write, undo the promotion
-            // so build() doesn't skip it from storage_reads.
+            // so build() doesn't skip it from storage_reads. The set's order only
+            // matters to a restore within the transaction, and the journals are
+            // cleared right after this, so the O(1) removal is fine.
             if let Some(promoted) = self.reads_promoted_to_writes.get_mut(&addr) {
-                promoted.retain(|s| *s != slot);
+                promoted.swap_remove(&slot);
                 if promoted.is_empty() {
                     self.reads_promoted_to_writes.remove(&addr);
                 }
@@ -991,38 +1001,54 @@ impl BlockAccessListRecorder {
         }
     }
 
+    /// For each key, the length its change list had before the current transaction's
+    /// first push to it: the first journal entry per key. Seeded: contracts choose the
+    /// slot keys.
+    fn first_lengths<K: std::hash::Hash + Eq>(
+        journal: impl Iterator<Item = (K, usize)>,
+    ) -> SeededHashMap<K, usize> {
+        let mut first = SeededHashMap::default();
+        for (key, len) in journal {
+            first.entry(key).or_insert(len);
+        }
+        first
+    }
+
     /// Filters net-zero code changes for the current transaction.
     /// Per EIP-7928: similar to storage, if code changes but post-transaction code equals
     /// pre-transaction code (e.g., delegate then reset in same tx), it should not be recorded.
+    ///
+    /// As for storage, the current transaction's entries are a suffix whose start the
+    /// journal records, so the work is proportional to this transaction's code changes.
     fn filter_net_zero_code(&mut self) {
-        let current_idx = self.current_index;
+        let history_before_tx = Self::first_lengths(
+            self.code_changes_journal
+                .iter()
+                .map(|(addr, len)| (*addr, *len)),
+        );
 
-        // Collect addresses with net-zero code changes
-        let mut addrs_to_remove: Vec<Address> = Vec::new();
+        // Collect addresses with net-zero code changes, with the history length to cut
+        // them back to
+        let mut addrs_to_remove: Vec<(Address, usize)> = Vec::new();
 
         for (addr, pre_code) in &self.tx_initial_code {
-            // Check if there are code changes for this address in the current transaction
-            if let Some(changes) = self.code_changes.get(addr) {
-                // Find the final code for this transaction
-                let final_code = changes
-                    .iter()
-                    .filter(|(idx, _)| *idx == current_idx)
-                    .last()
-                    .map(|(_, code)| code);
-
-                if let Some(final_code) = final_code
-                    && final_code == pre_code
-                {
-                    // Net-zero: final code equals pre-transaction code
-                    addrs_to_remove.push(*addr);
-                }
+            let Some(&boundary) = history_before_tx.get(addr) else {
+                continue;
+            };
+            if let Some(changes) = self.code_changes.get(addr)
+                && changes.len() > boundary
+                && let Some((_, final_code)) = changes.last()
+                && final_code == pre_code
+            {
+                // Net-zero: final code equals pre-transaction code
+                addrs_to_remove.push((*addr, boundary));
             }
         }
 
         // Remove net-zero code changes
-        for addr in addrs_to_remove {
+        for (addr, boundary) in addrs_to_remove {
             if let Some(changes) = self.code_changes.get_mut(&addr) {
-                changes.retain(|(idx, _)| *idx != current_idx);
+                changes.truncate(boundary);
                 // If no changes remain for this address, remove the address entry
                 if changes.is_empty() {
                     self.code_changes.remove(&addr);

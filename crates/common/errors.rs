@@ -9,6 +9,8 @@ pub enum InvalidBlockError {
     RequestsHashMismatch,
     #[error("Block access list hash does not match the one in the header after executing")]
     BlockAccessListHashMismatch,
+    #[error("Burned fees do not match the ones in the header after executing")]
+    BurnedFeesMismatch,
     #[error("Block access list contains index {index} exceeding max valid index {max}")]
     BlockAccessListIndexOutOfBounds { index: u32, max: u32 },
     #[error("Block access list exceeds gas limit, {items} items exceeds limit of {max_items}")]

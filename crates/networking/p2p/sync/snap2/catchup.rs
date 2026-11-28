@@ -152,8 +152,9 @@ where
             };
 
             // A response may be truncated from the tail but must cover at least
-            // the first slot, or nothing progresses.
-            if response.is_empty() {
+            // the first slot, or nothing progresses, and no more slots than were
+            // requested, since its entries pair with the pending blocks by position.
+            if response.is_empty() || response.len() > pending.len() {
                 tried.push(peer_id);
                 attempts += 1;
                 let _ = if attempts >= BAL_MAX_RETRIES_PER_BLOCK {
@@ -165,7 +166,7 @@ where
                 if attempts >= BAL_MAX_RETRIES_PER_BLOCK {
                     return Err(SyncError::Snap2CatchUpStalled(
                         batch[applied].number,
-                        "peers returned no entries".to_string(),
+                        "peers returned no usable entries".to_string(),
                     ));
                 }
                 continue;
@@ -331,6 +332,8 @@ mod tests {
         Unavailable,
         /// Every requested list, verbatim.
         Serve,
+        /// Every requested list, then one entry more than was asked for.
+        Oversized,
     }
 
     type Chain = (
@@ -432,6 +435,11 @@ mod tests {
         let reply = match script[&peer_id] {
             Answer::Unavailable => vec![None; pending.len()],
             Answer::Serve => pending.iter().map(|hash| bals.get(hash).cloned()).collect(),
+            Answer::Oversized => pending
+                .iter()
+                .map(|hash| bals.get(hash).cloned())
+                .chain([None])
+                .collect(),
         };
         Ok(Some((reply, peer_id)))
     }
@@ -509,6 +517,57 @@ mod tests {
         assert_eq!(best, full.node_id());
         let diagnostics = diagnostics.read().await;
         assert_eq!(diagnostics.snap2_bals_unavailable, 1);
+        assert_eq!(diagnostics.snap2_blocks_replayed, 3);
+    }
+
+    /// A reply with more entries than were requested SHALL be charged to its peer
+    /// like an empty one, and the next request goes to a peer that serves.
+    #[tokio::test]
+    async fn oversized_reply_is_charged_and_the_next_request_goes_elsewhere() {
+        let store = Store::new("memory", EngineType::InMemory).expect("in-memory store");
+        let (from, headers, bals) = chain(&store, 3).await;
+        let to = headers.last().expect("chain").clone();
+        let (oversized, full) = (node(1), node(2));
+        let table = table_with(&store, &[oversized.clone(), full.clone()]).await;
+        table.record_success(oversized.node_id()).expect("score");
+        let script = HashMap::from([
+            (oversized.node_id(), Answer::Oversized),
+            (full.node_id(), Answer::Serve),
+        ]);
+        let (_dir, flat) = flat_state();
+        let (cursor, diagnostics) = (DownloadCursor::new(1), diagnostics());
+        let asked = Mutex::new(Vec::new());
+
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            catch_up_via(
+                &store,
+                &table,
+                |pending, exclude| {
+                    scripted_request(&table, &script, &bals, &asked, pending, exclude)
+                },
+                &flat,
+                &cursor,
+                &from,
+                &to,
+                &diagnostics,
+            ),
+        )
+        .await
+        .expect("the catch-up must move on to the serving peer")
+        .expect("catch-up completes");
+
+        assert_eq!(
+            asked.into_inner().expect("asked"),
+            vec![oversized.node_id(), full.node_id()]
+        );
+        assert_eq!(
+            table.get_score(oversized.node_id()).await.expect("score"),
+            0,
+            "the oversized reply cost the point the peer had"
+        );
+        let diagnostics = diagnostics.read().await;
+        assert_eq!(diagnostics.snap2_peer_failures, 1);
         assert_eq!(diagnostics.snap2_blocks_replayed, 3);
     }
 

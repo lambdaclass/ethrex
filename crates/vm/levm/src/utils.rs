@@ -103,9 +103,10 @@ pub fn restore_cache_state(
     // would serve a later read of the same hash (from a pre-existing account)
     // without hitting the store, hiding the read from execution-witness
     // recording (EIP-8025). Only hashes that were NOT cached before the frame
-    // are tracked, so committed or store-loaded codes are never evicted.
+    // are tracked, so committed or store-loaded codes are never evicted; codes the
+    // block access list provided meanwhile are kept (see `evict_reverted_code`).
     for code_hash in callframe_backup.inserted_code_hashes {
-        db.codes.remove(&code_hash);
+        db.evict_reverted_code(&code_hash);
     }
 
     // Restore BAL recorder to checkpoint (but keep touched_addresses per EIP-7928)

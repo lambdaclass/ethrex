@@ -176,11 +176,14 @@ pub async fn advance_state_via_bals(
             };
 
             // EIP-8189 permits truncating a response from the tail, but one
-            // covering no entry at all makes no progress. Charge it to the first
-            // pending block so the retry budget stays finite.
-            if response.is_empty() {
+            // covering no entry at all makes no progress, and one with more entries
+            // than were requested no longer pairs them with the pending blocks by
+            // position. Charge it to the first pending block so the retry budget
+            // stays finite.
+            if response.is_empty() || response.len() > pending.len() {
                 warn!(
-                    "advance_state_via_bals: peer {peer_id} returned no entries for {} pending blocks",
+                    "advance_state_via_bals: peer {peer_id} returned {} entries for {} pending blocks",
+                    response.len(),
                     pending.len()
                 );
                 diagnostics.write().await.snap2_peer_failures += 1;
