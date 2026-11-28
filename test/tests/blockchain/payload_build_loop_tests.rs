@@ -1,19 +1,11 @@
-//! Regression tests for `build_payload_loop`'s post-loop final mempool
-//! re-drain and its interaction with cancellation (`engine_getPayload`).
+//! Regression tests for `build_payload_loop`'s interaction with cancellation
+//! (`engine_getPayload`).
 //!
-//! Two properties must hold at the same time:
-//!
-//! - a transaction that lands in the tight window between the loop's last
-//!   completed build and a `getPayload`-triggered cancellation must still be
-//!   included when the held payload is empty — otherwise the builder returns
-//!   an empty block while the mempool has transactions (the Hive
-//!   "Invalid Missing Ancestor Syncing ReOrg" flake family);
-//! - once cancelled with a non-empty payload in hand, the loop must NOT pay
-//!   for one more full block build: `engine_getPayload` is blocked on it and
-//!   a full rebuild of a large block can exceed the Engine API 1s deadline
-//!   by itself (observed as missed proposals under sustained mempool inflow,
-//!   where `tx_seq()` has always advanced and the re-drain guard never
-//!   short-circuits).
+//! Once cancelled with a non-empty payload in hand, the loop must NOT pay for
+//! one more full block build: `engine_getPayload` is blocked on it and a full
+//! rebuild of a large block can exceed the Engine API 1s deadline by itself
+//! (observed as missed proposals under sustained mempool inflow, where
+//! `tx_seq()` has always advanced).
 //!
 //! The tests drive the `build_payload_loop` future manually (its initial
 //! build runs synchronously up to the first `await`) so the ordering between
@@ -47,7 +39,7 @@ use tokio_util::sync::CancellationToken;
 
 const L1_CHAIN_ID: u64 = 9;
 
-fn read_private_keys(amount: usize) -> Vec<SecretKey> {
+pub(super) fn read_private_keys(amount: usize) -> Vec<SecretKey> {
     let file = include_str!("../../../fixtures/keys/private_keys_l1.txt");
     file.lines()
         .take(amount)
@@ -58,11 +50,11 @@ fn read_private_keys(amount: usize) -> Vec<SecretKey> {
         .collect()
 }
 
-fn address_for(sk: &SecretKey) -> Address {
+pub(super) fn address_for(sk: &SecretKey) -> Address {
     Signer::Local(LocalSigner::new(*sk)).address()
 }
 
-async fn setup_store(accounts: &[Address]) -> Store {
+pub(super) async fn setup_store(accounts: &[Address]) -> Store {
     let genesis_file = include_bytes!("../../../fixtures/genesis/l1.json");
     let mut genesis: Genesis = serde_json::from_slice(genesis_file).unwrap();
     for address in accounts {
@@ -81,7 +73,7 @@ async fn setup_store(accounts: &[Address]) -> Store {
     store
 }
 
-fn blockchain_for(store: &Store) -> Arc<Blockchain> {
+pub(super) fn blockchain_for(store: &Store) -> Arc<Blockchain> {
     Arc::new(Blockchain::new(
         store.clone(),
         BlockchainOptions {
@@ -92,7 +84,7 @@ fn blockchain_for(store: &Store) -> Arc<Blockchain> {
     ))
 }
 
-fn payload_block(store: &Store) -> Block {
+pub(super) fn payload_block(store: &Store) -> Block {
     let genesis_header = store.get_block_header(0).unwrap().unwrap();
     let args = BuildPayloadArgs {
         parent: genesis_header.hash(),
@@ -141,42 +133,6 @@ macro_rules! poll_once_pending {
     };
 }
 
-/// A tx that lands between the last completed build (here: the initial empty
-/// build) and cancellation must be included in the returned payload. This is
-/// the property the final re-drain exists for; losing it re-introduces the
-/// empty-payload race on quick FCU → getPayload sequences.
-#[tokio::test]
-async fn cancelled_loop_still_drains_mempool_when_payload_is_empty() {
-    let keys = read_private_keys(1);
-    let accounts: Vec<Address> = keys.iter().map(address_for).collect();
-    let store = setup_store(&accounts).await;
-    let blockchain = blockchain_for(&store);
-
-    // Mempool is empty: the initial build produces an empty payload.
-    let token = CancellationToken::new();
-    let mut fut = std::pin::pin!(
-        blockchain
-            .clone()
-            .build_payload_loop(payload_block(&store), token.clone())
-    );
-    poll_once_pending!(fut);
-
-    // The tx lands, then getPayload cancels before any rebuild completes.
-    let tx = signed_transfer(&keys[0], 0).await;
-    let tx_hash = blockchain.add_transaction_to_pool(tx).await.unwrap();
-    token.cancel();
-
-    let res = fut.await.unwrap();
-    assert!(
-        res.payload
-            .body
-            .transactions
-            .iter()
-            .any(|tx| tx.hash(&NativeCrypto) == tx_hash),
-        "tx that landed before cancellation is missing from the payload"
-    );
-}
-
 /// Once cancelled with a non-empty payload in hand, the loop must return that
 /// payload as-is instead of paying for one more full build: a tx that lands
 /// strictly after cancellation must NOT appear (its inclusion would prove the
@@ -208,9 +164,7 @@ async fn cancelled_loop_returns_held_payload_without_final_rebuild() {
 
     let res = fut.await.unwrap();
     let hashes: Vec<_> = res
-        .payload
-        .body
-        .transactions
+        .transactions()
         .iter()
         .map(|tx| tx.hash(&NativeCrypto))
         .collect();
