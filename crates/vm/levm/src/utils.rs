@@ -11,7 +11,8 @@ use crate::{
         cold_account_access_cost, floor_tokens_in_access_list, total_cost_floor_per_token,
         tx_base_cost,
     },
-    vm::{Substate, VM},
+    precompiles::is_active_fork_precompile,
+    vm::{Substate, VM, VMType},
 };
 use ExceptionalHalt::OutOfGas;
 use bytes::Bytes;
@@ -258,6 +259,7 @@ pub fn eip7702_get_code(
     accrued_substate: &mut Substate,
     address: Address,
     fork: Fork,
+    vm_type: VMType,
 ) -> Result<(bool, u64, Address, Code), VMError> {
     let (bytecode, delegation) = eip7702_peek_delegation(db, accrued_substate, address, fork)?;
     let Some((auth_address, access_cost)) = delegation else {
@@ -265,9 +267,31 @@ pub fn eip7702_get_code(
     };
 
     accrued_substate.add_accessed_address(auth_address);
-    let authorized_bytecode = db.get_account_code(auth_address)?.clone();
+    let authorized_bytecode = eip7702_delegate_code(db, auth_address, fork, vm_type)?;
 
     Ok((true, access_cost, auth_address, authorized_bytecode))
+}
+
+/// The code a call runs when it follows an EIP-7702 delegation to `auth_address`.
+///
+/// EIP-7702: when the delegate is a precompile, the retrieved code is empty. On a
+/// real chain a precompile address holds no code, so this only matters in
+/// `eth_simulateV1`: a `code` override on a precompile lasts one block, but the code
+/// it wrote stays in state, and a later block that restores the precompile must not
+/// run it through a delegation (ethereum/execution-apis#981).
+///
+/// The delegate's code is still read, so the accounts touched are the same either way.
+pub fn eip7702_delegate_code(
+    db: &mut GeneralizedDatabase,
+    auth_address: Address,
+    fork: Fork,
+    vm_type: VMType,
+) -> Result<Code, VMError> {
+    let code = db.get_account_code(auth_address)?.clone();
+    if is_active_fork_precompile(&auth_address, fork, vm_type, db.precompile_moves.as_deref()) {
+        return Ok(Code::default());
+    }
+    Ok(code)
 }
 
 /// A call target's code (`None` when it has none) and, when it is an EIP-7702

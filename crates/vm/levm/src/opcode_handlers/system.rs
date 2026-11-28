@@ -120,7 +120,12 @@ impl OpcodeHandler for OpCallHandler {
                     .ok_or(ExceptionalHalt::OutOfGas)?,
             )?;
             vm.substate.add_accessed_address(auth_address);
-            Some(vm.db.get_account_code(auth_address)?.clone())
+            Some(eip7702_delegate_code(
+                vm.db,
+                auth_address,
+                vm.env.config.fork,
+                vm.vm_type,
+            )?)
         } else {
             callee_code
         };
@@ -294,7 +299,12 @@ impl OpcodeHandler for OpCallCodeHandler {
                     .ok_or(ExceptionalHalt::OutOfGas)?,
             )?;
             vm.substate.add_accessed_address(auth_address);
-            Some(vm.db.get_account_code(auth_address)?.clone())
+            Some(eip7702_delegate_code(
+                vm.db,
+                auth_address,
+                vm.env.config.fork,
+                vm.vm_type,
+            )?)
         } else {
             target_code
         };
@@ -418,7 +428,12 @@ impl OpcodeHandler for OpDelegateCallHandler {
                     .ok_or(ExceptionalHalt::OutOfGas)?,
             )?;
             vm.substate.add_accessed_address(auth_address);
-            Some(vm.db.get_account_code(auth_address)?.clone())
+            Some(eip7702_delegate_code(
+                vm.db,
+                auth_address,
+                vm.env.config.fork,
+                vm.vm_type,
+            )?)
         } else {
             target_code
         };
@@ -543,7 +558,12 @@ impl OpcodeHandler for OpStaticCallHandler {
                     .ok_or(ExceptionalHalt::OutOfGas)?,
             )?;
             vm.substate.add_accessed_address(auth_address);
-            Some(vm.db.get_account_code(auth_address)?.clone())
+            Some(eip7702_delegate_code(
+                vm.db,
+                auth_address,
+                vm.env.config.fork,
+                vm.vm_type,
+            )?)
         } else {
             target_code
         };

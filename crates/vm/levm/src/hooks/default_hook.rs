@@ -974,7 +974,7 @@ pub fn set_bytecode_and_code_address(vm: &mut VM<'_>) -> Result<(), VMError> {
         }
 
         let (is_delegation, _eip7702_gas_consumed, code_address, bytecode) =
-            eip7702_get_code(vm.db, &mut vm.substate, to, vm.env.config.fork)?;
+            eip7702_get_code(vm.db, &mut vm.substate, to, vm.env.config.fork, vm.vm_type)?;
 
         // If EIP-7702 delegation, also record the delegation target (code source) in BAL.
         // Skipped when the atomic prepare region rolled back (`pending_prep_oog`): EELS

@@ -364,6 +364,20 @@ pub fn is_precompile_with_moves(
     is_precompile(address, fork, vm_type)
 }
 
+/// True if `address` is one of the fork's own precompiles and no override has taken it
+/// out of the active set.
+///
+/// A `movePrecompileToAddress` destination that is not itself a precompile address of
+/// the fork does not count: it keeps whatever code it holds, as in geth.
+pub fn is_active_fork_precompile(
+    address: &Address,
+    fork: Fork,
+    vm_type: VMType,
+    moves: Option<&PrecompileMoves>,
+) -> bool {
+    is_precompile(address, fork, vm_type) && !moves.is_some_and(|m| m.is_suppressed(address))
+}
+
 /// The address whose precompile implementation should execute for a call to
 /// `address`. Identity mapping unless `address` is a relocation destination.
 pub fn effective_precompile_address(address: Address, moves: Option<&PrecompileMoves>) -> Address {
