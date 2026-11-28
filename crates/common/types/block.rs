@@ -365,13 +365,32 @@ impl BlockBody {
 }
 
 pub fn compute_transactions_root(transactions: &[Transaction], crypto: &dyn Crypto) -> H256 {
-    let iter = transactions.iter().enumerate().map(|(idx, tx)| {
-        // Key: RLP(tx_index)
-        // Value: tx_type || RLP(tx)  if tx_type != 0
-        //                   RLP(tx)  else
-        (idx.encode_to_vec(), tx.encode_canonical_to_vec())
-    });
-    Trie::compute_hash_from_unsorted_iter(iter, crypto)
+    // Key: RLP(tx_index)
+    // Value: tx_type || RLP(tx)  if tx_type != 0
+    //                   RLP(tx)  else
+    // A block's transactions are encoded, and the trie's subtrees hashed, in parallel: this
+    // runs on the block's critical path before execution can start.
+    #[cfg(feature = "rayon")]
+    {
+        let encoded: Vec<Vec<u8>> = transactions
+            .par_iter()
+            .map(|tx| tx.encode_canonical_to_vec())
+            .collect();
+        let mut trie = Trie::new_temp();
+        for (idx, value) in encoded.into_iter().enumerate() {
+            // An in-memory trie never fails to insert.
+            let _ = trie.insert(idx.encode_to_vec(), value);
+        }
+        trie.hash_no_commit_parallel(crypto)
+    }
+    #[cfg(not(feature = "rayon"))]
+    {
+        let iter = transactions
+            .iter()
+            .enumerate()
+            .map(|(idx, tx)| (idx.encode_to_vec(), tx.encode_canonical_to_vec()));
+        Trie::compute_hash_from_unsorted_iter(iter, crypto)
+    }
 }
 
 pub fn compute_receipts_root(receipts: &[Receipt], crypto: &dyn Crypto) -> H256 {
@@ -401,6 +420,60 @@ pub fn compute_receipts_root_and_logs_bloom(
     });
     let receipts_root = Trie::compute_hash_from_unsorted_iter(iter, crypto);
     (receipts_root, logs_bloom)
+}
+
+/// The receipts root of receipts already encoded for the trie (see
+/// [`Receipt::encode_inner_with_precomputed_bloom`]), given in transaction order.
+pub fn compute_receipts_root_from_encoded(encoded: Vec<Vec<u8>>, crypto: &dyn Crypto) -> H256 {
+    let iter = encoded
+        .into_iter()
+        .enumerate()
+        .map(|(idx, value)| (idx.encode_to_vec(), value));
+    Trie::compute_hash_from_unsorted_iter(iter, crypto)
+}
+
+/// Builds the receipts root one receipt at a time, in transaction order. Every
+/// [`ReceiptsRootBuilder::MEMOIZE_EVERY`] receipts the trie's node hashes are computed and
+/// kept, so that finishing after the last receipt only hashes the nodes inserted since:
+/// the root is ready a few node hashes after the last receipt instead of a whole trie
+/// later. Gives the same root as [`compute_receipts_root`].
+pub struct ReceiptsRootBuilder {
+    trie: Trie,
+    count: usize,
+}
+
+impl Default for ReceiptsRootBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ReceiptsRootBuilder {
+    /// Receipts between two memoizations of the trie's hashes; the work left at the end
+    /// is at most this many leaves and their paths.
+    pub const MEMOIZE_EVERY: usize = 16;
+
+    pub fn new() -> Self {
+        Self {
+            trie: Trie::new_temp(),
+            count: 0,
+        }
+    }
+
+    /// Adds the next receipt, already encoded for the trie (see
+    /// [`Receipt::encode_inner_with_precomputed_bloom`]).
+    pub fn push(&mut self, encoded: Vec<u8>, crypto: &dyn Crypto) {
+        // An in-memory trie never fails to insert.
+        let _ = self.trie.insert(self.count.encode_to_vec(), encoded);
+        self.count = self.count.saturating_add(1);
+        if self.count.is_multiple_of(Self::MEMOIZE_EVERY) {
+            self.trie.hash_no_commit(crypto);
+        }
+    }
+
+    pub fn finish(&self, crypto: &dyn Crypto) -> H256 {
+        self.trie.hash_no_commit(crypto)
+    }
 }
 
 // See [EIP-4895](https://eips.ethereum.org/EIPS/eip-4895)
@@ -979,6 +1052,32 @@ mod test {
     use ethereum_types::H160;
     use hex_literal::hex;
     use std::str::FromStr;
+
+    #[test]
+    fn receipts_root_builder_matches_the_one_shot_root() {
+        let crypto = NativeCrypto;
+        for count in [0usize, 1, 15, 16, 17, 127, 128, 300] {
+            let receipts: Vec<Receipt> = (0..count)
+                .map(|i| {
+                    Receipt::new(
+                        crate::types::TxType::EIP1559,
+                        i % 3 != 0,
+                        21_000 * (i as u64 + 1),
+                        vec![],
+                    )
+                })
+                .collect();
+            let mut builder = ReceiptsRootBuilder::new();
+            for receipt in &receipts {
+                builder.push(receipt.encode_inner_with_bloom(&crypto), &crypto);
+            }
+            assert_eq!(
+                builder.finish(&crypto),
+                compute_receipts_root(&receipts, &crypto),
+                "{count} receipts"
+            );
+        }
+    }
 
     #[test]
     fn test_compute_withdrawals_root() {

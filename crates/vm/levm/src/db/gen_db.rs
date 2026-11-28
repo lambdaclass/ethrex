@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use ethrex_common::Address;
 use ethrex_common::H256;
@@ -18,6 +19,7 @@ use super::Database;
 use crate::account::AccountStatus;
 use crate::account::LevmAccount;
 use crate::call_frame::CallFrameBackup;
+use crate::errors::DatabaseError;
 use crate::errors::InternalError;
 use crate::errors::VMError;
 use crate::precompiles::PrecompileMoves;
@@ -217,6 +219,26 @@ pub struct TxReads {
     /// Accounts whose exact balance the transaction used, rather than only whether it is zero
     /// or what it added to it.
     pub balances: SeededHashSet<Address>,
+    /// Accounts whose exact nonce the transaction used (a contract creation's address or an
+    /// authorization's check), rather than only whether it is zero.
+    pub nonces: SeededHashSet<Address>,
+    /// Accounts whose balance the transaction only compared against transfer values, with the
+    /// starting balances that give every comparison the same outcome.
+    pub balance_bounds: SeededHashMap<Address, BalanceBounds>,
+}
+
+/// The starting balances of an account under which a transaction's `balance >= value` checks
+/// all come out as they did: at least `lower`, and below `upper` where a check failed.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BalanceBounds {
+    pub lower: U256,
+    pub upper: Option<U256>,
+}
+
+impl BalanceBounds {
+    pub fn admit(&self, balance: U256) -> bool {
+        balance >= self.lower && self.upper.is_none_or(|upper| balance < upper)
+    }
 }
 
 /// An account as a transaction can observe it, without its storage.
@@ -254,6 +276,9 @@ pub struct GeneralizedDatabase {
     pub codes: SeededHashMap<H256, Code>,
     pub code_metadata: SeededHashMap<H256, CodeMetadata>,
     pub tx_backup: Option<CallFrameBackup>,
+    /// Keep the next transaction's top-level backup in `tx_backup`: what it changed, with the
+    /// values it found, for a caller that needs its write set.
+    pub keep_tx_backup: bool,
     /// Optional BAL recorder for EIP-7928 Block Access List recording.
     pub bal_recorder: Option<BlockAccessListRecorder>,
     /// When true, skip cloning accounts into `initial_accounts_state` on load.
@@ -268,6 +293,14 @@ pub struct GeneralizedDatabase {
     pub tx_reads: Option<TxReads>,
     /// Stops `tx_reads` from recording, for reads that are not the transaction's own.
     pub reads_paused: bool,
+    /// Stops the run at its next state access once the counter has passed the position: a
+    /// warming run whose transaction block execution already finished has no use left, and the
+    /// core it holds is wanted elsewhere.
+    pub stop_when_executed_past: Option<(Arc<AtomicUsize>, usize)>,
+    /// Stops the run at its next state access once this thread's count of storage slots that
+    /// waited on the disk ([`crate::db::slow_slot_reads`]) reaches this value: a warming run that
+    /// walks cold storage one slot at a time is better handed to discovery passes.
+    pub stop_after_slow_reads: Option<u32>,
     /// Optional BAL cursor for lazy per-read prefix materialization.
     /// When set, account loads and storage reads consult the BAL before hitting the store.
     pub lazy_bal: Option<LazyBalCursor>,
@@ -284,12 +317,15 @@ impl GeneralizedDatabase {
             initial_accounts_state: Default::default(),
             shared_base: None,
             tx_backup: None,
+            keep_tx_backup: false,
             codes: Default::default(),
             code_metadata: Default::default(),
             bal_recorder: None,
             skip_initial_tracking: false,
             accessed_accounts: None,
             tx_reads: None,
+            stop_when_executed_past: None,
+            stop_after_slow_reads: None,
             reads_paused: false,
             lazy_bal: None,
             precompile_moves: None,
@@ -317,12 +353,15 @@ impl GeneralizedDatabase {
             initial_accounts_state: Default::default(),
             shared_base: Some(shared_base),
             tx_backup: None,
+            keep_tx_backup: false,
             codes: SeededHashMap::with_capacity_and_hasher(capacity / 4, Default::default()),
             code_metadata: Default::default(),
             bal_recorder: None,
             skip_initial_tracking: true,
             accessed_accounts: None,
             tx_reads: None,
+            stop_when_executed_past: None,
+            stop_after_slow_reads: None,
             reads_paused: false,
             lazy_bal: None,
             precompile_moves: None,
@@ -379,12 +418,15 @@ impl GeneralizedDatabase {
             initial_accounts_state: levm_accounts,
             shared_base: None,
             tx_backup: None,
+            keep_tx_backup: false,
             codes,
             code_metadata: Default::default(),
             bal_recorder: None,
             skip_initial_tracking: false,
             accessed_accounts: None,
             tx_reads: None,
+            stop_when_executed_past: None,
+            stop_after_slow_reads: None,
             reads_paused: false,
             lazy_bal: None,
             precompile_moves: None,
@@ -392,9 +434,26 @@ impl GeneralizedDatabase {
     }
 
     // ================== Account related functions =====================
+    /// Fails once block execution has passed the position this run serves, if a stop was set.
+    #[inline]
+    fn stop_if_passed(&self) -> Result<(), InternalError> {
+        if let Some((executed, position)) = &self.stop_when_executed_past
+            && executed.load(Ordering::Relaxed) > *position
+        {
+            return Err(InternalError::Database(DatabaseError::Interrupted));
+        }
+        if let Some(limit) = self.stop_after_slow_reads
+            && crate::db::slow_slot_reads() >= limit
+        {
+            return Err(InternalError::Database(DatabaseError::Interrupted));
+        }
+        Ok(())
+    }
+
     /// Loads account
     /// If it's the first time it's loaded store it in `initial_accounts_state` and also cache it in `current_accounts_state` for making changes to it
     fn load_account(&mut self, address: Address) -> Result<&mut LevmAccount, InternalError> {
+        self.stop_if_passed()?;
         if !self.reads_paused
             && self
                 .tx_reads
@@ -607,10 +666,57 @@ impl GeneralizedDatabase {
         }
     }
 
+    /// Records in `tx_reads`, if that is on, that the transaction compared `address`'s balance,
+    /// `observed` at that point, against a transfer `value`. The outcome is the same for any
+    /// starting balance that keeps the compared balance on the same side of `value`, since the
+    /// transaction's own earlier transfers to and from `address` are the same.
+    pub fn observe_balance_check(&mut self, address: Address, observed: U256, value: U256) {
+        if self.reads_paused {
+            return;
+        }
+        let Some(reads) = self.tx_reads.as_mut() else {
+            return;
+        };
+        let Some(initial) = reads
+            .accounts
+            .get(&address)
+            .map(|account| account.info.balance)
+        else {
+            // Not recorded as a read: fall back to requiring the exact balance.
+            reads.balances.insert(address);
+            return;
+        };
+        let bounds = reads.balance_bounds.entry(address).or_default();
+        if observed >= value {
+            // `initial + (observed - initial) >= value` keeps holding while the start falls by
+            // at most the slack the check had.
+            let lower = initial.saturating_sub(observed.saturating_sub(value));
+            bounds.lower = bounds.lower.max(lower);
+        } else {
+            match initial.checked_add(value.saturating_sub(observed)) {
+                Some(upper) => bounds.upper = Some(bounds.upper.map_or(upper, |u| u.min(upper))),
+                None => {
+                    reads.balances.insert(address);
+                }
+            }
+        }
+    }
+
+    /// Records in `tx_reads`, if that is on, that the transaction uses `address`'s exact
+    /// nonce.
+    pub fn observe_nonce(&mut self, address: Address) {
+        if !self.reads_paused
+            && let Some(reads) = self.tx_reads.as_mut()
+        {
+            reads.nonces.insert(address);
+        }
+    }
+
     /// Gets the storage value of an account loaded before, caching it if not already cached,
     /// and records it in `tx_reads` if that is on.
     #[inline(always)]
     pub fn storage_value(&mut self, address: Address, key: H256) -> Result<U256, InternalError> {
+        self.stop_if_passed()?;
         let value = self.storage_value_unrecorded(address, key)?;
         if !self.reads_paused
             && let Some(reads) = self.tx_reads.as_mut()

@@ -164,9 +164,12 @@ impl OpcodeHandler for OpAddModHandler {
             .increase_consumed_gas(gas_cost::ADDMOD)?;
 
         let [lhs, rhs, r#mod] = *vm.current_call_frame.stack.pop()?;
-        vm.current_call_frame
-            .stack
-            .push(u256_div::add_mod(lhs, rhs, r#mod))?;
+        // Same little-endian limbs on both sides; a zero modulus gives zero, as the EVM requires.
+        let res = ruint::aliases::U256::from_limbs(lhs.0).add_mod(
+            ruint::aliases::U256::from_limbs(rhs.0),
+            ruint::aliases::U256::from_limbs(r#mod.0),
+        );
+        vm.current_call_frame.stack.push(U256(res.into_limbs()))?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -480,5 +483,67 @@ mod tests {
             sign_extend(U256::from(3), U256::from(0xffda_dadau64)),
             U256::MAX - 0x25_2525
         );
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
+mod addmod_tests {
+    use ethrex_common::{U256, U512};
+
+    /// The 512-bit sum reduced by the modulus, the definition ADDMOD follows.
+    fn reference(lhs: U256, rhs: U256, modulus: U256) -> U256 {
+        if modulus.is_zero() {
+            return U256::zero();
+        }
+        let res = (U512::from(lhs) + U512::from(rhs)) % U512::from(modulus);
+        U256([res.0[0], res.0[1], res.0[2], res.0[3]])
+    }
+
+    fn addmod(lhs: U256, rhs: U256, modulus: U256) -> U256 {
+        U256(
+            ruint::aliases::U256::from_limbs(lhs.0)
+                .add_mod(
+                    ruint::aliases::U256::from_limbs(rhs.0),
+                    ruint::aliases::U256::from_limbs(modulus.0),
+                )
+                .into_limbs(),
+        )
+    }
+
+    #[test]
+    fn matches_the_512_bit_definition() {
+        let edges = [
+            U256::zero(),
+            U256::one(),
+            U256::MAX,
+            U256::MAX - 1,
+            U256::from(2),
+        ];
+        for a in edges {
+            for b in edges {
+                for m in edges {
+                    assert_eq!(addmod(a, b, m), reference(a, b, m));
+                }
+            }
+        }
+        let mut seed = 0x2545_f491_4f6c_dd1d_u64;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        for _ in 0..2000 {
+            let a = U256([next(), next(), next(), next()]);
+            let b = U256([next(), next(), next(), next()]);
+            let width = usize::try_from(next() % 4).unwrap_or(0);
+            let mut limbs = [next(), next(), next(), next()];
+            for limb in limbs.iter_mut().skip(width + 1) {
+                *limb = 0;
+            }
+            let m = U256(limbs);
+            assert_eq!(addmod(a, b, m), reference(a, b, m));
+        }
     }
 }

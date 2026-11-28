@@ -56,6 +56,9 @@ pub mod stateless;
 pub mod tracing;
 pub mod vm;
 
+#[cfg(test)]
+mod handoff_tests;
+
 use ::tracing::{error, info, instrument, warn};
 // Every `debug!` call site lives in the rayon warmer path, so the import is
 // unused in any configuration that compiles that path out.
@@ -93,7 +96,8 @@ use ethrex_common::validate_block_access_list_size;
 use ethrex_common::{Address, H256, U256};
 pub use ethrex_common::{
     get_total_blob_gas, validate_block_access_list_hash, validate_block_pre_execution,
-    validate_gas_used, validate_receipts_root_and_logs_bloom, validate_requests_hash,
+    validate_gas_used, validate_receipts_commitment, validate_receipts_root_and_logs_bloom,
+    validate_requests_hash,
 };
 use ethrex_crypto::NativeCrypto;
 use ethrex_metrics::metrics;
@@ -295,6 +299,19 @@ pub struct Blockchain {
     /// State cache entries left by the last executed block, brought up to its post-state,
     /// for its child to start from; see `CarriedCache`.
     carried: CarriedCache,
+    /// What became of the block warmer's results in the last block the pipeline executed.
+    last_warmed_results: std::sync::Mutex<ethrex_vm::backends::WarmedResultCounts>,
+}
+
+impl Blockchain {
+    /// What became of the block warmer's results in the last block the pipeline executed:
+    /// how many transactions took a result, rejected one, or found none ready.
+    pub fn last_warmed_results(&self) -> ethrex_vm::backends::WarmedResultCounts {
+        self.last_warmed_results
+            .lock()
+            .map(|counts| *counts)
+            .unwrap_or_default()
+    }
 }
 
 /// A block's state cache entries carried to its child. Keyed like [`PrewarmedEntry`] by
@@ -529,7 +546,9 @@ enum WorkerRequest {
     ProcessAccount {
         prefix: H256,
         info: Option<AccountInfo>,
-        storage: SeededHashMap<H256, U256>,
+        /// The workers the coordinator sent this update's storage slots to, one bit each: each of
+        /// them sends back its shard of the account's storage trie.
+        storage_shards: u16,
         removed: bool,
         removed_storage: bool,
     },
@@ -541,17 +560,19 @@ enum WorkerRequest {
     CollectState {
         tx: Sender<CollectedStateMsg>,
     },
-    // Cross-worker storage messages (routed by storage key bucket)
+    // From main thread (routed by storage key bucket): every slot comes from the coordinator, so
+    // a worker has all of its slots once it reads FinishRouting.
     MerklizeStorage {
         prefix: H256,
         key: H256,
         value: U256,
-        storage_root: H256,
     },
     DeleteStorage(H256),
-    // Cross-worker: signals this worker finished routing all MerklizeStorage
-    RoutingDone {
-        from: u8,
+    /// Paths to load ahead of their updates (state trie when `prefix` is None, else that
+    /// account's storage trie): keys a warmed result predicts the block writes.
+    Prefetch {
+        prefix: Option<H256>,
+        keys: Vec<H256>,
     },
     // Cross-worker storage results (routed by account bucket)
     StorageShard {
@@ -567,6 +588,156 @@ struct CollectedStateMsg {
     subroot: Box<BranchNode>,
     state_nodes: Vec<TrieNode>,
     storage_nodes: Vec<(H256, Vec<TrieNode>)>,
+    diag: Drain2,
+}
+
+/// Diagnostics: one merkle worker's drain with direct slot routing.
+#[derive(Default, Clone, Copy)]
+struct Drain2 {
+    gate_seen_at: Option<Instant>,
+    finish_routing_at: Option<Instant>,
+    collect_done_at: Option<Instant>,
+    state_start_at: Option<Instant>,
+    sent_at: Option<Instant>,
+    early_slots: usize,
+    batch_slots: usize,
+    final_slots: usize,
+    final_flush: Duration,
+    tries: usize,
+    /// Busy time by kind (see `DIAG_KIND_NAMES`) over the window from the end of routing to this
+    /// worker's FinishRouting, the events started in it, and busy time in the 2 ms before it.
+    window_us: u32,
+    window_busy_us: [u32; DIAG_KINDS],
+    window_events: [u16; DIAG_KINDS],
+    before_busy_us: [u32; DIAG_KINDS],
+}
+
+/// Diagnostics: kinds of merkle-worker work in the per-worker timeline.
+const DIAG_KINDS: usize = 12;
+const DIAG_KIND_NAMES: [&str; DIAG_KINDS] = [
+    "acct",
+    "slot",
+    "del",
+    "shard",
+    "noslot",
+    "collreq",
+    "flush",
+    "readahead",
+    "precollect",
+    "collect",
+    "final",
+    "prefetch",
+];
+
+/// Upper bound on the keys the merkle coordinator hints per block.
+const MAX_HINT_KEYS_PER_BLOCK: usize = 4096;
+
+/// Experiment (diag build): only the block's last `ETHREX_EXP_MERKLE_HINT_TAIL` positions are
+/// hinted (default 32): their writes reach the workers in the burst at the end of the block,
+/// while earlier writes arrive when the workers are idle anyway.
+static MERKLE_HINT_TAIL: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
+    std::env::var("ETHREX_EXP_MERKLE_HINT_TAIL")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(32)
+});
+
+/// Experiment (diag build): the merkle coordinator hands each worker the keys that warmed results
+/// published for positions at least this far ahead of execution, to load into its tries while
+/// idle. `ETHREX_EXP_MERKLE_HINTS` = margin in transactions (default 16), `off` disables.
+static MERKLE_HINT_AHEAD: std::sync::LazyLock<Option<usize>> =
+    std::sync::LazyLock::new(
+        || match std::env::var("ETHREX_EXP_MERKLE_HINTS").as_deref() {
+            Ok("off") => None,
+            Ok(value) => Some(value.parse().unwrap_or(16)),
+            Err(_) => Some(16),
+        },
+    );
+static DIAG_BASE: std::sync::LazyLock<Instant> = std::sync::LazyLock::new(Instant::now);
+/// When the coordinator finished routing the current block's updates.
+static DIAG_CLOSE_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn diag_ns(at: Instant) -> u64 {
+    u64::try_from(at.saturating_duration_since(*DIAG_BASE).as_nanos()).unwrap_or(u64::MAX)
+}
+
+/// The last busy intervals of one merkle worker: (kind, start ns, end ns).
+#[derive(Default)]
+struct DiagTimeline {
+    events: std::collections::VecDeque<(u8, u64, u64)>,
+}
+
+impl DiagTimeline {
+    fn push(&mut self, kind: usize, start: Instant) {
+        let end = diag_ns(Instant::now());
+        if self.events.len() >= 2048 {
+            self.events.pop_front();
+        }
+        self.events
+            .push_back((u8::try_from(kind).unwrap_or(u8::MAX), diag_ns(start), end));
+    }
+
+    fn summarize(&self, close_ns: u64, at_ns: u64, diag: &mut Drain2) {
+        let clip =
+            |start: u64, end: u64, from: u64, to: u64| end.min(to).saturating_sub(start.max(from));
+        let before = close_ns.saturating_sub(2_000_000);
+        let mut window = [0u64; DIAG_KINDS];
+        let mut earlier = [0u64; DIAG_KINDS];
+        for &(kind, start, end) in &self.events {
+            let k = usize::from(kind);
+            if k >= DIAG_KINDS {
+                continue;
+            }
+            window[k] += clip(start, end, close_ns, at_ns);
+            earlier[k] += clip(start, end, before, close_ns);
+            if start >= close_ns && start < at_ns {
+                diag.window_events[k] = diag.window_events[k].saturating_add(1);
+            }
+        }
+        diag.window_us = u32::try_from(at_ns.saturating_sub(close_ns) / 1000).unwrap_or(u32::MAX);
+        for k in 0..DIAG_KINDS {
+            diag.window_busy_us[k] = u32::try_from(window[k] / 1000).unwrap_or(u32::MAX);
+            diag.before_busy_us[k] = u32::try_from(earlier[k] / 1000).unwrap_or(u32::MAX);
+        }
+    }
+}
+
+/// Records the enclosing message's handling in the timeline when dropped.
+struct DiagSpan<'a> {
+    timeline: &'a mut DiagTimeline,
+    kind: usize,
+    start: Instant,
+}
+
+impl Drop for DiagSpan<'_> {
+    fn drop(&mut self) {
+        self.timeline.push(self.kind, self.start);
+    }
+}
+
+fn diag_timeline_text(worker: &Drain2) -> String {
+    let busy: u32 = worker.window_busy_us.iter().sum();
+    let mut text = format!(
+        "win {} gap {}",
+        worker.window_us,
+        worker.window_us.saturating_sub(busy)
+    );
+    for (k, name) in DIAG_KIND_NAMES.iter().enumerate() {
+        if worker.window_busy_us[k] > 0 || worker.window_events[k] > 0 {
+            text.push_str(&format!(
+                " {} {}/{}",
+                name, worker.window_busy_us[k], worker.window_events[k]
+            ));
+        }
+    }
+    let before: u32 = worker.before_busy_us.iter().sum();
+    text.push_str(&format!(" | before2ms busy {before}"));
+    for (k, name) in DIAG_KIND_NAMES.iter().enumerate() {
+        if worker.before_busy_us[k] > 0 {
+            text.push_str(&format!(" {} {}", name, worker.before_busy_us[k]));
+        }
+    }
+    text
 }
 
 #[derive(Default)]
@@ -654,6 +825,7 @@ impl Blockchain {
             merkle_pool: OnceLock::new(),
             prewarmed: PrewarmedCache::default(),
             carried: CarriedCache::default(),
+            last_warmed_results: std::sync::Mutex::default(),
         }
     }
 
@@ -683,6 +855,7 @@ impl Blockchain {
             merkle_pool: OnceLock::new(),
             prewarmed: PrewarmedCache::default(),
             carried: CarriedCache::default(),
+            last_warmed_results: std::sync::Mutex::default(),
         }
     }
 
@@ -734,6 +907,7 @@ impl Blockchain {
             merkle_pool: OnceLock::new(),
             prewarmed: PrewarmedCache::default(),
             carried: CarriedCache::default(),
+            last_warmed_results: std::sync::Mutex::default(),
         }
     }
 
@@ -948,6 +1122,10 @@ impl Blockchain {
                 (entry.parent_hash == block.header.parent_hash && entry.fork == block_fork)
                     .then_some(entry.cache)
             });
+        // The trie nodes the prewarmer read on this block's parent state serve the
+        // merkleization's reads from here on.
+        self.storage
+            .freeze_prewarmed_nodes(parent_header.state_root);
         // The mempool prewarmer already read the state of the transactions it saw, so what the
         // block warmer misses in its cache is little, and discovery passes would only take
         // cores from execution.
@@ -975,9 +1153,16 @@ impl Blockchain {
         let block_fork = chain_config.fork(block.header.timestamp);
         // Without a BAL, execution takes the warmer's result for each transaction that read
         // nothing an earlier transaction changed. Witness collection runs no warmer.
-        let warmed = (bal.is_none() && !collect_witness)
+        let warmed_results = (bal.is_none() && !collect_witness)
             .then(|| ethrex_vm::backends::levm::WarmedTxs::new(block.body.transactions.len()));
-        let warmed = warmed.as_ref();
+        let warmed = warmed_results.as_ref();
+        let withdrawal_recipients: Vec<Address> = block
+            .body
+            .withdrawals
+            .iter()
+            .flatten()
+            .map(|withdrawal| withdrawal.address)
+            .collect();
         if carry
             && let Ok(mut slot) = self.carried.0.lock()
             && let Some(state) = slot.take()
@@ -992,8 +1177,13 @@ impl Blockchain {
 
         let cancelled = AtomicBool::new(false);
         // Set once the block warmer is done; until then merkle workers leave storage slots
-        // buffered, so their trie reads don't compete with warming for the disk and cores.
-        let warming_done = AtomicBool::new(!cfg!(feature = "rayon"));
+        // buffered, so their trie reads don't compete with warming for the disk and cores. A
+        // block the mempool prewarmer warmed reads from memory and leaves most cores idle: its
+        // slots are applied as they arrive, instead of landing after execution's last update.
+        #[cfg(feature = "rayon")]
+        let warming_done = AtomicBool::new(!discovery);
+        #[cfg(not(feature = "rayon"))]
+        let warming_done = AtomicBool::new(true);
         // Witness collection also forces sequential execution: parallel lanes
         // re-read in-block-created state (e.g. a code deployed by an earlier
         // tx) from the logged store, while sequential execution serves it from
@@ -1149,6 +1339,7 @@ impl Blockchain {
                                             None,
                                             None,
                                             false,
+                                            None,
                                         ) {
                                             debug!("Block warming failed (non-fatal): {e}");
                                         }
@@ -1174,6 +1365,8 @@ impl Blockchain {
                                                 );
                                             });
                                         };
+                                    // The buffered storage flush waits only for the units,
+                                    // not for the check of their results that follows.
                                     if let Err(e) = LEVM::warm_block(
                                         block,
                                         caching_store,
@@ -1183,6 +1376,7 @@ impl Blockchain {
                                         Some(&warm_trie_paths),
                                         warmed,
                                         discovery,
+                                        Some(warming_done_ref),
                                     ) {
                                         debug!("Block warming failed (non-fatal): {e}");
                                     }
@@ -1257,6 +1451,7 @@ impl Blockchain {
                         // ownership, but the header-commitment check below still needs
                         // the input BAL on the parallel path (produced_bal == None).
                         let header_bal = bal.clone();
+                        let diag_inner_start = Instant::now();
                         let result = vm.execute_block_pipeline(
                             block,
                             tx,
@@ -1265,6 +1460,7 @@ impl Blockchain {
                             bal_parallel_exec_enabled,
                             warmed,
                         );
+                        let diag_inner_end = Instant::now();
                         cancelled_ref.store(true, Ordering::Relaxed);
                         let (execution_result, produced_bal) = result?;
 
@@ -1280,11 +1476,20 @@ impl Blockchain {
                             );
                             return Err(e.into());
                         }
-                        validate_receipts_root_and_logs_bloom(
-                            &block.header,
-                            &execution_result.receipts,
-                            &NativeCrypto,
-                        )?;
+                        // The pipeline hashes receipts as they are produced; only the
+                        // comparison is left here. Other executors leave both to us.
+                        match execution_result.receipts_commitment {
+                            Some((receipts_root, logs_bloom)) => validate_receipts_commitment(
+                                &block.header,
+                                receipts_root,
+                                logs_bloom,
+                            )?,
+                            None => validate_receipts_root_and_logs_bloom(
+                                &block.header,
+                                &execution_result.receipts,
+                                &NativeCrypto,
+                            )?,
+                        }
                         validate_requests_hash(
                             &block.header,
                             &chain_config,
@@ -1341,6 +1546,15 @@ impl Blockchain {
                         }
 
                         let exec_end_instant = Instant::now();
+                        ::tracing::info!(
+                            "[METRIC] EXECOUTER {} | setup_us {} | inner_us {} | post_us {}",
+                            block.header.number,
+                            diag_inner_start
+                                .duration_since(exec_merkle_start)
+                                .as_micros(),
+                            diag_inner_end.duration_since(diag_inner_start).as_micros(),
+                            exec_end_instant.duration_since(diag_inner_end).as_micros(),
+                        );
                         Ok((execution_result, produced_bal, exec_end_instant))
                     })
                     .map_err(|e| {
@@ -1398,6 +1612,8 @@ impl Blockchain {
                                 max_queue_length_ref,
                                 collect_witness,
                                 warming_done_ref,
+                                warmed,
+                                &withdrawal_recipients,
                             )?,
                         };
                         let merkle_end_instant = Instant::now();
@@ -1443,6 +1659,14 @@ impl Blockchain {
                 Ok((execution_result, merkleization_result, warmer_duration))
             },
         )?;
+        // The warmed results hold the block's read and write maps; freeing them here would
+        // run on the block's critical path.
+        #[cfg(feature = "rayon")]
+        if let Some(warmed_results) = warmed_results {
+            ethrex_vm::backends::levm::spawn_warm_io(move || drop(warmed_results));
+        }
+        #[cfg(not(feature = "rayon"))]
+        drop(warmed_results);
         let (account_updates_list, streaming_witness, merkle_start_instant, merkle_end_instant) =
             merkleization_result?;
         let (execution_result, produced_bal, exec_end_instant) = execution_result?;
@@ -1479,6 +1703,7 @@ impl Blockchain {
         skip_all,
         fields(namespace = "block_execution")
     )]
+    #[allow(clippy::too_many_arguments)]
     fn handle_merkleization(
         &self,
         rx: Receiver<Vec<AccountUpdate>>,
@@ -1487,6 +1712,8 @@ impl Blockchain {
         max_queue_length: &mut usize,
         collect_witness: bool,
         warming_done: &AtomicBool,
+        warmed: Option<&ethrex_vm::backends::levm::WarmedTxs>,
+        withdrawal_recipients: &[Address],
     ) -> Result<(AccountUpdatesList, Option<Vec<AccountUpdate>>), StoreError> {
         let parent_state_root = parent_header.state_root;
 
@@ -1562,7 +1789,74 @@ impl Blockchain {
             let mut accumulator: Option<SeededHashMap<Address, AccountUpdate>> =
                 collect_witness.then(SeededHashMap::default);
 
-            for updates in rx {
+            // Keys warmed results predict the block writes, handed to the workers ahead of their
+            // updates; withdrawal recipients are written after the last transaction.
+            let hint_ahead = (*MERKLE_HINT_AHEAD).filter(|_| warmed.is_some_and(|w| !w.is_empty()));
+            let mut hinted = vec![false; warmed.map_or(0, |w| w.len())];
+            let mut hint_hashes: FxHashMap<Address, H256> = Default::default();
+            let mut diag_hint_keys = 0usize;
+            let mut send_hints = |accounts: &[Address],
+                                  slots: &[(Address, H256)],
+                                  diag_hint_keys: &mut usize|
+             -> Result<(), StoreError> {
+                // Bounded per block: a block with far more writes would queue more speculative
+                // reads than the workers have idle time for.
+                if *diag_hint_keys >= MAX_HINT_KEYS_PER_BLOCK {
+                    return Ok(());
+                }
+                let mut by_worker: [FxHashMap<Option<H256>, Vec<H256>>; 16] = Default::default();
+                for address in accounts {
+                    let hashed = *hint_hashes
+                        .entry(*address)
+                        .or_insert_with(|| keccak(address));
+                    let bucket = (hashed.as_fixed_bytes()[0] >> 4) as usize;
+                    by_worker[bucket].entry(None).or_default().push(hashed);
+                }
+                for (address, key) in slots {
+                    let hashed = *hint_hashes
+                        .entry(*address)
+                        .or_insert_with(|| keccak(address));
+                    let hashed_key = keccak(key);
+                    let bucket = (hashed_key.as_fixed_bytes()[0] >> 4) as usize;
+                    by_worker[bucket]
+                        .entry(Some(hashed))
+                        .or_default()
+                        .push(hashed_key);
+                }
+                for (worker, groups) in by_worker.into_iter().enumerate() {
+                    for (prefix, keys) in groups {
+                        *diag_hint_keys += keys.len();
+                        workers_tx[worker]
+                            .send(WorkerRequest::Prefetch { prefix, keys })
+                            .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                    }
+                }
+                Ok(())
+            };
+            if hint_ahead.is_some() && !withdrawal_recipients.is_empty() {
+                send_hints(withdrawal_recipients, &[], &mut diag_hint_keys)?;
+            }
+            loop {
+                let updates = match (hint_ahead, warmed) {
+                    (Some(ahead), Some(warmed)) => {
+                        let from = warmed
+                            .executed_transactions()
+                            .saturating_add(ahead)
+                            .max(warmed.len().saturating_sub(*MERKLE_HINT_TAIL));
+                        for (accounts, slots) in warmed.take_published_writes(from, &mut hinted) {
+                            send_hints(&accounts, &slots, &mut diag_hint_keys)?;
+                        }
+                        match rx.recv_timeout(Duration::from_micros(250)) {
+                            Ok(updates) => updates,
+                            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                        }
+                    }
+                    _ => match rx.recv() {
+                        Ok(updates) => updates,
+                        Err(_) => break,
+                    },
+                };
                 let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
                 *max_queue_length = current_length.max(*max_queue_length);
                 // Accumulate updates for witness generation if enabled
@@ -1602,19 +1896,48 @@ impl Blockchain {
                     }
 
                     let bucket = hashed_address.as_fixed_bytes()[0] >> 4;
+                    // A storage reset reaches every other worker before any slot written after it;
+                    // the owner resets its own shard when it processes the account.
+                    if update.removed || update.removed_storage {
+                        for (i, tx) in workers_tx.iter().enumerate() {
+                            if i != bucket as usize {
+                                tx.send(WorkerRequest::DeleteStorage(hashed_address))
+                                    .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                            }
+                        }
+                    }
+                    let slots: Vec<(H256, U256)> = storage
+                        .into_iter()
+                        .map(|(key, value)| (keccak(key), value))
+                        .collect();
+                    let storage_shards = slots.iter().fold(0u16, |shards, (hashed_key, _)| {
+                        shards | 1u16 << (hashed_key.as_fixed_bytes()[0] >> 4)
+                    });
                     workers_tx[bucket as usize]
                         .send(WorkerRequest::ProcessAccount {
                             prefix: hashed_address,
                             info,
-                            storage,
+                            storage_shards,
                             removed: update.removed,
                             removed_storage: update.removed_storage,
                         })
                         .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                    for (hashed_key, value) in slots {
+                        let slot_bucket = hashed_key.as_fixed_bytes()[0] >> 4;
+                        workers_tx[slot_bucket as usize]
+                            .send(WorkerRequest::MerklizeStorage {
+                                prefix: hashed_address,
+                                key: hashed_key,
+                                value,
+                            })
+                            .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                    }
                 }
             }
 
-            // Send FinishRouting — workers self-synchronize via RoutingDone exchange.
+            let diag_close = Instant::now();
+            DIAG_CLOSE_NS.store(diag_ns(diag_close), std::sync::atomic::Ordering::Release);
+            // Send FinishRouting: each worker has every slot routed to it once it reads this.
             for tx in &workers_tx {
                 tx.send(WorkerRequest::FinishRouting)
                     .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
@@ -1650,13 +1973,16 @@ impl Blockchain {
 
             let mut root = BranchNode::default();
             let mut state_updates = Vec::new();
+            let mut diag_workers: Vec<Drain2> = Vec::with_capacity(16);
             for CollectedStateMsg {
                 index,
                 subroot,
                 state_nodes,
                 storage_nodes,
+                diag,
             } in gatherer_rx
             {
+                diag_workers.push(diag);
                 storage_updates.extend(storage_nodes);
                 state_updates.extend(state_nodes);
                 root.choices[index as usize] = subroot.choices[index as usize].clone();
@@ -1674,6 +2000,55 @@ impl Blockchain {
             };
 
             let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
+            {
+                // Diagnostics: milliseconds relative to execution's last update (negative: before).
+                let rel = |at: Option<Instant>| -> Option<f64> {
+                    at.map(|at| {
+                        if at >= diag_close {
+                            at.duration_since(diag_close).as_secs_f64() * 1000.0
+                        } else {
+                            -(diag_close.duration_since(at).as_secs_f64() * 1000.0)
+                        }
+                    })
+                };
+                let span = |from: Option<Instant>, to: Option<Instant>| -> f64 {
+                    match (from, to) {
+                        (Some(from), Some(to)) if to >= from => {
+                            to.duration_since(from).as_secs_f64() * 1000.0
+                        }
+                        _ => 0.0,
+                    }
+                };
+                let max = |values: &mut dyn Iterator<Item = f64>| values.fold(0.0_f64, f64::max);
+                let gate_first = diag_workers
+                    .iter()
+                    .filter_map(|w| rel(w.gate_seen_at))
+                    .fold(f64::INFINITY, f64::min);
+                info!(
+                    "[METRIC] DRAIN2 {} | gate_first {:.3} | finish_routing max {:.3} | final_flush max {:.3} slots sum {} max {} | collect max {:.3} | shard_wait max {:.3} | state max {:.3} | sent max {:.3} | early_slots {} | batch_slots {} | tries {} | root {:.3} | hint_keys {} | tl {}",
+                    parent_header.number + 1,
+                    if gate_first.is_finite() { gate_first } else { 999.0 },
+                    max(&mut diag_workers.iter().filter_map(|w| rel(w.finish_routing_at))),
+                    max(&mut diag_workers.iter().map(|w| w.final_flush.as_secs_f64() * 1000.0)),
+                    diag_workers.iter().map(|w| w.final_slots).sum::<usize>(),
+                    diag_workers.iter().map(|w| w.final_slots).max().unwrap_or(0),
+                    max(&mut diag_workers.iter().map(|w| span(w.finish_routing_at, w.collect_done_at))),
+                    max(&mut diag_workers.iter().map(|w| span(w.collect_done_at, w.state_start_at))),
+                    max(&mut diag_workers.iter().map(|w| span(w.state_start_at, w.sent_at))),
+                    max(&mut diag_workers.iter().filter_map(|w| rel(w.sent_at))),
+                    diag_workers.iter().map(|w| w.early_slots).sum::<usize>(),
+                    diag_workers.iter().map(|w| w.batch_slots).sum::<usize>(),
+                    diag_workers.iter().map(|w| w.tries).sum::<usize>(),
+                    rel(Some(Instant::now())).unwrap_or(0.0),
+                    diag_hint_keys,
+                    diag_workers
+                        .iter()
+                        .filter(|w| w.finish_routing_at.is_some())
+                        .max_by_key(|w| w.finish_routing_at)
+                        .map(diag_timeline_text)
+                        .unwrap_or_default(),
+                );
+            }
 
             Ok((
                 AccountUpdatesList {
@@ -2961,6 +3336,16 @@ impl Blockchain {
         );
         let block_hash = block.hash();
 
+        let warmed_results = res.warmed_results;
+        if let Ok(mut last) = self.last_warmed_results.lock() {
+            *last = warmed_results;
+        }
+        metrics!(METRICS_BLOCKS.set_warmed_results(
+            warmed_results.reused,
+            warmed_results.rejected,
+            warmed_results.missing
+        ));
+
         let mut witness = None;
         if let Some(logger) = logger
             && let Some(account_updates) = accumulated_updates
@@ -3210,6 +3595,18 @@ impl Blockchain {
             transactions_count,
             as_mgas,
             (gas_used as f64 / gas_limit as f64 * 100.0).round() as u64
+        );
+
+        let [
+            layer_hits,
+            disk_gets,
+            disk_multi_keys,
+            prewarmed_hits,
+            prewarmed_misses,
+            prewarmed_nodes,
+        ] = ethrex_storage::take_trie_read_counters();
+        info!(
+            "[METRIC] TRIEREADS {block_number} | layer {layer_hits} | disk_get {disk_gets} | disk_multi_keys {disk_multi_keys} | prewarmed hit {prewarmed_hits} miss {prewarmed_misses} nodes {prewarmed_nodes}"
         );
 
         let bottleneck_marker = |name: &str| {
@@ -4616,20 +5013,74 @@ fn collect_and_send(
     pre_collected_state: &mut Vec<TrieNode>,
     storage_nodes: &mut Vec<(H256, Vec<TrieNode>)>,
     tx: Sender<CollectedStateMsg>,
+    mut diag: Drain2,
 ) -> Result<(), StoreError> {
+    diag.state_start_at = Some(Instant::now());
     let (subroot, mut state_nodes) = collect_trie(index, std::mem::take(state_trie))?;
     if !pre_collected_state.is_empty() {
         let mut pre = std::mem::take(pre_collected_state);
         pre.extend(state_nodes);
         state_nodes = pre;
     }
+    diag.sent_at = Some(Instant::now());
     tx.send(CollectedStateMsg {
         index,
         subroot,
         state_nodes,
         storage_nodes: std::mem::take(storage_nodes),
+        diag,
     })
     .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+    Ok(())
+}
+
+/// Loads the paths a hint predicts the block writes into this worker's state trie (`prefix` None)
+/// or into the account's storage trie, opened at its storage root in the parent state.
+/// `prefetch_sorted` installs unmodified nodes with their hashes, so roots never change.
+#[allow(clippy::too_many_arguments)]
+fn prefetch_hinted_paths(
+    state_trie: &mut Trie,
+    storage_tries: &mut FxHashMap<H256, Trie>,
+    storage_roots: &mut FxHashMap<H256, H256>,
+    accounts: &FxHashMap<H256, AccountState>,
+    storage: &Store,
+    parent_state_root: H256,
+    prefix: Option<H256>,
+    mut keys: Vec<H256>,
+) -> Result<(), StoreError> {
+    keys.sort_unstable();
+    keys.dedup();
+    let paths: Vec<Nibbles> = keys
+        .iter()
+        .map(|key| Nibbles::from_bytes(key.as_bytes()))
+        .collect();
+    let Some(prefix) = prefix else {
+        state_trie.prefetch_sorted(&paths)?;
+        return Ok(());
+    };
+    let storage_root = match storage_roots.entry(prefix) {
+        Entry::Occupied(entry) => *entry.get(),
+        Entry::Vacant(entry) => {
+            let root = match accounts.get(&prefix) {
+                Some(account) => account.storage_root,
+                None => match state_trie.get(prefix.as_bytes())? {
+                    Some(rlp) => AccountState::decode(&rlp)?.storage_root,
+                    None => *EMPTY_TRIE_HASH,
+                },
+            };
+            *entry.insert(root)
+        }
+    };
+    if storage_root != *EMPTY_TRIE_HASH {
+        get_or_open_storage_trie(
+            storage_tries,
+            storage,
+            parent_state_root,
+            prefix,
+            storage_root,
+        )?
+        .prefetch_sorted(&paths)?;
+    }
     Ok(())
 }
 
@@ -4714,11 +5165,25 @@ fn handle_subtrie(
     let mut pending_collect_tx: Option<Sender<CollectedStateMsg>> = None;
     let mut pre_collected_state: Vec<TrieNode> = vec![];
     let mut storage_tries: FxHashMap<H256, Trie> = Default::default();
+    // Storage tries that receive slots or a reset; the others in `storage_tries` were only
+    // opened to load paths a hint predicted, and are not collected.
+    let mut real_storage: FxHashSet<H256> = Default::default();
+    // Hinted paths waiting for an idle turn: loading them never delays a real update.
+    let mut pending_prefetch: std::collections::VecDeque<(Option<H256>, Vec<H256>)> =
+        Default::default();
     let mut pre_collected_storage: FxHashMap<H256, Vec<TrieNode>> = Default::default();
     // Per storage trie, slots buffered until they can be flushed as a prefetched
     // batch (see `flush_storage_buffer`). Value is (storage_root, pending slots).
     // Cleared on delete; fully drained before storage collection begins.
     let mut storage_buffer: FxHashMap<H256, (H256, Vec<(H256, U256)>)> = Default::default();
+    // Storage root each account had in the parent state, for the storage tries this worker opens.
+    let mut storage_roots: FxHashMap<H256, H256> = Default::default();
+    // Per buffered storage trie, how many of its buffered slots already had their trie
+    // paths read ahead (see the idle branch below).
+    let mut read_ahead: FxHashMap<H256, usize> = Default::default();
+    let mut diag2 = Drain2::default();
+    let mut diag_timeline = DiagTimeline::default();
+    let mut diag_finish_routing_at: Option<Instant> = None;
 
     // Held until collection finishes to keep cross-worker channels open.
     let mut worker_senders: Option<Vec<cb::Sender<WorkerRequest>>> = Some(worker_senders);
@@ -4727,10 +5192,16 @@ fn handle_subtrie(
     // interleaving with incoming StorageShard messages.
     let mut collecting_storages = false;
     let mut routing_complete = false;
-    let mut routing_done_mask: u16 = 0;
     let mut storage_to_collect: Vec<(H256, Trie)> = vec![];
 
     loop {
+        if let Some(at) = diag_finish_routing_at.take() {
+            diag_timeline.summarize(
+                DIAG_CLOSE_NS.load(std::sync::atomic::Ordering::Acquire),
+                diag_ns(at),
+                &mut diag2,
+            );
+        }
         // When collecting storages, finalize one trie per iteration so that
         // incoming StorageShard messages can be processed in between.
         if collecting_storages {
@@ -4738,7 +5209,9 @@ fn handle_subtrie(
                 let senders = worker_senders
                     .as_ref()
                     .expect("collecting after senders dropped");
+                let diag_start = Instant::now();
                 let (root, mut nodes) = collect_trie(index, trie)?;
+                diag_timeline.push(9, diag_start);
                 if let Some(mut pre_nodes) = pre_collected_storage.remove(&prefix) {
                     pre_nodes.extend(nodes);
                     nodes = pre_nodes;
@@ -4754,6 +5227,7 @@ fn handle_subtrie(
                     .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
             } else {
                 // All storage tries finalized
+                diag2.collect_done_at = Some(Instant::now());
                 worker_senders = None;
                 collecting_storages = false;
                 // Check if deferred collect can resolve now
@@ -4766,6 +5240,7 @@ fn handle_subtrie(
                         &mut pre_collected_state,
                         &mut storage_nodes,
                         tx,
+                        diag2,
                     )?;
                     break;
                 }
@@ -4774,7 +5249,7 @@ fn handle_subtrie(
 
         // When collecting or dirty, poll non-blocking so we can interleave.
         // When clean and not collecting, just block.
-        let msg = if collecting_storages || dirty {
+        let msg = if collecting_storages || dirty || !pending_prefetch.is_empty() {
             match rx.try_recv() {
                 Ok(msg) => msg,
                 Err(TryRecvError::Disconnected) => break,
@@ -4788,7 +5263,18 @@ fn handle_subtrie(
                         // still runs, so the drain after its last update only has what
                         // arrived since. Batches of one trie apply in arrival order, so the
                         // last write still wins.
+                        let diag_start = Instant::now();
+                        let diag_kind;
                         if !collecting_storages && warming_done.load(Ordering::Relaxed) {
+                            diag_kind = 6;
+                            if diag2.gate_seen_at.is_none() {
+                                diag2.gate_seen_at = Some(Instant::now());
+                            }
+                            diag2.early_slots += storage_buffer
+                                .values()
+                                .map(|(_, slots)| slots.len())
+                                .sum::<usize>();
+                            read_ahead.clear();
                             for (prefix, (root, slots)) in storage_buffer.drain() {
                                 flush_storage_buffer(
                                     &mut storage_tries,
@@ -4799,7 +5285,44 @@ fn handle_subtrie(
                                     slots,
                                 )?;
                             }
+                        } else if !collecting_storages {
+                            diag_kind = 7;
+                            // While warming runs, read ahead the trie paths of the slots
+                            // buffered since the last pass, without applying them: the
+                            // inserts stay behind the gate, but their node reads (disk
+                            // waits on a cold store) overlap execution instead of landing
+                            // in the drain. Read-ahead only installs unmodified nodes with
+                            // their hashes, so it never changes a root.
+                            for (prefix, (root, slots)) in storage_buffer.iter() {
+                                let done = read_ahead.entry(*prefix).or_insert(0);
+                                if *done > slots.len() {
+                                    // The buffer was flushed and refilled since.
+                                    *done = 0;
+                                }
+                                if *done == slots.len() {
+                                    continue;
+                                }
+                                let mut paths: Vec<Nibbles> = slots[*done..]
+                                    .iter()
+                                    .map(|(key, _)| Nibbles::from_bytes(key.as_bytes()))
+                                    .collect();
+                                *done = slots.len();
+                                paths.sort();
+                                paths.dedup();
+                                let trie = get_or_open_storage_trie(
+                                    &mut storage_tries,
+                                    &storage,
+                                    parent_state_root,
+                                    *prefix,
+                                    *root,
+                                )?;
+                                trie.prefetch_sorted(&paths)?;
+                            }
+                        } else {
+                            diag_kind = 6;
                         }
+                        diag_timeline.push(diag_kind, diag_start);
+                        let diag_start = Instant::now();
                         // Pre-collect state trie — safe during storage
                         // collection too, since StorageShard resolution only
                         // dirties specific paths that get re-committed later.
@@ -4819,7 +5342,23 @@ fn handle_subtrie(
                                 }
                             }
                         }
+                        diag_timeline.push(8, diag_start);
                         dirty = false;
+                    } else if !routing_complete
+                        && let Some((prefix, keys)) = pending_prefetch.pop_front()
+                    {
+                        let diag_start = Instant::now();
+                        prefetch_hinted_paths(
+                            &mut state_trie,
+                            &mut storage_tries,
+                            &mut storage_roots,
+                            &accounts,
+                            &storage,
+                            parent_state_root,
+                            prefix,
+                            keys,
+                        )?;
+                        diag_timeline.push(11, diag_start);
                     }
                     continue;
                 }
@@ -4836,18 +5375,29 @@ fn handle_subtrie(
             }
         };
 
+        let diag_kind = match &msg {
+            WorkerRequest::ProcessAccount { .. } => 0,
+            WorkerRequest::MerklizeStorage { .. } => 1,
+            WorkerRequest::DeleteStorage(_) => 2,
+            WorkerRequest::StorageShard { .. } => 3,
+            WorkerRequest::MerklizeAccounts { .. } => 4,
+            WorkerRequest::CollectState { .. } => 5,
+            WorkerRequest::FinishRouting => 10,
+            WorkerRequest::Prefetch { .. } => 11,
+        };
+        let _diag_span = DiagSpan {
+            timeline: &mut diag_timeline,
+            kind: diag_kind,
+            start: Instant::now(),
+        };
         match msg {
             WorkerRequest::ProcessAccount {
                 prefix,
                 info,
-                storage: account_storage,
+                storage_shards,
                 removed,
                 removed_storage,
             } => {
-                let senders = worker_senders
-                    .as_ref()
-                    .expect("ProcessAccount after collection started");
-
                 // Always load account to warm state trie during execution overlap
                 match accounts.entry(prefix) {
                     Entry::Occupied(_) => {}
@@ -4879,18 +5429,14 @@ fn handle_subtrie(
                 }
 
                 if removed || removed_storage {
-                    // Delete locally + send DeleteStorage to other 15 workers.
-                    // Drop any slots buffered for this trie: the reset wipes them,
-                    // exactly as the per-slot path's inserts would have been.
+                    // Reset this worker's shard; the coordinator resets the other 15. Drop any
+                    // slots buffered for this trie: the reset wipes them, exactly as the per-slot
+                    // path's inserts would have been.
                     pre_collected_storage.remove(&prefix);
                     storage_buffer.remove(&prefix);
                     storage_tries.insert(prefix, Trie::new_temp());
-                    for (i, tx) in senders.iter().enumerate() {
-                        if i as u8 != index {
-                            tx.send(WorkerRequest::DeleteStorage(prefix))
-                                .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
-                        }
-                    }
+                    real_storage.insert(prefix);
+                    storage_roots.insert(prefix, *EMPTY_TRIE_HASH);
                     accounts.get_mut(&prefix).expect("just loaded").storage_root = *EMPTY_TRIE_HASH;
                     if expected_shards.insert(prefix, 0xFFFF).is_none() {
                         pending_storage_accounts += 1;
@@ -4901,60 +5447,34 @@ fn handle_subtrie(
                     }
                 }
 
-                if !account_storage.is_empty() {
-                    let storage_root = accounts
-                        .get(&prefix)
-                        .map(|a| a.storage_root)
-                        .unwrap_or(*EMPTY_TRIE_HASH);
-
+                if storage_shards != 0 {
                     let is_new = !expected_shards.contains_key(&prefix);
-                    for (key, value) in account_storage {
-                        let hashed_key = keccak(key);
-                        let bucket = hashed_key.as_fixed_bytes()[0] >> 4;
-                        *expected_shards.entry(prefix).or_insert(0u16) |= 1 << bucket;
-                        if bucket == index {
-                            // Local storage: buffer for a prefetched batch flush.
-                            let buf = storage_buffer
-                                .entry(prefix)
-                                .or_insert_with(|| (storage_root, Vec::new()));
-                            buf.1.push((hashed_key, value));
-                            if buf.1.len() >= STREAM_STORAGE_FLUSH_BATCH {
-                                let (root, slots) = storage_buffer
-                                    .remove(&prefix)
-                                    .expect("buffer just inserted");
-                                flush_storage_buffer(
-                                    &mut storage_tries,
-                                    &storage,
-                                    parent_state_root,
-                                    prefix,
-                                    root,
-                                    slots,
-                                )?;
-                            }
-                        } else {
-                            senders[bucket as usize]
-                                .send(WorkerRequest::MerklizeStorage {
-                                    prefix,
-                                    key: hashed_key,
-                                    value,
-                                    storage_root,
-                                })
-                                .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
-                        }
-                    }
+                    *expected_shards.entry(prefix).or_insert(0u16) |= storage_shards;
                     if is_new {
                         pending_storage_accounts += 1;
                     }
                 }
                 dirty = true;
             }
-            WorkerRequest::MerklizeStorage {
-                prefix,
-                key,
-                value,
-                storage_root,
-            } => {
-                // Buffer for a prefetched batch flush (see local-storage path).
+            WorkerRequest::MerklizeStorage { prefix, key, value } => {
+                real_storage.insert(prefix);
+                // The trie opens at the account's storage root in the parent state. The owner has
+                // the account loaded; any other worker reads it from its own view of the parent
+                // state trie, where only its own accounts have changed.
+                let storage_root = match storage_roots.entry(prefix) {
+                    Entry::Occupied(entry) => *entry.get(),
+                    Entry::Vacant(entry) => {
+                        let root = match accounts.get(&prefix) {
+                            Some(account) => account.storage_root,
+                            None => match state_trie.get(prefix.as_bytes())? {
+                                Some(rlp) => AccountState::decode(&rlp)?.storage_root,
+                                None => *EMPTY_TRIE_HASH,
+                            },
+                        };
+                        *entry.insert(root)
+                    }
+                };
+                // Buffer for a prefetched batch flush.
                 let buf = storage_buffer
                     .entry(prefix)
                     .or_insert_with(|| (storage_root, Vec::new()));
@@ -4963,6 +5483,7 @@ fn handle_subtrie(
                     let (root, slots) = storage_buffer
                         .remove(&prefix)
                         .expect("buffer just inserted");
+                    diag2.batch_slots += slots.len();
                     flush_storage_buffer(
                         &mut storage_tries,
                         &storage,
@@ -4979,25 +5500,29 @@ fn handle_subtrie(
                 pre_collected_storage.remove(&prefix);
                 storage_buffer.remove(&prefix);
                 storage_tries.insert(prefix, Trie::new_temp());
+                real_storage.insert(prefix);
+                storage_roots.insert(prefix, *EMPTY_TRIE_HASH);
                 dirty = true;
             }
-            WorkerRequest::FinishRouting => {
-                // Signal all workers that we're done routing MerklizeStorage.
-                let senders = worker_senders
-                    .as_ref()
-                    .expect("FinishRouting after senders dropped");
-                for i in 0..16u8 {
-                    senders[i as usize]
-                        .send(WorkerRequest::RoutingDone { from: index })
-                        .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+            WorkerRequest::Prefetch { prefix, keys } => {
+                if !routing_complete {
+                    pending_prefetch.push_back((prefix, keys));
                 }
             }
-            WorkerRequest::RoutingDone { from } => {
-                routing_done_mask |= 1u16 << from;
-                if routing_done_mask == 0xFFFF && !collecting_storages && !routing_complete {
-                    // Routing is done: no more slots will arrive, so flush every
-                    // remaining buffer into its storage trie before draining for
-                    // collection. Missing this would silently drop buffered slots.
+            WorkerRequest::FinishRouting => {
+                if !collecting_storages && !routing_complete {
+                    pending_prefetch.clear();
+                    let diag_now = Instant::now();
+                    diag2.finish_routing_at = Some(diag_now);
+                    diag_finish_routing_at = Some(diag_now);
+                    diag2.final_slots = storage_buffer
+                        .values()
+                        .map(|(_, slots)| slots.len())
+                        .sum::<usize>();
+                    let diag_flush_start = Instant::now();
+                    // Every slot routed to this worker came before this message: flush every
+                    // remaining buffer into its storage trie before draining for collection.
+                    // Missing this would silently drop buffered slots.
                     for (prefix, (root, slots)) in storage_buffer.drain() {
                         flush_storage_buffer(
                             &mut storage_tries,
@@ -5008,9 +5533,19 @@ fn handle_subtrie(
                             slots,
                         )?;
                     }
+                    diag2.final_flush = diag_flush_start.elapsed();
                     collecting_storages = true;
                     routing_complete = true;
-                    storage_to_collect = storage_tries.drain().collect();
+                    // Tries opened only for hinted paths have nothing to send: no worker expects
+                    // their shard.
+                    for (prefix, trie) in storage_tries.drain() {
+                        if real_storage.contains(&prefix) {
+                            storage_to_collect.push((prefix, trie));
+                        } else {
+                            let _ = DROP_SENDER.send(Box::new(trie));
+                        }
+                    }
+                    diag2.tries = storage_to_collect.len();
                 }
             }
             WorkerRequest::MerklizeAccounts { accounts: batch } => {
@@ -5085,6 +5620,7 @@ fn handle_subtrie(
                             &mut pre_collected_state,
                             &mut storage_nodes,
                             tx,
+                            diag2,
                         )?;
                         break;
                     }
@@ -5098,6 +5634,7 @@ fn handle_subtrie(
                         &mut pre_collected_state,
                         &mut storage_nodes,
                         tx,
+                        diag2,
                     )?;
                     break;
                 }

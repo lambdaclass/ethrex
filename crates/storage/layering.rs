@@ -86,7 +86,7 @@ use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 use std::{
     fmt,
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex, RwLock},
 };
 
 use ethrex_trie::{Nibbles, TrieDB, TrieError};
@@ -126,6 +126,21 @@ struct TrieLayer {
 /// walk. `H256::zero()` means "no safe commit point yet", so nothing is flushed and the
 /// on-disk genesis state is never pruned. A global bloom filter short-circuits lookups for
 /// keys absent from every layer.
+/// Newest-first layers a read starting at one state root walks.
+type LayerChain = Arc<[Arc<TrieLayer>]>;
+
+/// Chains already walked from a state root (see [`TrieLayerCache::chain`]). A clone starts
+/// empty and every change to the layers clears it, so a chain never outlives the layer set it
+/// was walked on.
+#[derive(Default)]
+struct LayerChains(std::sync::Mutex<FxHashMap<H256, LayerChain>>);
+
+impl Clone for LayerChains {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
 #[derive(Clone)]
 pub struct TrieLayerCache {
     /// Monotonically increasing ID for layers, starting at 1.
@@ -151,6 +166,9 @@ pub struct TrieLayerCache {
     /// `H256::zero()` means "no safe commit point yet". Read by
     /// [`get_commitable`](Self::get_commitable) to gate disk commits.
     pub(crate) safe_commit_root: Arc<RwLock<H256>>,
+    /// Layer chains per starting state root, so a reader walks a slice instead of looking up
+    /// every parent layer by root on every read.
+    chains: LayerChains,
 }
 
 impl fmt::Debug for TrieLayerCache {
@@ -189,7 +207,40 @@ impl TrieLayerCache {
             commit_threshold,
             overlay: None,
             safe_commit_root,
+            chains: LayerChains::default(),
         }
+    }
+
+    /// The layers a read starting at `state_root` walks, newest first: the same walk as
+    /// [`get`](Self::get), done once per state root and shared by every reader of this cache.
+    fn chain(&self, state_root: H256) -> LayerChain {
+        if let Ok(chains) = self.chains.0.lock()
+            && let Some(chain) = chains.get(&state_root)
+        {
+            return chain.clone();
+        }
+        let mut chain = Vec::new();
+        let mut current_state_root = state_root;
+        while let Some(layer) = self.layers.get(&current_state_root) {
+            chain.push(layer.clone());
+            current_state_root = layer.parent;
+            if current_state_root == state_root {
+                panic!("State cycle found");
+            }
+        }
+        let chain: LayerChain = chain.into();
+        if let Ok(mut chains) = self.chains.0.lock() {
+            chains.insert(state_root, chain.clone());
+        }
+        chain
+    }
+
+    /// [`get`](Self::get) over a chain from [`chain`](Self::chain).
+    fn get_in_chain(&self, chain: &[Arc<TrieLayer>], key: &[u8]) -> Option<Vec<u8>> {
+        if !self.bloom.contains(key) {
+            return None;
+        }
+        chain.iter().find_map(|layer| layer.nodes.get(key).cloned())
     }
 
     /// Installs an overlay on this cache. Subsequent reads that miss the layer chain
@@ -406,6 +457,7 @@ impl TrieLayerCache {
             .map(|(path, value)| (path.into_vec(), value))
             .collect();
 
+        self.chains = LayerChains::default();
         self.last_id += 1;
         let entry = TrieLayer {
             nodes,
@@ -490,6 +542,7 @@ impl TrieLayerCache {
     /// committed layer keeps its own block identity and `parent_state_root`, so the caller can
     /// write one journal entry per block rather than merging diffs across blocks.
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<CommittedLayer>> {
+        self.chains = LayerChains::default();
         let mut layers_to_commit = vec![];
         let mut current_state_root = state_root;
         while let Some(layer) = self.layers.remove(&current_state_root) {
@@ -566,6 +619,10 @@ pub struct TrieWrapper {
     /// For state tries this is None; for storage tries this is
     /// `Nibbles::from_bytes(address.as_bytes()).append_new(17)`.
     prefix_nibbles: Option<Nibbles>,
+    /// The layers reads walk, from `inner.chain(state_root)`.
+    chain: LayerChain,
+    /// Nodes the mempool prewarmer read from disk for `state_root`, consulted before disk.
+    prewarmed: Option<Arc<PrewarmedNodeMap>>,
 }
 
 impl TrieWrapper {
@@ -578,12 +635,150 @@ impl TrieWrapper {
         prefix: Option<H256>,
     ) -> Self {
         let prefix_nibbles = prefix.map(|p| Nibbles::from_bytes(p.as_bytes()).append_new(17));
+        let chain = inner.chain(state_root);
         Self {
             state_root,
             inner,
             db,
             prefix_nibbles,
+            chain,
+            prewarmed: None,
         }
+    }
+
+    /// Serves disk misses from `nodes` first. They must have been read at this wrapper's
+    /// `state_root` (see [`PrewarmedNodes::frozen_for`]).
+    pub fn with_prewarmed(mut self, nodes: Option<Arc<PrewarmedNodeMap>>) -> Self {
+        self.prewarmed = nodes;
+        self
+    }
+
+    fn prewarmed_node(&self, key: &[u8]) -> Option<Vec<u8>> {
+        use std::sync::atomic::Ordering::Relaxed;
+        let nodes = self.prewarmed.as_ref()?;
+        match nodes.get(key) {
+            Some(value) => {
+                DIAG_PREWARMED_HITS.fetch_add(1, Relaxed);
+                Some(value.clone())
+            }
+            None => {
+                DIAG_PREWARMED_MISSES.fetch_add(1, Relaxed);
+                None
+            }
+        }
+    }
+}
+
+/// Encoded trie nodes by their full (prefixed) path.
+pub type PrewarmedNodeMap = FxHashMap<Vec<u8>, Vec<u8>>;
+
+/// Trie nodes the mempool prewarmer reads from disk while it walks the paths of the next block's
+/// likely keys, kept for that block's merkleization: its tries are opened at the same parent root
+/// and read the same paths, which then come from memory instead of the database.
+///
+/// Recording happens between blocks; at block start [`Self::freeze`] moves the recorded nodes into
+/// an immutable map that tries opened at that root read without locks.
+#[derive(Default)]
+pub struct PrewarmedNodes {
+    recording: Mutex<(H256, PrewarmedNodeMap)>,
+    frozen: RwLock<Option<(H256, Arc<PrewarmedNodeMap>)>>,
+}
+
+impl fmt::Debug for PrewarmedNodes {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PrewarmedNodes").finish_non_exhaustive()
+    }
+}
+
+impl PrewarmedNodes {
+    /// Bound on the recorded nodes per root (a few hundred MiB at most).
+    const MAX_NODES: usize = 1 << 20;
+
+    /// Starts recording for `root`, dropping what was recorded for another root.
+    pub fn begin(&self, root: H256) {
+        let Ok(mut recording) = self.recording.lock() else {
+            return;
+        };
+        if recording.0 != root {
+            *recording = (root, PrewarmedNodeMap::default());
+        }
+    }
+
+    fn record(&self, root: H256, key: &Nibbles, value: &[u8]) {
+        let Ok(mut recording) = self.recording.lock() else {
+            return;
+        };
+        if recording.0 == root && recording.1.len() < Self::MAX_NODES {
+            recording
+                .1
+                .entry(key.as_ref().to_vec())
+                .or_insert_with(|| value.to_vec());
+        }
+    }
+
+    /// Makes the nodes recorded for `root` readable by tries opened at `root` from now on.
+    pub fn freeze(&self, root: H256) {
+        let taken = match self.recording.lock() {
+            Ok(mut recording) if recording.0 == root => std::mem::take(&mut recording.1),
+            _ => PrewarmedNodeMap::default(),
+        };
+        let Ok(mut frozen) = self.frozen.write() else {
+            return;
+        };
+        // A second block on the same parent keeps the first one's nodes.
+        if taken.is_empty() && matches!(&*frozen, Some((frozen_root, _)) if *frozen_root == root) {
+            return;
+        }
+        DIAG_PREWARMED_NODES.store(taken.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        *frozen = Some((root, Arc::new(taken)));
+    }
+
+    /// The frozen nodes, if they were recorded at `root`.
+    pub fn frozen_for(&self, root: H256) -> Option<Arc<PrewarmedNodeMap>> {
+        match &*self.frozen.read().ok()? {
+            Some((frozen_root, nodes)) if *frozen_root == root => Some(nodes.clone()),
+            _ => None,
+        }
+    }
+}
+
+/// [`TrieDB`] adapter for the prewarmer's path walks: every node the wrapped database serves is
+/// also recorded in `sink` for `root`.
+pub struct RecordingTrieDB {
+    pub inner: Box<dyn TrieDB>,
+    pub sink: Arc<PrewarmedNodes>,
+    pub root: H256,
+}
+
+impl TrieDB for RecordingTrieDB {
+    fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
+        self.inner.flatkeyvalue_computed(key)
+    }
+
+    fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
+        let value = self.inner.get(key.clone())?;
+        if let Some(bytes) = &value
+            && !bytes.is_empty()
+        {
+            self.sink.record(self.root, &key, bytes);
+        }
+        Ok(value)
+    }
+
+    fn multi_get(&self, keys: &[Nibbles]) -> Vec<Result<Option<Vec<u8>>, TrieError>> {
+        let values = self.inner.multi_get(keys);
+        for (key, value) in keys.iter().zip(&values) {
+            if let Ok(Some(bytes)) = value
+                && !bytes.is_empty()
+            {
+                self.sink.record(self.root, key, bytes);
+            }
+        }
+        values
+    }
+
+    fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
+        self.inner.put_batch(key_values)
     }
 }
 
@@ -597,6 +792,34 @@ pub fn apply_prefix(prefix: Option<H256>, path: Nibbles) -> Nibbles {
             .concat(&path),
         None => path,
     }
+}
+
+/// Diagnostic counters (diag/trie-reads-only, not for merge): trie-node reads by where they were
+/// served, taken and reset once per block.
+pub static DIAG_LAYER_HITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static DIAG_DISK_GETS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static DIAG_DISK_MULTI_KEYS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+/// Disk misses of tries with prewarmed nodes attached: served from them / still read from disk.
+pub static DIAG_PREWARMED_HITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static DIAG_PREWARMED_MISSES: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+/// Nodes in the last frozen prewarmed map.
+pub static DIAG_PREWARMED_NODES: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// Takes and resets the diagnostic counters: (layer hits, disk gets, disk multi-get keys,
+/// prewarmed hits, prewarmed misses, prewarmed nodes).
+pub fn take_trie_read_counters() -> [u64; 6] {
+    use std::sync::atomic::Ordering::Relaxed;
+    [
+        DIAG_LAYER_HITS.swap(0, Relaxed),
+        DIAG_DISK_GETS.swap(0, Relaxed),
+        DIAG_DISK_MULTI_KEYS.swap(0, Relaxed),
+        DIAG_PREWARMED_HITS.swap(0, Relaxed),
+        DIAG_PREWARMED_MISSES.swap(0, Relaxed),
+        DIAG_PREWARMED_NODES.load(Relaxed),
+    ]
 }
 
 impl TrieDB for TrieWrapper {
@@ -630,9 +853,11 @@ impl TrieDB for TrieWrapper {
         // side-chain write at this key supersedes the pivot value the overlay holds.
         // An overlay hit pre-empts disk because disk still reflects the OLD chain's
         // edge `D`, not the pivot.
-        if let Some(value) = self.inner.get(self.state_root, key.as_ref()) {
+        if let Some(value) = self.inner.get_in_chain(&self.chain, key.as_ref()) {
+            DIAG_LAYER_HITS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             return Ok(Some(value));
         }
+        DIAG_DISK_GETS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         // Overlay gate: the overlay reconstructs the pivot's state and the new-chain
         // layers built on top of it. Only a reader at a consuming root (the pivot or one
         // of those layer roots) may see it; an eth_call/getProof at the old cache-edge
@@ -642,6 +867,9 @@ impl TrieDB for TrieWrapper {
             && let Some(overlay_result) = self.inner.lookup_overlay(key.as_ref())
         {
             return Ok(overlay_result);
+        }
+        if let Some(value) = self.prewarmed_node(key.as_ref()) {
+            return Ok(Some(value));
         }
         self.db.get(key)
     }
@@ -663,7 +891,7 @@ impl TrieDB for TrieWrapper {
                 Some(prefix) => prefix.concat(key),
                 None => key.clone(),
             };
-            if let Some(value) = self.inner.get(self.state_root, key.as_ref()) {
+            if let Some(value) = self.inner.get_in_chain(&self.chain, key.as_ref()) {
                 results[idx] = Some(Ok(Some(value)));
             } else if overlay_serves
                 && let Some(overlay_result) = self.inner.lookup_overlay(key.as_ref())
@@ -671,6 +899,8 @@ impl TrieDB for TrieWrapper {
                 // `Some(None)` means absent at the pivot: disk still holds the old
                 // chain's value for this key, so it must not be consulted.
                 results[idx] = Some(Ok(overlay_result));
+            } else if let Some(value) = self.prewarmed_node(key.as_ref()) {
+                results[idx] = Some(Ok(Some(value)));
             } else {
                 miss_indices.push(idx);
                 miss_keys.push(key);
@@ -678,6 +908,8 @@ impl TrieDB for TrieWrapper {
         }
 
         if !miss_keys.is_empty() {
+            DIAG_DISK_MULTI_KEYS
+                .fetch_add(miss_keys.len() as u64, std::sync::atomic::Ordering::Relaxed);
             let db_results = self.db.multi_get(&miss_keys);
             for (idx, res) in miss_indices.into_iter().zip(db_results) {
                 results[idx] = Some(res);
@@ -1394,6 +1626,80 @@ mod overlay_tests {
                 .all(|v| v.as_ref().is_some_and(|b| b.starts_with(b"disk-"))),
             "unserved root must not see overlay values"
         );
+    }
+
+    /// Nodes recorded while walking tries at a root serve, once frozen, the disk misses of tries
+    /// opened at that root, and only of those.
+    #[test]
+    fn prewarmed_nodes_serve_disk_misses_at_their_root_only() {
+        struct TaggedDb(&'static [u8]);
+        impl TrieDB for TaggedDb {
+            fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
+                Ok(Some([self.0, key.as_ref()].concat()))
+            }
+            fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
+                unimplemented!()
+            }
+        }
+
+        let root = h(0xaa);
+        let other = h(0xbb);
+        let walked = Nibbles::from_raw(&[0x12, 0x34], false);
+        let not_walked = Nibbles::from_raw(&[0x56, 0x78], false);
+        let cache = Arc::new(TrieLayerCache::new_with_safe_commit(
+            128,
+            Arc::new(RwLock::new(H256::zero())),
+        ));
+        let sink = Arc::new(PrewarmedNodes::default());
+
+        sink.begin(root);
+        let walker = TrieWrapper::new(
+            root,
+            cache.clone(),
+            Box::new(RecordingTrieDB {
+                inner: Box::new(TaggedDb(b"walk-")),
+                sink: sink.clone(),
+                root,
+            }),
+            None,
+        );
+        let walked_node = [b"walk-".as_slice(), walked.as_ref()].concat();
+        assert_eq!(
+            walker.get(walked.clone()).unwrap(),
+            Some(walked_node.clone())
+        );
+        assert!(
+            sink.frozen_for(root).is_none(),
+            "nothing is served before the freeze"
+        );
+
+        sink.freeze(root);
+        assert!(sink.frozen_for(other).is_none());
+        let reader = TrieWrapper::new(root, cache.clone(), Box::new(TaggedDb(b"disk-")), None)
+            .with_prewarmed(sink.frozen_for(root));
+        let not_walked_node = [b"disk-".as_slice(), not_walked.as_ref()].concat();
+        assert_eq!(
+            reader.get(walked.clone()).unwrap(),
+            Some(walked_node.clone())
+        );
+        assert_eq!(
+            reader.get(not_walked.clone()).unwrap(),
+            Some(not_walked_node.clone())
+        );
+        let batched: Vec<_> = reader
+            .multi_get(&[walked.clone(), not_walked])
+            .into_iter()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(batched, vec![Some(walked_node), Some(not_walked_node)]);
+
+        // Recording for the next root leaves the frozen nodes in place until that root's
+        // block freezes its own, which replaces them.
+        sink.begin(other);
+        assert!(sink.frozen_for(root).is_some());
+        sink.freeze(other);
+        assert!(sink.frozen_for(root).is_none());
+        assert!(sink.frozen_for(other).is_some_and(|nodes| nodes.is_empty()));
     }
 
     /// `lookup_overlay` is the entry point from the read cascade. It must short-circuit

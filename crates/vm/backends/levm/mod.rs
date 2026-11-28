@@ -34,11 +34,11 @@ use ethrex_common::types::{Code, InitcodeBuffer};
 #[cfg(feature = "rayon")]
 use ethrex_common::utils::u256_from_big_endian_const;
 use ethrex_common::{
-    Address, U256,
+    Address, Bloom, U256,
     types::{
         AccessList, AccountUpdate, Block, BlockHeader, EIP1559Transaction, Fork, FrameReceipt,
-        GWEI_TO_WEI, GenericTransaction, INITIAL_BASE_FEE, Log, Receipt, Transaction, TxKind,
-        Withdrawal, requests::Requests,
+        GWEI_TO_WEI, GenericTransaction, INITIAL_BASE_FEE, Log, Receipt, ReceiptsRootBuilder,
+        Transaction, TxKind, Withdrawal, bloom_from_logs, requests::Requests,
     },
 };
 #[cfg(feature = "rayon")]
@@ -46,7 +46,7 @@ use ethrex_common::{
     BigEndianHash, constants::AMSTERDAM_MAX_CODE_SIZE, validate_bal_code_sizes,
     validate_block_access_list_size, validate_header_bal_indices,
 };
-use ethrex_crypto::Crypto;
+use ethrex_crypto::{Crypto, NativeCrypto};
 use ethrex_levm::EVMConfig;
 use ethrex_levm::StatelessValidator;
 use ethrex_levm::account::AccountStatus;
@@ -577,6 +577,11 @@ pub fn carry_block_writes(mut entries: CarriedEntries) -> CarriedEntries {
     entries
 }
 
+thread_local! {
+    /// Diagnostics: why this thread's last `WarmedTx::capture` returned `None`.
+    static DIAG_CAPTURE_FAIL: std::cell::Cell<u8> = const { std::cell::Cell::new(6) };
+}
+
 /// A transaction the block warmer ran after its sender's earlier transactions of the block,
 /// kept so execution can take its result instead of running it again: what it read, what it
 /// changed, and its outcome.
@@ -595,8 +600,8 @@ pub struct WarmedTx {
 
 impl WarmedTx {
     /// Takes the result of the transaction that just ran on `db` with `db.tx_reads` on, or
-    /// `None` when it can't be replayed from its reads: the transaction read the coinbase,
-    /// or touched an account whose storage a self-destruct cleared.
+    /// `None` when it can't be replayed from its reads: the transaction used the coinbase's
+    /// balance or nonce, or touched an account whose storage a self-destruct cleared.
     #[cfg(feature = "rayon")]
     fn capture(
         db: &mut GeneralizedDatabase,
@@ -604,9 +609,21 @@ impl WarmedTx {
         coinbase: Address,
         coinbase_before: U256,
     ) -> Option<Self> {
-        let reads = db.tx_reads.take()?;
-        if reads.accounts.contains_key(&coinbase) {
-            return None;
+        let fail = |reason: u8| {
+            DIAG_CAPTURE_FAIL.with(|cell| cell.set(reason));
+            None
+        };
+        let Some(reads) = db.tx_reads.take() else {
+            return fail(10);
+        };
+        // Every earlier transaction's fee moves the coinbase's balance, so one that used that
+        // balance or the nonce cannot be replayed. One that only paid it, such as a transfer to
+        // the block's builder, can: what it added is part of the coinbase credit below.
+        if reads.balances.contains(&coinbase) {
+            return fail(11);
+        }
+        if reads.nonces.contains(&coinbase) {
+            return fail(12);
         }
         let destroyed = |status: &AccountStatus| {
             matches!(
@@ -617,33 +634,61 @@ impl WarmedTx {
         let mut accounts = Vec::new();
         let mut codes = Vec::new();
         for (address, before) in &reads.accounts {
-            let after = db.current_accounts_state.get(address)?;
+            let Some(after) = db.current_accounts_state.get(address) else {
+                return fail(13);
+            };
             if destroyed(&before.status) || destroyed(&after.status) {
-                return None;
+                return fail(14);
             }
             let after = AccountSnapshot::of(after);
             if after == *before {
                 continue;
             }
+            if *address == coinbase {
+                // Its balance change is in the coinbase credit; anything else it cannot carry.
+                if after.info.nonce != before.info.nonce
+                    || after.info.code_hash != before.info.code_hash
+                    || after.has_storage != before.has_storage
+                    || after.exists != before.exists
+                {
+                    return fail(15);
+                }
+                continue;
+            }
             if after.info.code_hash != before.info.code_hash {
-                codes.push(db.codes.get(&after.info.code_hash)?.clone());
+                let Some(code) = db.codes.get(&after.info.code_hash) else {
+                    return fail(16);
+                };
+                codes.push(code.clone());
             }
             accounts.push((*address, after));
         }
         let mut slots = Vec::new();
         for (&(address, key), before) in &reads.slots {
-            let after = *db.current_accounts_state.get(&address)?.storage.get(&key)?;
+            let Some(after) = db
+                .current_accounts_state
+                .get(&address)
+                .and_then(|account| account.storage.get(&key))
+                .copied()
+            else {
+                return fail(17);
+            };
             if after != *before {
                 slots.push(((address, key), after));
             }
         }
-        let coinbase_after = coinbase_balance(db, coinbase).ok()?;
+        let Ok(coinbase_after) = coinbase_balance(db, coinbase) else {
+            return fail(18);
+        };
+        let Some(coinbase_credit) = coinbase_after.checked_sub(coinbase_before) else {
+            return fail(19);
+        };
         Some(Self {
             reads,
             accounts,
             slots,
             codes,
-            coinbase_credit: coinbase_after.checked_sub(coinbase_before)?,
+            coinbase_credit,
             report,
         })
     }
@@ -666,24 +711,8 @@ impl WarmedTx {
             return Ok(false);
         }
         for (address, before) in &self.reads.accounts {
-            let account = db.get_account(*address)?;
-            // A balance the transaction only credited, or tested against zero, may differ: its
-            // change is applied on top. The sender's and any it read exactly must match.
-            let balance_holds = if *address == sender || self.reads.balances.contains(address) {
-                account.info.balance == before.info.balance
-            } else {
-                account.info.balance.is_zero() == before.info.balance.is_zero()
-            };
-            if account.info.nonce != before.info.nonce
-                || account.info.code_hash != before.info.code_hash
-                || !balance_holds
-                || account.has_storage != before.has_storage
-                || account.exists != before.exists
-                || matches!(
-                    account.status,
-                    AccountStatus::Destroyed | AccountStatus::DestroyedModified
-                )
-            {
+            let account = AccountSnapshot::of(db.get_account(*address)?);
+            if !self.account_holds(sender, *address, before, &account) {
                 return Ok(false);
             }
         }
@@ -693,6 +722,46 @@ impl WarmedTx {
             }
         }
         Ok(true)
+    }
+
+    /// Whether an account the transaction read as `before` can be `after` without changing
+    /// what the transaction observed of it.
+    fn account_holds(
+        &self,
+        sender: Address,
+        address: Address,
+        before: &AccountSnapshot,
+        after: &AccountSnapshot,
+    ) -> bool {
+        // A balance the transaction only credited, or tested against zero, may differ: its
+        // change is applied on top. The sender's and any it read exactly must match; one it
+        // only compared against transfer values must give those comparisons the same outcome.
+        let balance_holds = if address == sender || self.reads.balances.contains(&address) {
+            after.info.balance == before.info.balance
+        } else {
+            after.info.balance.is_zero() == before.info.balance.is_zero()
+                && self
+                    .reads
+                    .balance_bounds
+                    .get(&address)
+                    .is_none_or(|bounds| bounds.admit(after.info.balance))
+        };
+        // A nonce only matters exactly where the transaction used it: its own, a contract
+        // creation's or an authorization's. Elsewhere only emptiness is observable.
+        let nonce_holds = if address == sender || self.reads.nonces.contains(&address) {
+            after.info.nonce == before.info.nonce
+        } else {
+            (after.info.nonce == 0) == (before.info.nonce == 0)
+        };
+        nonce_holds
+            && after.info.code_hash == before.info.code_hash
+            && balance_holds
+            && after.has_storage == before.has_storage
+            && after.exists == before.exists
+            && !matches!(
+                after.status,
+                AccountStatus::Destroyed | AccountStatus::DestroyedModified
+            )
     }
 
     /// Writes the transaction's changes to `db`, which [`Self::holds`] its reads, and returns
@@ -707,24 +776,32 @@ impl WarmedTx {
                 .reads
                 .accounts
                 .get(&address)
-                .map(|before| before.info.balance)
+                .map(|before| (before.info.balance, before.info.nonce))
                 .ok_or_else(|| EvmError::Custom("warmed change without its read".to_string()))?;
             let account = db.get_account_mut(address)?;
-            // The transaction's change to the balance, on top of the balance execution has.
-            let balance = if after.info.balance >= before {
+            // The transaction's changes to the balance and nonce, on top of the values execution
+            // has: both may have moved since the warmer ran where the transaction did not use them.
+            let balance = if after.info.balance >= before.0 {
                 account
                     .info
                     .balance
-                    .checked_add(after.info.balance - before)
+                    .checked_add(after.info.balance - before.0)
             } else {
                 account
                     .info
                     .balance
-                    .checked_sub(before - after.info.balance)
+                    .checked_sub(before.0 - after.info.balance)
             }
             .ok_or_else(|| EvmError::Custom("warmed balance change out of range".to_string()))?;
+            let nonce = if after.info.nonce >= before.1 {
+                account.info.nonce.checked_add(after.info.nonce - before.1)
+            } else {
+                account.info.nonce.checked_sub(before.1 - after.info.nonce)
+            }
+            .ok_or_else(|| EvmError::Custom("warmed nonce change out of range".to_string()))?;
             account.info = ethrex_common::types::AccountInfo {
                 balance,
+                nonce,
                 ..after.info
             };
             account.has_storage = after.has_storage;
@@ -762,11 +839,96 @@ fn coinbase_balance(
     balance
 }
 
+/// Hashes a block's receipts as execution produces them, on a thread of its own, so the
+/// receipts root and the aggregate logs bloom are ready when the last transaction finishes
+/// instead of being computed on the execution thread afterwards.
+struct ReceiptHasher {
+    sender: Option<std::sync::mpsc::Sender<Receipt>>,
+    handle: Option<std::thread::JoinHandle<(H256, Bloom)>>,
+}
+
+impl ReceiptHasher {
+    fn start() -> Self {
+        let (sender, receiver) = std::sync::mpsc::channel::<Receipt>();
+        let handle = std::thread::Builder::new()
+            .name("receipts-hasher".to_string())
+            .spawn(move || {
+                let crypto = NativeCrypto;
+                let mut logs_bloom = Bloom::zero();
+                let mut root = ReceiptsRootBuilder::new();
+                for receipt in receiver {
+                    let bloom = bloom_from_logs(&receipt.logs, &crypto);
+                    logs_bloom |= bloom;
+                    root.push(receipt.encode_inner_with_precomputed_bloom(bloom), &crypto);
+                }
+                (root.finish(&crypto), logs_bloom)
+            })
+            .ok();
+        Self {
+            sender: handle.is_some().then_some(sender),
+            handle,
+        }
+    }
+
+    /// Queues `receipt`, which must be the next one in transaction order.
+    fn push(&self, receipt: &Receipt) {
+        if let Some(sender) = &self.sender {
+            // A failed send means the thread is gone; `finish` then yields `None` and the
+            // block's validation computes the commitment itself.
+            let _ = sender.send(receipt.clone());
+        }
+    }
+
+    /// The receipts root and logs bloom of everything pushed, or `None` if the thread failed.
+    fn finish(mut self) -> Option<(H256, Bloom)> {
+        drop(self.sender.take());
+        self.handle.take()?.join().ok()
+    }
+}
+
+/// The accounts and slots one published warmed result writes.
+pub type PublishedWrites = (Vec<Address>, Vec<(Address, H256)>);
+
 /// One slot per transaction of a block, filled by the warmer and taken by execution.
 pub struct WarmedTxs {
     slots: Box<[std::sync::Mutex<Option<WarmedTx>>]>,
-    /// How many of the block's transactions execution has finished.
-    executed: AtomicUsize,
+    /// How many of the block's transactions execution has finished. Shared with each warming
+    /// run, which stops at its next state access once execution has passed its transaction.
+    executed: Arc<AtomicUsize>,
+    /// The changes of every result published so far, by block position.
+    #[cfg(feature = "rayon")]
+    writes: Arc<std::sync::RwLock<WarmedWrites>>,
+    /// Positions whose published result read something that a result published since, for
+    /// an earlier position, wrote: to be checked again.
+    #[cfg(feature = "rayon")]
+    stale: Box<[AtomicBool]>,
+    /// Positions warmed on a state that lacks what an earlier transaction of the block gives
+    /// them: a sender it pays, or a sender whose earlier transactions were split out of its
+    /// group. The sweeper warms them again against the results published before them.
+    #[cfg(feature = "rayon")]
+    waiting: Box<[AtomicBool]>,
+    /// Whether published results are recorded for re-warming at all this block.
+    #[cfg(feature = "rayon")]
+    tracking: AtomicBool,
+    /// What execution's own runs changed, queued for the sweeper to record.
+    #[cfg(feature = "rayon")]
+    executed_writes: std::sync::Mutex<Vec<ExecutedWrites>>,
+    /// Diagnostics: when these results were created, and per position the microseconds from
+    /// then to the start and the end of its first warming run and to its first published
+    /// result (`u64::MAX` until then), and how that first run ended (see `diag_mark_end`).
+    pub diag_created: std::time::Instant,
+    pub diag_run_start_us: Box<[std::sync::atomic::AtomicU64]>,
+    pub diag_run_end_us: Box<[std::sync::atomic::AtomicU64]>,
+    pub diag_put_us: Box<[std::sync::atomic::AtomicU64]>,
+    pub diag_run_outcome: Box<[std::sync::atomic::AtomicU8]>,
+}
+
+/// The slots and accounts a transaction execution ran itself left, by its block position.
+#[cfg(feature = "rayon")]
+struct ExecutedWrites {
+    position: usize,
+    slots: Vec<((Address, H256), U256)>,
+    accounts: Vec<(Address, AccountSnapshot)>,
 }
 
 impl WarmedTxs {
@@ -775,12 +937,183 @@ impl WarmedTxs {
             slots: (0..transactions)
                 .map(|_| std::sync::Mutex::new(None))
                 .collect(),
-            executed: AtomicUsize::new(0),
+            executed: Arc::new(AtomicUsize::new(0)),
+            #[cfg(feature = "rayon")]
+            writes: Arc::default(),
+            #[cfg(feature = "rayon")]
+            stale: (0..transactions).map(|_| AtomicBool::new(false)).collect(),
+            #[cfg(feature = "rayon")]
+            waiting: (0..transactions).map(|_| AtomicBool::new(false)).collect(),
+            #[cfg(feature = "rayon")]
+            tracking: AtomicBool::new(false),
+            #[cfg(feature = "rayon")]
+            executed_writes: std::sync::Mutex::new(Vec::new()),
+            diag_created: std::time::Instant::now(),
+            diag_run_start_us: (0..transactions)
+                .map(|_| std::sync::atomic::AtomicU64::new(u64::MAX))
+                .collect(),
+            diag_run_end_us: (0..transactions)
+                .map(|_| std::sync::atomic::AtomicU64::new(u64::MAX))
+                .collect(),
+            diag_put_us: (0..transactions)
+                .map(|_| std::sync::atomic::AtomicU64::new(u64::MAX))
+                .collect(),
+            diag_run_outcome: (0..transactions)
+                .map(|_| std::sync::atomic::AtomicU8::new(0))
+                .collect(),
         }
     }
 
+    /// Diagnostics: microseconds since these results were created.
+    pub fn diag_now_us(&self) -> u64 {
+        u64::try_from(self.diag_created.elapsed().as_micros()).unwrap_or(u64::MAX)
+    }
+
+    /// Diagnostics: notes the start of the first warming run of `position`.
+    pub fn diag_mark_start(&self, position: usize) {
+        if let Some(cell) = self.diag_run_start_us.get(position) {
+            let _ = cell.compare_exchange(
+                u64::MAX,
+                self.diag_now_us(),
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            );
+        }
+    }
+
+    /// Diagnostics: notes the end of the first warming run of `position` and how it ended:
+    /// 1 a report, 2 stopped because execution had passed it, 3 insufficient funds, 4 another
+    /// validation error, 5 any other error, 6 a report whose result could not be captured.
+    pub fn diag_mark_end(&self, position: usize, outcome: u8) {
+        if let Some(cell) = self.diag_run_end_us.get(position)
+            && cell
+                .compare_exchange(
+                    u64::MAX,
+                    self.diag_now_us(),
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                )
+                .is_ok()
+            && let Some(code) = self.diag_run_outcome.get(position)
+        {
+            code.store(outcome, Ordering::Relaxed);
+        }
+    }
+
+    /// Diagnostics: marks the first run's report of `position` as one that was not captured.
+    pub fn diag_mark_uncaptured(&self, position: usize) {
+        if let Some(code) = self.diag_run_outcome.get(position) {
+            let reason = DIAG_CAPTURE_FAIL.with(|cell| cell.replace(6));
+            let _ = code.compare_exchange(1, reason, Ordering::Relaxed, Ordering::Relaxed);
+        }
+    }
+
+    fn diag_load(cells: &[std::sync::atomic::AtomicU64], position: usize) -> u64 {
+        cells
+            .get(position)
+            .map_or(u64::MAX, |cell| cell.load(Ordering::Relaxed))
+    }
+
+    /// Queues what execution's own run of `position` changed, read from `backup` (the keys the
+    /// transaction changed) and `db` (the values it left), for the sweeper to record: the
+    /// results of later positions that read those keys are then checked and re-warmed against
+    /// the state execution really left. A transaction that destroyed an account is skipped.
+    #[cfg(feature = "rayon")]
+    fn queue_executed(
+        &self,
+        position: usize,
+        db: &GeneralizedDatabase,
+        backup: &ethrex_levm::call_frame::CallFrameBackup,
+        coinbase: Address,
+    ) {
+        let mut accounts = Vec::with_capacity(backup.original_accounts_info.len());
+        for address in backup.original_accounts_info.keys() {
+            let Some(account) = db.current_accounts_state.get(address) else {
+                continue;
+            };
+            if matches!(
+                account.status,
+                AccountStatus::Destroyed | AccountStatus::DestroyedModified
+            ) {
+                return;
+            }
+            // Every transaction's fee moves the coinbase; results only depend on it where they
+            // used its exact balance, which keeps them from being captured at all.
+            if *address != coinbase {
+                accounts.push((*address, AccountSnapshot::of(account)));
+            }
+        }
+        let mut slots = Vec::new();
+        for (address, keys) in &backup.original_account_storage_slots {
+            let Some(account) = db.current_accounts_state.get(address) else {
+                continue;
+            };
+            for key in keys.keys() {
+                if let Some(value) = account.storage.get(key) {
+                    slots.push(((*address, *key), *value));
+                }
+            }
+        }
+        if let Ok(mut queue) = self.executed_writes.lock() {
+            queue.push(ExecutedWrites {
+                position,
+                slots,
+                accounts,
+            });
+        }
+    }
+
+    /// Records the queued writes of execution's own runs, marking the later positions whose
+    /// result read a key one of them changed; returns whether any was marked.
+    #[cfg(feature = "rayon")]
+    fn record_executed(&self) -> bool {
+        let queued = match self.executed_writes.lock() {
+            Ok(mut queue) => std::mem::take(&mut *queue),
+            Err(_) => return false,
+        };
+        if queued.is_empty() {
+            return false;
+        }
+        let mut marked = false;
+        let Ok(mut writes) = self.writes.write() else {
+            return false;
+        };
+        for executed in queued {
+            for reader in writes.record_executed(&executed) {
+                if let Some(flag) = self.stale.get(reader) {
+                    flag.store(true, Ordering::Relaxed);
+                    marked = true;
+                }
+            }
+        }
+        marked
+    }
+
+    /// Publishes the result for `position`, and marks the later positions whose result read
+    /// something it wrote, or the result it replaces wrote, for checking again.
     #[cfg(feature = "rayon")]
     fn put(&self, position: usize, warmed: WarmedTx) {
+        if let Some(cell) = self.diag_put_us.get(position) {
+            let _ = cell.compare_exchange(
+                u64::MAX,
+                self.diag_now_us(),
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            );
+        }
+        let affected = if self.tracking.load(Ordering::Relaxed) {
+            match self.writes.write() {
+                Ok(mut writes) => writes.record(position, &warmed),
+                Err(_) => Vec::new(),
+            }
+        } else {
+            Vec::new()
+        };
+        for reader in affected {
+            if let Some(flag) = self.stale.get(reader) {
+                flag.store(true, Ordering::Relaxed);
+            }
+        }
         if let Some(slot) = self.slots.get(position)
             && let Ok(mut slot) = slot.lock()
         {
@@ -788,8 +1121,99 @@ impl WarmedTxs {
         }
     }
 
+    /// Marks `position` for checking again.
+    #[cfg(feature = "rayon")]
+    fn mark_stale(&self, position: usize) {
+        if let Some(flag) = self.stale.get(position) {
+            flag.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// Whether `position` was marked for checking again; clears the mark.
+    #[cfg(feature = "rayon")]
+    #[cfg(feature = "rayon")]
+    fn mark_waiting(&self, position: usize) {
+        if let Some(flag) = self.waiting.get(position) {
+            flag.store(true, Ordering::Relaxed);
+        }
+    }
+
+    #[cfg(feature = "rayon")]
+    fn is_waiting(&self, position: usize) -> bool {
+        self.waiting
+            .get(position)
+            .is_some_and(|flag| flag.load(Ordering::Relaxed))
+    }
+
+    #[cfg(feature = "rayon")]
+    fn clear_waiting(&self, position: usize) {
+        if let Some(flag) = self.waiting.get(position) {
+            flag.store(false, Ordering::Relaxed);
+        }
+    }
+
+    #[cfg(feature = "rayon")]
+    fn has_result(&self, position: usize) -> bool {
+        self.slots
+            .get(position)
+            .and_then(|slot| slot.lock().ok())
+            .is_some_and(|slot| slot.is_some())
+    }
+
+    fn take_stale(&self, position: usize) -> bool {
+        self.stale
+            .get(position)
+            .is_some_and(|flag| flag.swap(false, Ordering::Relaxed))
+    }
+
     fn take(&self, position: usize) -> Option<WarmedTx> {
         self.slots.get(position)?.lock().ok()?.take()
+    }
+
+    /// How many transactions the block has.
+    pub fn len(&self) -> usize {
+        self.slots.len()
+    }
+
+    /// Whether the block has no transactions.
+    pub fn is_empty(&self) -> bool {
+        self.slots.is_empty()
+    }
+
+    /// How many of the block's transactions execution has finished.
+    pub fn executed_transactions(&self) -> usize {
+        self.executed.load(Ordering::Relaxed)
+    }
+
+    /// The accounts and slots written by the results published for positions from `from` on that
+    /// `seen` does not mark yet, marking them. Empty while published writes are not tracked.
+    pub fn take_published_writes(&self, from: usize, seen: &mut [bool]) -> Vec<PublishedWrites> {
+        #[cfg(feature = "rayon")]
+        {
+            let Ok(writes) = self.writes.read() else {
+                return Vec::new();
+            };
+            let mut found = Vec::new();
+            for (position, keys) in &writes.by_position {
+                if *position < from {
+                    continue;
+                }
+                let Some(flag) = seen.get_mut(*position) else {
+                    continue;
+                };
+                if *flag {
+                    continue;
+                }
+                *flag = true;
+                found.push((keys.written_accounts.clone(), keys.written_slots.clone()));
+            }
+            found
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            let _ = (from, seen);
+            Vec::new()
+        }
     }
 
     /// Whether execution has finished every transaction of `unit`, so warming it would only
@@ -797,6 +1221,321 @@ impl WarmedTxs {
     #[cfg(feature = "rayon")]
     fn passed(&self, unit: &WarmUnit<'_>) -> bool {
         self.executed.load(Ordering::Relaxed) > unit.last_position()
+    }
+
+    /// Whether a result published before `position` changed something `warmed`, the result
+    /// for `position`, read with a different value than it would then find: the result would
+    /// not hold at execution, if those earlier results do.
+    #[cfg(feature = "rayon")]
+    fn conflicts(&self, position: usize, sender: Address, warmed: &WarmedTx) -> bool {
+        let Ok(writes) = self.writes.read() else {
+            return false;
+        };
+        for (&(address, key), value) in &warmed.reads.slots {
+            if writes
+                .slot_before(address, key, position)
+                .is_some_and(|written| written != *value)
+            {
+                return true;
+            }
+        }
+        for (address, before) in &warmed.reads.accounts {
+            if let Some(after) = writes.account_before(*address, position)
+                && !warmed.account_holds(sender, *address, before, after)
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Whether the published result for `position`, if any, [`Self::conflicts`].
+    #[cfg(feature = "rayon")]
+    fn published_conflicts(&self, position: usize, sender: Address) -> bool {
+        self.slots
+            .get(position)
+            .and_then(|slot| slot.lock().ok())
+            .is_some_and(|slot| {
+                slot.as_ref()
+                    .is_some_and(|warmed| self.conflicts(position, sender, warmed))
+            })
+    }
+}
+
+/// The changes of a block's published warmed results by block position: the block's state as
+/// warmed so far, which a later transaction can be run against.
+#[cfg(feature = "rayon")]
+#[derive(Default)]
+struct WarmedWrites {
+    slots: FxHashMap<(Address, H256), Vec<(usize, U256)>>,
+    accounts: FxHashMap<Address, Vec<(usize, AccountSnapshot)>>,
+    codes: FxHashMap<H256, Code>,
+    /// The positions whose result read each key: the results a write to it may invalidate.
+    slot_readers: FxHashMap<(Address, H256), Vec<usize>>,
+    account_readers: FxHashMap<Address, Vec<usize>>,
+    /// The keys each position's result wrote and read, dropped when the result is replaced.
+    by_position: FxHashMap<usize, PositionKeys>,
+}
+
+/// The keys one position's result wrote and read.
+#[cfg(feature = "rayon")]
+#[derive(Default)]
+struct PositionKeys {
+    written_slots: Vec<(Address, H256)>,
+    written_accounts: Vec<Address>,
+    read_slots: Vec<(Address, H256)>,
+    read_accounts: Vec<Address>,
+}
+
+#[cfg(feature = "rayon")]
+impl WarmedWrites {
+    /// Records `warmed` as the result for `position` and returns the later positions whose
+    /// result read a key that this result, or the one it replaces, wrote.
+    fn record(&mut self, position: usize, warmed: &WarmedTx) -> Vec<usize> {
+        let replaced = self.forget(position);
+        let mut keys = PositionKeys::default();
+        for &((address, key), value) in &warmed.slots {
+            insert_version(
+                self.slots.entry((address, key)).or_default(),
+                position,
+                value,
+            );
+            keys.written_slots.push((address, key));
+        }
+        for (address, after) in &warmed.accounts {
+            insert_version(
+                self.accounts.entry(*address).or_default(),
+                position,
+                after.clone(),
+            );
+            keys.written_accounts.push(*address);
+        }
+        for code in &warmed.codes {
+            self.codes.entry(code.hash).or_insert_with(|| code.clone());
+        }
+        let mut affected = Vec::new();
+        {
+            let mut add_readers = |slot_keys: &[(Address, H256)], addresses: &[Address]| {
+                for key in slot_keys {
+                    if let Some(readers) = self.slot_readers.get(key) {
+                        affected
+                            .extend(readers.iter().copied().filter(|&reader| reader > position));
+                    }
+                }
+                for address in addresses {
+                    if let Some(readers) = self.account_readers.get(address) {
+                        affected
+                            .extend(readers.iter().copied().filter(|&reader| reader > position));
+                    }
+                }
+            };
+            add_readers(&keys.written_slots, &keys.written_accounts);
+            if let Some(replaced) = &replaced {
+                add_readers(&replaced.written_slots, &replaced.written_accounts);
+            }
+        }
+        affected.sort_unstable();
+        affected.dedup();
+        for &(address, key) in warmed.reads.slots.keys() {
+            self.slot_readers
+                .entry((address, key))
+                .or_default()
+                .push(position);
+            keys.read_slots.push((address, key));
+        }
+        for &address in warmed.reads.accounts.keys() {
+            self.account_readers
+                .entry(address)
+                .or_default()
+                .push(position);
+            keys.read_accounts.push(address);
+        }
+        self.by_position.insert(position, keys);
+        affected
+    }
+
+    /// Records what execution's own run of a position changed, in place of the result published
+    /// for it, if any; returns the later positions whose result read a key either wrote.
+    fn record_executed(&mut self, executed: &ExecutedWrites) -> Vec<usize> {
+        let position = executed.position;
+        let replaced = self.forget(position);
+        let mut keys = PositionKeys::default();
+        for &((address, key), value) in &executed.slots {
+            insert_version(
+                self.slots.entry((address, key)).or_default(),
+                position,
+                value,
+            );
+            keys.written_slots.push((address, key));
+        }
+        for (address, after) in &executed.accounts {
+            insert_version(
+                self.accounts.entry(*address).or_default(),
+                position,
+                after.clone(),
+            );
+            keys.written_accounts.push(*address);
+        }
+        let mut affected = Vec::new();
+        for written in [Some(&keys), replaced.as_ref()].into_iter().flatten() {
+            for key in &written.written_slots {
+                if let Some(readers) = self.slot_readers.get(key) {
+                    affected.extend(readers.iter().copied().filter(|&reader| reader > position));
+                }
+            }
+            for address in &written.written_accounts {
+                if let Some(readers) = self.account_readers.get(address) {
+                    affected.extend(readers.iter().copied().filter(|&reader| reader > position));
+                }
+            }
+        }
+        affected.sort_unstable();
+        affected.dedup();
+        self.by_position.insert(position, keys);
+        affected
+    }
+
+    /// Drops what the result for `position` wrote and read, returning its keys.
+    fn forget(&mut self, position: usize) -> Option<PositionKeys> {
+        let keys = self.by_position.remove(&position)?;
+        for key in &keys.written_slots {
+            if let Some(versions) = self.slots.get_mut(key) {
+                versions.retain(|(written_at, _)| *written_at != position);
+            }
+        }
+        for address in &keys.written_accounts {
+            if let Some(versions) = self.accounts.get_mut(address) {
+                versions.retain(|(written_at, _)| *written_at != position);
+            }
+        }
+        for key in &keys.read_slots {
+            if let Some(readers) = self.slot_readers.get_mut(key) {
+                readers.retain(|reader| *reader != position);
+            }
+        }
+        for address in &keys.read_accounts {
+            if let Some(readers) = self.account_readers.get_mut(address) {
+                readers.retain(|reader| *reader != position);
+            }
+        }
+        Some(keys)
+    }
+
+    /// The slot's value as left by the last result published for a position before `position`.
+    fn slot_before(&self, address: Address, key: H256, position: usize) -> Option<U256> {
+        version_before(self.slots.get(&(address, key))?, position).copied()
+    }
+
+    /// The account as left by the last result published for a position before `position`.
+    fn account_before(&self, address: Address, position: usize) -> Option<&AccountSnapshot> {
+        version_before(self.accounts.get(&address)?, position)
+    }
+}
+
+/// Inserts `value` as the version written at `position`, keeping the versions in position order.
+#[cfg(feature = "rayon")]
+fn insert_version<T>(versions: &mut Vec<(usize, T)>, position: usize, value: T) {
+    let at = versions.partition_point(|(written_at, _)| *written_at < position);
+    versions.insert(at, (position, value));
+}
+
+/// The version written at the greatest position below `position`.
+#[cfg(feature = "rayon")]
+fn version_before<T>(versions: &[(usize, T)], position: usize) -> Option<&T> {
+    let earlier = versions.partition_point(|(written_at, _)| *written_at < position);
+    versions
+        .get(earlier.checked_sub(1)?)
+        .map(|(_, value)| value)
+}
+
+/// The warming cache with the block's published writes before `position` layered on top: the
+/// state the transaction at `position` runs against when every earlier result holds.
+#[cfg(feature = "rayon")]
+struct MergedDb {
+    cache: Arc<dyn Database>,
+    writes: Arc<std::sync::RwLock<WarmedWrites>>,
+    position: usize,
+}
+
+#[cfg(feature = "rayon")]
+impl Database for MergedDb {
+    fn get_account_state(
+        &self,
+        address: Address,
+    ) -> Result<ethrex_common::types::AccountState, ethrex_levm::errors::DatabaseError> {
+        let mut state = self.cache.get_account_state(address)?;
+        if let Ok(writes) = self.writes.read()
+            && let Some(after) = writes.account_before(address, self.position)
+        {
+            state.nonce = after.info.nonce;
+            state.balance = after.info.balance;
+            state.code_hash = after.info.code_hash;
+        }
+        Ok(state)
+    }
+
+    fn get_storage_value(
+        &self,
+        address: Address,
+        key: H256,
+    ) -> Result<U256, ethrex_levm::errors::DatabaseError> {
+        if let Ok(writes) = self.writes.read()
+            && let Some(value) = writes.slot_before(address, key, self.position)
+        {
+            return Ok(value);
+        }
+        self.cache.get_storage_value(address, key)
+    }
+
+    fn get_block_hash(
+        &self,
+        block_number: u64,
+    ) -> Result<H256, ethrex_levm::errors::DatabaseError> {
+        self.cache.get_block_hash(block_number)
+    }
+
+    fn get_chain_config(
+        &self,
+    ) -> Result<ethrex_common::types::ChainConfig, ethrex_levm::errors::DatabaseError> {
+        self.cache.get_chain_config()
+    }
+
+    fn get_account_code(
+        &self,
+        code_hash: H256,
+    ) -> Result<Code, ethrex_levm::errors::DatabaseError> {
+        if let Ok(writes) = self.writes.read()
+            && let Some(code) = writes.codes.get(&code_hash)
+        {
+            return Ok(code.clone());
+        }
+        self.cache.get_account_code(code_hash)
+    }
+
+    fn get_code_metadata(
+        &self,
+        code_hash: H256,
+    ) -> Result<ethrex_common::types::CodeMetadata, ethrex_levm::errors::DatabaseError> {
+        if let Ok(writes) = self.writes.read()
+            && let Some(code) = writes.codes.get(&code_hash)
+        {
+            return Ok(ethrex_common::types::CodeMetadata {
+                length: u64::try_from(code.len()).unwrap_or(u64::MAX),
+            });
+        }
+        self.cache.get_code_metadata(code_hash)
+    }
+
+    fn precompile_cache(&self) -> Option<&ethrex_levm::precompiles::PrecompileCache> {
+        self.cache.precompile_cache()
+    }
+
+    fn cached_keccak64(&self, input: &[u8; 64]) -> Option<[u8; 32]> {
+        self.cache.cached_keccak64(input)
+    }
+
+    fn keep_keccak64(&self, input: [u8; 64], hash: [u8; 32]) {
+        self.cache.keep_keccak64(input, hash);
     }
 }
 
@@ -830,14 +1569,20 @@ impl WarmMisses {
 struct DiscoveryDb {
     cache: Arc<dyn Database>,
     misses: std::sync::Mutex<WarmMisses>,
+    /// What a slot the cache does not hold reads as.
+    slot_placeholder: U256,
 }
 
 #[cfg(feature = "rayon")]
 impl DiscoveryDb {
-    fn new(cache: Arc<dyn Database>) -> Self {
+    /// A view whose missing slots read as `slot_placeholder` instead of zero: a field read as
+    /// zero stops code that divides by it or requires it set, at the first iteration of a loop,
+    /// while one with every byte set lets each byte-aligned field of a packed slot be nonzero.
+    fn with_slot_placeholder(cache: Arc<dyn Database>, slot_placeholder: U256) -> Self {
         Self {
             cache,
             misses: std::sync::Mutex::new(WarmMisses::default()),
+            slot_placeholder,
         }
     }
 
@@ -881,7 +1626,7 @@ impl Database for DiscoveryDb {
         self.record(|misses| {
             misses.slots.insert((address, key));
         });
-        Ok(U256::zero())
+        Ok(self.slot_placeholder)
     }
 
     fn get_block_hash(
@@ -933,6 +1678,14 @@ impl Database for DiscoveryDb {
     fn precompile_cache(&self) -> Option<&ethrex_levm::precompiles::PrecompileCache> {
         self.cache.precompile_cache()
     }
+
+    fn cached_keccak64(&self, input: &[u8; 64]) -> Option<[u8; 32]> {
+        self.cache.cached_keccak64(input)
+    }
+
+    fn keep_keccak64(&self, input: [u8; 64], hash: [u8; 32]) {
+        self.cache.keep_keccak64(input, hash);
+    }
 }
 
 /// While warming reads come from memory, one unit in this many still runs discovery passes.
@@ -942,6 +1695,42 @@ const DISCOVERY_PROBE_EVERY: usize = 16;
 /// Gas limit from which a warming unit counts as heavy and may start ahead of block order.
 #[cfg(feature = "rayon")]
 const HEAVY_UNIT_GAS: u64 = 1_000_000;
+
+/// Storage slots one transaction's direct warming run may wait on the disk for before its unit
+/// is handed to discovery passes: past this, it is walking cold storage one slot at a time, no
+/// faster than execution will, while a discovery pass finds the rest of its keys to read
+/// together.
+#[cfg(feature = "rayon")]
+const HANDOFF_SLOW_READS: u32 = 12;
+
+/// Experiment (diag build): `ETHREX_EXP_HANDOFF_SLOW_READS` overrides [`HANDOFF_SLOW_READS`];
+/// 0 never hands off, so a warming run that reads cold storage keeps reading it itself.
+#[cfg(feature = "rayon")]
+static HANDOFF_SLOW_READS_KNOB: std::sync::LazyLock<u32> = std::sync::LazyLock::new(|| {
+    std::env::var("ETHREX_EXP_HANDOFF_SLOW_READS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(HANDOFF_SLOW_READS)
+});
+
+/// Passes after which a handed-off unit stops discovering once a pass finds at most
+/// [`HANDOFF_TRICKLE_KEYS`] keys.
+#[cfg(feature = "rayon")]
+const HANDOFF_TRICKLE_AFTER: usize = 3;
+
+/// Passes of a handed-off unit in which a failed transaction moves its missing slots to the next
+/// placeholder (zero, one, every byte set).
+#[cfg(feature = "rayon")]
+const HANDOFF_PLACEHOLDER_PASSES: usize = 6;
+
+/// Keys a handed-off unit's discovery pass must find to keep it discovering past the first few.
+#[cfg(feature = "rayon")]
+const HANDOFF_TRICKLE_KEYS: usize = 2;
+
+/// Units a block hands to discovery passes at most, so a block of cold readers cannot double
+/// the warming work of every unit.
+#[cfg(feature = "rayon")]
+const MAX_HANDOFFS: usize = 16;
 
 /// Warmers that start on the heaviest units before joining block order.
 #[cfg(feature = "rayon")]
@@ -1426,6 +2215,8 @@ impl LEVM {
                 burned_fees: is_lstar
                     .then(|| lstar_burned_fees(&chain_config, &block.header, cumulative_gas_used)),
                 tx_gas_breakdowns,
+                receipts_commitment: None,
+                warmed_results: Default::default(),
             },
             bal,
         ))
@@ -1724,6 +2515,8 @@ impl LEVM {
                     block_gas_used,
                     burned_fees: burned_fees_par,
                     tx_gas_breakdowns,
+                    receipts_commitment: None,
+                    warmed_results: Default::default(),
                 },
                 None,
             ));
@@ -1745,7 +2538,10 @@ impl LEVM {
             db.set_bal_index(0);
         }
 
+        let _ = ethrex_levm::db::diag_take_store_reads();
+        let diag_pre_start = std::time::Instant::now();
         Self::prepare_block(block, db, vm_type, crypto)?;
+        let diag_pre_us = diag_pre_start.elapsed().as_micros();
 
         // Compute base blob fee once for the entire block (block-invariant).
         let base_blob_fee_per_gas =
@@ -1771,15 +2567,39 @@ impl LEVM {
         // The value itself can be safely changed.
         let mut tx_since_last_flush = 2;
         let mut reused_txs = 0_usize;
+        let mut rejected_txs = 0_usize;
+        let mut missing_txs = 0_usize;
+        // Diagnostics: (position, gas limit, warmer start, arrival, execution us, gas used) of
+        // each transaction execution reached while the warmer was still running it.
+        // Diagnostics: (position, missing rather than rejected, arrival_us, exec_us, gas_used).
+        let mut diag_heavy: Vec<(usize, bool, u64, u64, u64)> = Vec::new();
+        // Diagnostics: every transaction execution ran itself (position, missing rather than
+        // rejected, exec_us, gas_used).
+        let mut diag_selfrun: Vec<(usize, bool, u64, u64)> = Vec::new();
+        // Diagnostics: per class (reused, rejected, missing not started, missing still warming,
+        // missing whose warming ended without a result), transactions and microseconds.
+        let mut diag_split = [(0_u32, 0_u64); 5];
+        // Diagnostics: the missing results whose warming ended, by how its first run ended
+        // (outcome code, see `diag_mark_end`), transactions and microseconds.
+        let mut diag_ended: FxHashMap<u8, (u32, u64)> = FxHashMap::default();
+        let receipt_hasher = ReceiptHasher::start();
+        let diag_loop_start = std::time::Instant::now();
+        // Diagnostics: time spent taking and checking warmed results and in the merkleizer
+        // sends, inside the loop but outside the transactions' own runs.
+        let mut diag_tx_total_us = 0_u64;
+        let mut diag_sender_us = 0_u128;
+        let mut diag_send_us = 0_u128;
 
         for (tx_idx, tx) in block.body.transactions.iter().enumerate() {
             // Senders are recovered as execution reaches them rather than all up front. The
             // block warmer recovers them in parallel into the same per-transaction cache, so
             // this is usually a cache read; recovering them here on the rayon pool made
             // execution wait behind warming for a worker before its first transaction.
+            let diag_sender_start = std::time::Instant::now();
             let tx_sender = tx.sender(crypto).map_err(|error| {
                 EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
             })?;
+            diag_sender_us += diag_sender_start.elapsed().as_micros();
             // Pre-tx gas limit guard:
             // Pre-Amsterdam: reject tx if cumulative post-refund gas + tx.gas > block limit.
             // Amsterdam+: skip — EIP-8037's 2D gas model means cumulative gas (regular +
@@ -1813,6 +2633,7 @@ impl LEVM {
                 }
             }
 
+            let diag_tx_start = std::time::Instant::now();
             // A transaction the warmer ran on the same state it reads here gives the same result,
             // so take that result instead of running it again. The warmer runs without the
             // stateless validator, which only the LStar EXECUTE precompile uses.
@@ -1824,29 +2645,105 @@ impl LEVM {
                         && !matches!(tx, Transaction::FrameTransaction(_))
                 })
                 .and_then(|warmed| warmed.take(tx_idx));
+            let mut diag_arrival: Option<(bool, u64)> = None;
+            let warmed_tx = match warmed_tx {
+                Some(warmed_tx) if warmed_tx.holds(db, tx, tx_sender)? => Some(warmed_tx),
+                Some(_) => {
+                    rejected_txs += 1;
+                    diag_arrival = warmed.map(|warmed| (false, warmed.diag_now_us()));
+                    None
+                }
+                None => {
+                    if let Some(warmed) = warmed {
+                        missing_txs += 1;
+                        diag_arrival = Some((true, warmed.diag_now_us()));
+                    }
+                    None
+                }
+            };
+            let diag_exec_start = std::time::Instant::now();
             let report = match warmed_tx {
-                Some(warmed_tx) if warmed_tx.holds(db, tx, tx_sender)? => {
+                Some(warmed_tx) => {
                     reused_txs += 1;
                     warmed_tx.apply(db, block.header.coinbase)?
                 }
-                _ => Self::execute_tx_in_block(
-                    tx,
-                    tx_sender,
-                    &block.header,
-                    db,
-                    vm_type,
-                    base_blob_fee_per_gas,
-                    &mut shared_stack_pool,
-                    &mut shared_memory_pool,
-                    &mut shared_initcode_pool,
-                    false,
-                    false,
-                    crypto,
-                    evm_config,
-                    chain_id,
-                    stateless_validator,
-                )?,
+                None => {
+                    // The warmer only knows the writes of the results it published: a
+                    // transaction run here hands it the keys it changed, so the results that
+                    // read them are re-warmed on the state it really left.
+                    #[cfg(feature = "rayon")]
+                    let feeding = warmed.filter(|warmed| warmed.tracking.load(Ordering::Relaxed));
+                    #[cfg(feature = "rayon")]
+                    if feeding.is_some() {
+                        db.keep_tx_backup = true;
+                    }
+                    let report = Self::execute_tx_in_block(
+                        tx,
+                        tx_sender,
+                        &block.header,
+                        db,
+                        vm_type,
+                        base_blob_fee_per_gas,
+                        &mut shared_stack_pool,
+                        &mut shared_memory_pool,
+                        &mut shared_initcode_pool,
+                        false,
+                        false,
+                        crypto,
+                        evm_config,
+                        chain_id,
+                        stateless_validator,
+                    );
+                    #[cfg(feature = "rayon")]
+                    if let Some(warmed) = feeding {
+                        db.keep_tx_backup = false;
+                        if let Some(backup) = db.tx_backup.take() {
+                            warmed.queue_executed(tx_idx, db, &backup, block.header.coinbase);
+                        }
+                    }
+                    report?
+                }
             };
+
+            if let Some(warmed) = warmed {
+                let class = match diag_arrival {
+                    None => 0,
+                    Some((false, _)) => 1,
+                    Some((true, _)) => {
+                        if WarmedTxs::diag_load(&warmed.diag_run_start_us, tx_idx) == u64::MAX {
+                            2
+                        } else if WarmedTxs::diag_load(&warmed.diag_run_end_us, tx_idx) == u64::MAX
+                        {
+                            3
+                        } else {
+                            4
+                        }
+                    }
+                };
+                let tx_us = u64::try_from(diag_tx_start.elapsed().as_micros()).unwrap_or(0);
+                diag_tx_total_us += tx_us;
+                if let Some(entry) = diag_split.get_mut(class) {
+                    entry.0 += 1;
+                    entry.1 += tx_us;
+                }
+                if class == 4 {
+                    let outcome = warmed
+                        .diag_run_outcome
+                        .get(tx_idx)
+                        .map_or(0, |code| code.load(Ordering::Relaxed));
+                    let entry = diag_ended.entry(outcome).or_default();
+                    entry.0 += 1;
+                    entry.1 += tx_us;
+                }
+            }
+            if let Some((missing, arrival)) = diag_arrival {
+                let exec_us =
+                    u64::try_from(diag_exec_start.elapsed().as_micros()).unwrap_or(u64::MAX);
+                if report.gas_used >= 1_000_000 || exec_us >= 1_000 {
+                    diag_heavy.push((tx_idx, missing, arrival, exec_us, report.gas_used));
+                }
+                diag_selfrun.push((tx_idx, missing, exec_us, report.gas_used));
+            }
 
             if let Some(warmed) = warmed {
                 warmed.executed.store(tx_idx + 1, Ordering::Relaxed);
@@ -1859,7 +2756,9 @@ impl LEVM {
             ));
 
             if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
+                let diag_send_start = std::time::Instant::now();
                 LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
+                diag_send_us += diag_send_start.elapsed().as_micros();
                 tx_since_last_flush = 0;
             } else {
                 tx_since_last_flush += 1;
@@ -1909,6 +2808,7 @@ impl LEVM {
                 receipt.frame_receipts = frame_receipts_from(report.frame_results);
             }
 
+            receipt_hasher.push(&receipt);
             receipts.push(receipt);
         }
 
@@ -1933,11 +2833,15 @@ impl LEVM {
             ::tracing::info!("{}", precompiles_timings.info_pretty());
         }
 
+        let diag_loop_us = diag_loop_start.elapsed().as_micros();
+        let diag_tail_start = std::time::Instant::now();
         if warmed.is_some() {
             ::tracing::debug!(
                 block = block.header.number,
                 transactions = n_txs,
                 reused = reused_txs,
+                rejected = rejected_txs,
+                missing = missing_txs,
                 "Reused warmed transactions"
             );
         }
@@ -1976,8 +2880,83 @@ impl LEVM {
         };
         LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
 
+        let receipts_commitment = receipt_hasher.finish();
+        let diag_reads = ethrex_levm::db::diag_take_store_reads();
+        ::tracing::info!(
+            "[METRIC] EXECPHASES {} | pre_us {} | loop_us {} | tx_us {} | tail_us {} | store_reads {} {} {} | sender_us {} | send_us {}",
+            block.header.number,
+            diag_pre_us,
+            diag_loop_us,
+            diag_tx_total_us,
+            diag_tail_start.elapsed().as_micros(),
+            diag_reads.0,
+            diag_reads.1,
+            diag_reads.2,
+            diag_sender_us,
+            diag_send_us,
+        );
+
         // Extract BAL if recording was enabled
         let bal = db.take_bal();
+
+        if warmed.is_some() {
+            let [reused, rejected, not_started, running, ended] = diag_split;
+            ::tracing::info!(
+                "[METRIC] EXECSPLIT {} | reused {} {} | rejected {} {} | missing_not_started {} {} | missing_running {} {} | missing_ended {} {} | ended_by_outcome {:?}",
+                block.header.number,
+                reused.0,
+                reused.1,
+                rejected.0,
+                rejected.1,
+                not_started.0,
+                not_started.1,
+                running.0,
+                running.1,
+                ended.0,
+                ended.1,
+                {
+                    let mut by_outcome: Vec<_> = diag_ended.iter().collect();
+                    by_outcome.sort();
+                    by_outcome
+                },
+            );
+        }
+        // Diagnostics: one line per heavy transaction execution ran itself (its warmed result
+        // was missing or did not hold): when the warmer started, ended and first published it,
+        // how that run ended, and execution's own run.
+        if let Some(warmed) = warmed {
+            ::tracing::info!(
+                "[METRIC] SELFRUN {} | {}",
+                block.header.number,
+                diag_selfrun
+                    .iter()
+                    .map(|(position, missing, exec_us, gas_used)| format!(
+                        "{position}:{}:{gas_used}:{exec_us}",
+                        if *missing { "m" } else { "r" }
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            );
+            for &(position, missing, arrival, exec_us, gas_used) in &diag_heavy {
+                let outcome = warmed
+                    .diag_run_outcome
+                    .get(position)
+                    .map_or(0, |code| code.load(Ordering::Relaxed));
+                ::tracing::info!(
+                    "[METRIC] HEAVYTX {} {} | {} | gas_used {} | warmer_start_us {} | warmer_end_us {} | put_us {} | arrival_us {} | outcome {} | exec_us {}",
+                    block.header.number,
+                    position,
+                    if missing { "missing" } else { "rejected" },
+                    gas_used,
+                    WarmedTxs::diag_load(&warmed.diag_run_start_us, position) as i64,
+                    WarmedTxs::diag_load(&warmed.diag_run_end_us, position) as i64,
+                    WarmedTxs::diag_load(&warmed.diag_put_us, position) as i64,
+                    arrival,
+                    outcome,
+                    exec_us,
+                );
+            }
+        }
 
         Ok((
             BlockExecutionResult {
@@ -1988,6 +2967,12 @@ impl LEVM {
                 burned_fees: is_lstar
                     .then(|| lstar_burned_fees(&chain_config, &block.header, cumulative_gas_used)),
                 tx_gas_breakdowns,
+                receipts_commitment,
+                warmed_results: crate::backends::WarmedResultCounts {
+                    reused: reused_txs,
+                    rejected: rejected_txs,
+                    missing: missing_txs,
+                },
             },
             bal,
         ))
@@ -4117,6 +5102,8 @@ impl LEVM {
         results: Option<&WarmedTxs>,
         // Whether units may run discovery passes while the store reads from the disk.
         discovery: bool,
+        // Set once every unit has been warmed, before the results are checked again.
+        units_done: Option<&AtomicBool>,
     ) -> Result<(), EvmError> {
         let txs_with_sender = block
             .body
@@ -4155,6 +5142,7 @@ impl LEVM {
                     writes,
                     results,
                     discovery,
+                    units_done,
                 )
             },
         );
@@ -4207,15 +5195,43 @@ impl LEVM {
         writes: Option<WarmWritesSink<'_>>,
         results: Option<&WarmedTxs>,
         discovery: bool,
+        units_done: Option<&AtomicBool>,
     ) -> Result<(), EvmError> {
         let chain_config = store.get_chain_config()?;
         let evm_config = EVMConfig::new_from_chain_config(&chain_config, header);
         let chain_id = chain_config.chain_id;
         let base_blob_fee_per_gas = get_base_fee_per_blob_gas(header.excess_blob_gas, &evm_config)?;
 
+        // Units a worker has finished with (warmed, skipped or passed by execution).
+        let finished_units = std::sync::atomic::AtomicUsize::new(0);
+        let unit_finished = || {
+            if finished_units
+                .fetch_add(1, Ordering::Relaxed)
+                .saturating_add(1)
+                >= units.len()
+                && let Some(units_done) = units_done
+            {
+                units_done.store(true, Ordering::Relaxed);
+            }
+        };
+        if units.is_empty()
+            && let Some(units_done) = units_done
+        {
+            units_done.store(true, Ordering::Relaxed);
+        }
         let discover = discovery && store_reads_are_cold();
+        // Re-running a transaction takes a core from the units still warming; while the store
+        // is cold, those units are what execution waits for, so results are re-warmed only
+        // when reads come from memory.
+        let rewarm_enabled = !discover;
+        if let Some(results) = results {
+            results.tracking.store(rewarm_enabled, Ordering::Relaxed);
+        }
         // Trie paths are only worth reading ahead while reads come from the disk; from a warm
         // store the merkleizer finds them in memory and the reads only take cores.
+        // A unit handed to discovery after a cold walk is reading from the disk whatever the
+        // block's reads do, so its trie paths are read ahead too.
+        let handoff_writes = writes;
         let writes = writes.filter(|_| discover);
         // Workers take units in order from a shared counter, so units start in the order
         // they were sorted: a parallel iterator would split the list and start halfway in.
@@ -4228,31 +5244,133 @@ impl LEVM {
             *first = (*first).min(unit.first_position());
         }
         let passed = |unit: &WarmUnit<'_>| results.is_some_and(|results| results.passed(unit));
+        // The block's transactions by position, for re-warming one on its own.
+        let block_txs = units
+            .iter()
+            .filter_map(|unit| unit.positions.last())
+            .max()
+            .map_or(0, |last| last.saturating_add(1));
+        let mut by_position: Vec<Option<(&Transaction, Address)>> = vec![None; block_txs];
+        for unit in &units {
+            for (tx, &position) in unit.txs.iter().zip(&unit.positions) {
+                if let Some(entry) = by_position.get_mut(position) {
+                    *entry = Some((*tx, unit.sender));
+                }
+            }
+        }
+        // Runs the transaction at `position` once more, against the block's state as warmed so
+        // far, with its reads recorded and the nonce check on: the result holds at execution
+        // if the results before it do.
+        let rewarm = |position: usize,
+                      tx: &Transaction,
+                      sender: Address,
+                      stack_pool: &mut Vec<Stack>,
+                      memory_pool: &mut Vec<Memory>|
+         -> Option<WarmedTx> {
+            let results = results?;
+            let merged: Arc<dyn Database> = Arc::new(MergedDb {
+                cache: store.clone(),
+                writes: results.writes.clone(),
+                position,
+            });
+            let mut db = GeneralizedDatabase::new(merged);
+            db.stop_when_executed_past = Some((results.executed.clone(), position));
+            let coinbase_before = coinbase_balance(&mut db, header.coinbase).ok()?;
+            db.tx_reads = Some(TxReads::default());
+            let mut initcode_pool = Vec::new();
+            let report = Self::run_tx_in_block(
+                tx,
+                sender,
+                header,
+                &mut db,
+                vm_type,
+                base_blob_fee_per_gas,
+                stack_pool,
+                memory_pool,
+                &mut initcode_pool,
+                false,
+                false,
+                crypto,
+                evm_config,
+                chain_id,
+                None,
+            )
+            .ok()?
+            .ok()?;
+            WarmedTx::capture(&mut db, report, header.coinbase, coinbase_before)
+        };
+        // Publishes a result for execution to take. One that a result published for an earlier
+        // position already invalidated is left marked for the sweeper: re-running it here would
+        // hold back the units still warming.
+        let publish = |position: usize, sender: Address, warmed: WarmedTx| {
+            let Some(results) = results else {
+                return;
+            };
+            let invalidated = rewarm_enabled
+                && results.executed.load(Ordering::Relaxed) <= position
+                && results.conflicts(position, sender, &warmed);
+            results.put(position, warmed);
+            if invalidated {
+                results.mark_stale(position);
+            }
+        };
+        // Units this block handed to discovery passes after a cold walk.
+        let handoffs = std::sync::atomic::AtomicUsize::new(0);
+        let discover_block = discover;
         let warm_one = |stack_pool: &mut Vec<Stack>, unit: &WarmUnit<'_>, passes: usize| {
             let mut memory_pool = Vec::with_capacity(1);
+            let mut initcode_pool = Vec::new();
             // A whole sender group runs each transaction after the ones before it, as execution
             // will, so its results are kept for execution to take.
-            let results = results.filter(|_| {
-                !unit.split || first_split.get(&unit.sender) == Some(&unit.first_position())
-            });
-            let keep_results = results.is_some();
+            let keep_results = results.is_some()
+                && (!unit.split || first_split.get(&unit.sender) == Some(&unit.first_position()));
             // Without discovery a run reads the store itself, so each result is ready as its
             // transaction ends; a discovery pass only knows at its end whether it read the
             // parent state.
-            let mut initcode_pool = Vec::new();
-            let mut run = |db: &mut GeneralizedDatabase,
-                           disable_nonce_check: bool,
-                           publish: bool| {
-                let mut warmed = Vec::new();
+            // With `read_budget`, a transaction that waits on the disk for HANDOFF_SLOW_READS
+            // slots stops there, and the run reports that it handed off.
+            // Diagnostics: how the last discovery pass's first failed transaction ended.
+            let diag_halt = std::cell::RefCell::new(String::new());
+            // Whether the last discovery pass had a transaction that did not succeed.
+            let pass_failed = std::cell::Cell::new(false);
+            let run = |db: &mut GeneralizedDatabase,
+                       stack_pool: &mut Vec<Stack>,
+                       memory_pool: &mut Vec<Memory>,
+                       initcode_pool: &mut Vec<InitcodeBuffer>,
+                       disable_nonce_check: bool,
+                       publish_now: bool,
+                       read_budget: bool| {
+                let mut warmed: Vec<(usize, WarmedTx)> = Vec::new();
+                let mut handed_off = false;
+                let over_budget = |db: &GeneralizedDatabase| {
+                    db.stop_after_slow_reads
+                        .is_some_and(|limit| ethrex_levm::db::slow_slot_reads() >= limit)
+                };
                 for (tx, &position) in unit.txs.iter().zip(&unit.positions) {
                     if should_stop() {
                         break;
                     }
+                    // Execution past this transaction has no use for its result, and a run it
+                    // overtakes stops at its next state access; either way the rest of the unit
+                    // runs on a state execution has already left behind.
+                    let passed_position =
+                        |results: &WarmedTxs| results.executed.load(Ordering::Relaxed) > position;
+                    if results.is_some_and(passed_position) {
+                        break;
+                    }
+                    db.stop_when_executed_past =
+                        results.map(|results| (results.executed.clone(), position));
+                    db.stop_after_slow_reads = read_budget.then(|| {
+                        ethrex_levm::db::slow_slot_reads().saturating_add(*HANDOFF_SLOW_READS_KNOB)
+                    });
                     if keep_results {
                         // The balance check stays on: turning it off also skips charging the
                         // sender, which would leave its balance wrong.
                         let coinbase_before = coinbase_balance(db, header.coinbase).ok();
                         db.tx_reads = Some(TxReads::default());
+                        if let Some(results) = results {
+                            results.diag_mark_start(position);
+                        }
                         let result = Self::run_tx_in_block(
                             tx,
                             unit.sender,
@@ -4261,8 +5379,8 @@ impl LEVM {
                             vm_type,
                             base_blob_fee_per_gas,
                             stack_pool,
-                            &mut memory_pool,
-                            &mut initcode_pool,
+                            memory_pool,
+                            initcode_pool,
                             false,
                             disable_nonce_check,
                             crypto,
@@ -4270,8 +5388,43 @@ impl LEVM {
                             chain_id,
                             None,
                         );
+                        if let Some(results) = results {
+                            let outcome = match &result {
+                                Ok(Ok(_)) => 1,
+                                _ if passed_position(results) => 2,
+                                Ok(Err(VMError::TxValidation(
+                                    TxValidationError::InsufficientAccountFunds,
+                                ))) => 3,
+                                Ok(Err(VMError::TxValidation(_))) => 4,
+                                _ => 5,
+                            };
+                            results.diag_mark_end(position, outcome);
+                        }
                         match result {
                             Ok(Ok(report)) => {
+                                // The transaction ran to its end: reads that complete its result
+                                // must not count against its read budget.
+                                db.stop_after_slow_reads = None;
+                                if !publish_now && !report.is_success() {
+                                    pass_failed.set(true);
+                                }
+                                if !publish_now
+                                    && !report.is_success()
+                                    && let Ok(mut halt) = diag_halt.try_borrow_mut()
+                                    && halt.is_empty()
+                                {
+                                    let output: String = report
+                                        .output
+                                        .iter()
+                                        .take(68)
+                                        .map(|byte| format!("{byte:02x}"))
+                                        .collect();
+                                    *halt = format!("{:?} 0x{output}", report.result)
+                                        .chars()
+                                        .filter(|c| !c.is_whitespace())
+                                        .take(240)
+                                        .collect();
+                                }
                                 if let Some(coinbase_before) = coinbase_before
                                     && let Some(result) = WarmedTx::capture(
                                         db,
@@ -4280,20 +5433,37 @@ impl LEVM {
                                         coinbase_before,
                                     )
                                 {
-                                    match results {
-                                        Some(results) if publish => results.put(position, result),
-                                        _ => warmed.push((position, result)),
+                                    if publish_now {
+                                        publish(position, unit.sender, result);
+                                    } else {
+                                        warmed.push((position, result));
                                     }
+                                } else if let Some(results) = results {
+                                    results.diag_mark_uncaptured(position);
                                 }
                                 db.tx_reads = None;
                                 continue;
                             }
-                            // Checked before anything changed: warm it unchecked as before.
+                            // Checked before anything changed: warm it unchecked as before, and
+                            // let the sweeper warm it again once an earlier transaction of the
+                            // block that pays the sender has published its result.
                             Ok(Err(VMError::TxValidation(
                                 TxValidationError::InsufficientAccountFunds,
-                            ))) => db.tx_reads = None,
+                            ))) => {
+                                db.tx_reads = None;
+                                if publish_now && let Some(results) = results {
+                                    results.mark_waiting(position);
+                                }
+                            }
                             _ => {
                                 db.tx_reads = None;
+                                if results.is_some_and(passed_position) {
+                                    break;
+                                }
+                                if over_budget(db) {
+                                    handed_off = true;
+                                    break;
+                                }
                                 continue;
                             }
                         }
@@ -4306,8 +5476,8 @@ impl LEVM {
                         vm_type,
                         base_blob_fee_per_gas,
                         stack_pool,
-                        &mut memory_pool,
-                        &mut initcode_pool,
+                        memory_pool,
+                        initcode_pool,
                         true,
                         disable_nonce_check,
                         crypto,
@@ -4315,35 +5485,171 @@ impl LEVM {
                         chain_id,
                         None,
                     );
+                    if results.is_some_and(passed_position) {
+                        break;
+                    }
+                    if over_budget(db) {
+                        handed_off = true;
+                        break;
+                    }
                 }
-                warmed
+                db.stop_when_executed_past = None;
+                db.stop_after_slow_reads = None;
+                (warmed, handed_off)
             };
-            for _ in 0..passes {
-                if should_stop() || passed(unit) {
+            // Diagnostics: passes run, keys fetched, and how the discovery of this unit ended
+            // (0 not run, 1 published, 2 stopped, 3 out of passes).
+            let diag_start = std::time::Instant::now();
+            let diag_passes = std::cell::Cell::new(0_usize);
+            let diag_fetched = std::cell::Cell::new(0_usize);
+            let diag_end = std::cell::Cell::new(0_u8);
+            let diag_log = |trigger: &str| {
+                if diag_passes.get() == 0 || (unit.gas_limit() < 1_000_000 && trigger != "handoff")
+                {
                     return;
                 }
-                let view = Arc::new(DiscoveryDb::new(store.clone()));
-                let mut db = GeneralizedDatabase::new(view.clone());
-                // Absent answers can leave the sender's nonce wrong.
-                let warmed = run(&mut db, true, false);
-                let misses = view.take_misses();
-                if misses.is_empty() {
-                    // Every read came from the cache, so these ran on the parent state.
-                    if let Some(results) = results {
-                        warmed
-                            .into_iter()
-                            .for_each(|(position, warmed)| results.put(position, warmed));
+                ::tracing::info!(
+                    "[METRIC] DISCUNIT {} {} | gas_limit {} | txs {} | trigger {} | passes {} | fetched {} | end {} | elapsed_us {} | halt {}",
+                    header.number,
+                    unit.first_position(),
+                    unit.gas_limit(),
+                    unit.txs.len(),
+                    trigger,
+                    diag_passes.get(),
+                    diag_fetched.get(),
+                    diag_end.get(),
+                    diag_start.elapsed().as_micros(),
+                    diag_halt
+                        .try_borrow()
+                        .map(|halt| halt.clone())
+                        .unwrap_or_default(),
+                );
+            };
+            // Runs up to `passes` discovery passes; true once the unit is warmed or no longer
+            // needed. With `give_up_on_trickle`, a unit whose passes past the third each find
+            // only a key or two stops discovering: it follows a chain of reads that each depend
+            // on the one before, which reading one by one already serves best.
+            let discover = |stack_pool: &mut Vec<Stack>,
+                            memory_pool: &mut Vec<Memory>,
+                            initcode_pool: &mut Vec<InitcodeBuffer>,
+                            passes: usize,
+                            writes: Option<WarmWritesSink<'_>>,
+                            give_up_on_trickle: bool|
+             -> bool {
+                // A pass whose transaction failed may have stopped on a placeholder (a field read
+                // as zero failing a `> 0` check, one read as all ones failing a deadline check),
+                // and then finds one loop iteration's keys per pass: the next passes read missing
+                // slots as the next placeholder instead.
+                let mut placeholder = 0_usize;
+                for pass in 0..passes {
+                    if should_stop() || passed(unit) {
+                        diag_end.set(2);
+                        return true;
                     }
-                    if let Some(writes) = writes {
-                        let (slots, accounts) = speculative_writes(&db);
-                        writes(slots, accounts);
+                    diag_passes.set(diag_passes.get() + 1);
+                    if let Ok(mut halt) = diag_halt.try_borrow_mut() {
+                        halt.clear();
                     }
-                    return;
+                    let view = Arc::new(DiscoveryDb::with_slot_placeholder(
+                        store.clone(),
+                        match placeholder {
+                            0 => U256::zero(),
+                            1 => U256::one(),
+                            _ => U256::from_big_endian(&[1; 32]),
+                        },
+                    ));
+                    let mut db = GeneralizedDatabase::new(view.clone());
+                    pass_failed.set(false);
+                    // Absent answers can leave the sender's nonce wrong.
+                    let (warmed, _) = run(&mut db, stack_pool, memory_pool, initcode_pool, true, false, false);
+                    let misses = view.take_misses();
+                    if misses.is_empty() {
+                        // Every read came from the cache, so these ran on the parent state.
+                        for (position, result) in warmed {
+                            publish(position, unit.sender, result);
+                        }
+                        if let Some(writes) = writes {
+                            let (slots, accounts) = speculative_writes(&db);
+                            writes(slots, accounts);
+                        }
+                        diag_end.set(1);
+                        return true;
+                    }
+                    let found = misses.accounts.len()
+                        + misses.slots.len()
+                        + misses.codes.len()
+                        + misses.code_lengths.len();
+                    diag_fetched.set(diag_fetched.get() + found);
+                    fetch_misses(&store, misses);
+                    if give_up_on_trickle {
+                        if pass_failed.get() && pass < HANDOFF_PLACEHOLDER_PASSES {
+                            placeholder = (placeholder + 1) % 3;
+                        } else if pass >= HANDOFF_TRICKLE_AFTER && found <= HANDOFF_TRICKLE_KEYS {
+                            diag_end.set(4);
+                            return false;
+                        }
+                    }
                 }
-                fetch_misses(&store, misses);
+                if passes > 0 {
+                    diag_end.set(3);
+                }
+                false
+            };
+            let diag_trigger = if passes == 0 {
+                "none"
+            } else if discover_block {
+                "block"
+            } else {
+                "probe"
+            };
+            if discover(stack_pool, &mut memory_pool, &mut initcode_pool, passes, writes, false) {
+                diag_log(diag_trigger);
+                return;
             }
+            diag_log(diag_trigger);
+            // A unit that did not discover hands off to discovery once one of its transactions
+            // walks cold storage, while the block has hand-offs left.
+            let read_budget = passes == 0
+                && *HANDOFF_SLOW_READS_KNOB > 0
+                && handoffs.load(Ordering::Relaxed) < MAX_HANDOFFS;
             let mut db = GeneralizedDatabase::new(store.clone());
-            run(&mut db, unit.split, true);
+            let (_, handed_off) = run(
+                &mut db,
+                stack_pool,
+                &mut memory_pool,
+                &mut initcode_pool,
+                unit.split,
+                true,
+                read_budget,
+            );
+            if handed_off {
+                handoffs.fetch_add(1, Ordering::Relaxed);
+                diag_passes.set(0);
+                diag_fetched.set(0);
+                diag_end.set(0);
+                let done = discover(
+                    stack_pool,
+                    &mut memory_pool,
+                    &mut initcode_pool,
+                    DISCOVERY_PASSES,
+                    handoff_writes,
+                    true,
+                );
+                diag_log("handoff");
+                if done {
+                    return;
+                }
+                db = GeneralizedDatabase::new(store.clone());
+                run(
+                    &mut db,
+                    stack_pool,
+                    &mut memory_pool,
+                    &mut initcode_pool,
+                    unit.split,
+                    true,
+                    false,
+                );
+            }
             if let Some(writes) = writes
                 && !should_stop()
             {
@@ -4371,6 +5677,7 @@ impl LEVM {
                 }
                 let unit = &units[i];
                 if passed(unit) {
+                    unit_finished();
                     return;
                 }
                 // While reads come from memory, a discovery pass only reruns transactions to
@@ -4383,6 +5690,16 @@ impl LEVM {
                     0
                 };
                 warm_one(stack_pool, unit, passes);
+                // A transaction split out after its sender's first one warmed on the parent
+                // state, where the sender has not sent the transactions before it, so it kept
+                // no result: once those publish theirs, the sweeper warms it on them.
+                if unit.split
+                    && first_split.get(&unit.sender) != Some(&unit.first_position())
+                    && let Some(results) = results
+                {
+                    results.mark_waiting(unit.first_position());
+                }
+                unit_finished();
             };
             if lane < HEAVY_LANE_WORKERS {
                 while let Some(&i) = heavy.get(next_heavy.fetch_add(1, Ordering::Relaxed)) {
@@ -4400,11 +5717,75 @@ impl LEVM {
                 take(i, &mut stack_pool);
             }
         };
-        rayon::scope(|scope| {
-            for i in 0..rayon::current_num_threads() {
-                let worker = &worker;
-                scope.spawn(move |_| worker(i));
+        // A result published before the writes of an earlier position were, or before that
+        // position was re-warmed, may no longer hold: publishing marks the later positions that
+        // read what it wrote. A sweeper checks the marked results execution has not reached
+        // and re-warms those that no longer hold, round after round while units are still
+        // publishing, then until a round finds nothing marked.
+        let sweeper = || {
+            let Some(results) = results else {
+                return;
+            };
+            if !rewarm_enabled {
+                return;
             }
+            let mut stack_pool = Vec::with_capacity(STACK_LIMIT);
+            let mut memory_pool = Vec::with_capacity(1);
+            loop {
+                let mut found = results.record_executed();
+                let mut position = results.executed.load(Ordering::Relaxed);
+                while position < by_position.len() {
+                    if should_stop() {
+                        return;
+                    }
+                    if results.take_stale(position) {
+                        found = true;
+                        if results.executed.load(Ordering::Relaxed) <= position
+                            && let Some((tx, sender)) = by_position.get(position).copied().flatten()
+                            && results.published_conflicts(position, sender)
+                            && let Some(warmed) =
+                                rewarm(position, tx, sender, &mut stack_pool, &mut memory_pool)
+                        {
+                            results.put(position, warmed);
+                        }
+                    }
+                    if results.is_waiting(position) {
+                        if results.has_result(position)
+                            || results.executed.load(Ordering::Relaxed) > position
+                        {
+                            results.clear_waiting(position);
+                        } else if let Some((tx, sender)) =
+                            by_position.get(position).copied().flatten()
+                            && let Some(warmed) =
+                                rewarm(position, tx, sender, &mut stack_pool, &mut memory_pool)
+                        {
+                            results.clear_waiting(position);
+                            results.put(position, warmed);
+                            found = true;
+                        }
+                    }
+                    position = position.saturating_add(1);
+                }
+                // Nothing is left to re-warm once execution has run every transaction, and the
+                // block must not wait for one more round. Until then the writes of the
+                // transactions execution runs itself keep marking results, after every unit
+                // is done too.
+                if results.executed.load(Ordering::Relaxed) >= by_position.len() {
+                    return;
+                }
+                if !found {
+                    std::thread::sleep(std::time::Duration::from_micros(100));
+                }
+            }
+        };
+        std::thread::scope(|threads| {
+            threads.spawn(sweeper);
+            rayon::scope(|scope| {
+                for i in 0..rayon::current_num_threads() {
+                    let worker = &worker;
+                    scope.spawn(move |_| worker(i));
+                }
+            });
         });
         Ok(())
     }
@@ -7166,6 +8547,7 @@ mod reuse_tests {
     use ethrex_common::types::{
         AccountInfo, AccountState, ChainConfig, CodeMetadata, EIP1559Transaction,
     };
+    use ethrex_levm::db::gen_db::BalanceBounds;
     use ethrex_levm::errors::DatabaseError;
 
     fn sender() -> Address {
@@ -7310,6 +8692,85 @@ mod reuse_tests {
                 .holds(&mut sender_balance, &tx(4), sender())
                 .unwrap()
         );
+
+        let with_pool_nonce = |nonce: u64| {
+            let mut db = db();
+            db.get_account_mut(pool()).unwrap().info.nonce = nonce;
+            db
+        };
+        // A nonce the transaction did not use exactly may differ, but not whether it is zero.
+        assert!(
+            warmed()
+                .holds(&mut with_pool_nonce(5), &tx(4), sender())
+                .unwrap()
+        );
+        assert!(
+            !warmed()
+                .holds(&mut with_pool_nonce(0), &tx(4), sender())
+                .unwrap()
+        );
+        let mut used_nonce = warmed();
+        used_nonce.reads.nonces.insert(pool());
+        assert!(
+            !used_nonce
+                .holds(&mut with_pool_nonce(5), &tx(4), sender())
+                .unwrap()
+        );
+
+        // A balance only compared against transfer values holds while the comparisons do.
+        let bounded = |lower: u64, upper: Option<u64>| {
+            let mut warmed = warmed();
+            warmed.reads.balance_bounds.insert(
+                pool(),
+                BalanceBounds {
+                    lower: U256::from(lower),
+                    upper: upper.map(U256::from),
+                },
+            );
+            warmed
+        };
+        assert!(
+            bounded(60, None)
+                .holds(&mut with_pool_balance(60), &tx(4), sender())
+                .unwrap()
+        );
+        assert!(
+            !bounded(60, None)
+                .holds(&mut with_pool_balance(59), &tx(4), sender())
+                .unwrap()
+        );
+        assert!(
+            bounded(0, Some(100))
+                .holds(&mut with_pool_balance(99), &tx(4), sender())
+                .unwrap()
+        );
+        assert!(
+            !bounded(0, Some(100))
+                .holds(&mut with_pool_balance(100), &tx(4), sender())
+                .unwrap()
+        );
+    }
+
+    /// The bounds a transfer check leaves follow from the balance it saw and the value: a check
+    /// that passed with slack lets the starting balance fall by that slack; one that failed caps
+    /// it below the start plus the deficit.
+    #[test]
+    fn transfer_checks_bound_the_starting_balance() {
+        let mut db = db();
+        db.tx_reads = Some(TxReads::default());
+        db.get_account(pool()).unwrap();
+        // Start 100; the transaction paid 30 earlier, so it sees 70 and sends 50: slack 20.
+        db.observe_balance_check(pool(), U256::from(70), U256::from(50));
+        let bounds = db.tx_reads.as_ref().unwrap().balance_bounds[&pool()].clone();
+        assert_eq!(bounds.lower, U256::from(80));
+        assert_eq!(bounds.upper, None);
+        // Later it sees 20 and fails to send 25: the start must stay below 105.
+        db.observe_balance_check(pool(), U256::from(20), U256::from(25));
+        let bounds = db.tx_reads.as_ref().unwrap().balance_bounds[&pool()].clone();
+        assert_eq!(bounds.lower, U256::from(80));
+        assert_eq!(bounds.upper, Some(U256::from(105)));
+        assert!(bounds.admit(U256::from(80)) && bounds.admit(U256::from(104)));
+        assert!(!bounds.admit(U256::from(79)) && !bounds.admit(U256::from(105)));
     }
 
     /// A credit to an account whose balance the transaction did not read is applied on top of
@@ -7332,6 +8793,71 @@ mod reuse_tests {
             db.current_accounts_state[&pool()].info.balance,
             U256::from(530)
         );
+    }
+
+    #[test]
+    fn apply_keeps_a_nonce_the_transaction_did_not_use() {
+        let mut warmed = warmed();
+        let mut touched = AccountSnapshot::of(&{
+            let mut db = db();
+            db.get_account(pool()).unwrap().clone()
+        });
+        let warmed_nonce = touched.info.nonce;
+        touched.info.balance = U256::from(130);
+        warmed.accounts.push((pool(), touched));
+        let mut db = db();
+        db.get_account_mut(pool()).unwrap().info.nonce = warmed_nonce + 7;
+
+        assert!(warmed.holds(&mut db, &tx(4), sender()).unwrap());
+        warmed.apply(&mut db, coinbase()).unwrap();
+        let pool_after = &db.current_accounts_state[&pool()];
+        assert_eq!(
+            (pool_after.info.nonce, pool_after.info.balance),
+            (warmed_nonce + 7, U256::from(130))
+        );
+    }
+
+    #[cfg(feature = "rayon")]
+    #[test]
+    fn published_writes_layer_over_the_cache_by_position() {
+        let results = WarmedTxs::new(3);
+        results.tracking.store(true, Ordering::Relaxed);
+        results.put(1, warmed());
+        let view = |position| MergedDb {
+            cache: Arc::new(Store),
+            writes: results.writes.clone(),
+            position,
+        };
+        // Nothing was written before position 1: the parent state.
+        assert_eq!(
+            view(1).get_storage_value(pool(), key()).unwrap(),
+            U256::from(5)
+        );
+        assert_eq!(view(1).get_account_state(sender()).unwrap().nonce, 4);
+        // From position 2 on, a transaction finds what the result at 1 wrote.
+        assert_eq!(
+            view(2).get_storage_value(pool(), key()).unwrap(),
+            U256::from(6)
+        );
+        let sender_after = view(2).get_account_state(sender()).unwrap();
+        assert_eq!(
+            (sender_after.nonce, sender_after.balance),
+            (5, U256::from(90))
+        );
+        // A result at 2 that read the parent's slot value conflicts with it; one at 1 does not.
+        assert!(results.conflicts(2, sender(), &warmed()));
+        assert!(!results.conflicts(1, sender(), &warmed()));
+        assert!(!results.published_conflicts(1, sender()));
+        // Replacing the result at 1 drops what the old one wrote.
+        let mut replaced = warmed();
+        replaced.slots = vec![((pool(), key()), U256::from(7))];
+        replaced.accounts = Vec::new();
+        results.put(1, replaced);
+        assert_eq!(
+            view(2).get_storage_value(pool(), key()).unwrap(),
+            U256::from(7)
+        );
+        assert_eq!(view(2).get_account_state(sender()).unwrap().nonce, 4);
     }
 
     #[test]

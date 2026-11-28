@@ -12,6 +12,7 @@ use crate::types::{
     compute_receipts_root_and_logs_bloom, validate_block_header, validate_cancun_header_fields,
     validate_prague_header_fields, validate_pre_cancun_header_fields,
 };
+use ethereum_types::{Bloom, H256};
 use ethrex_crypto::{Crypto, NativeCrypto};
 use ethrex_rlp::encode::RLPEncode;
 
@@ -117,7 +118,15 @@ pub fn validate_receipts_root_and_logs_bloom(
     crypto: &dyn Crypto,
 ) -> Result<(), InvalidBlockError> {
     let (receipts_root, logs_bloom) = compute_receipts_root_and_logs_bloom(receipts, crypto);
+    validate_receipts_commitment(block_header, receipts_root, logs_bloom)
+}
 
+/// Checks an already computed receipts root and aggregate logs bloom against the header.
+pub fn validate_receipts_commitment(
+    block_header: &BlockHeader,
+    receipts_root: H256,
+    logs_bloom: Bloom,
+) -> Result<(), InvalidBlockError> {
     if receipts_root != block_header.receipts_root {
         return Err(InvalidBlockError::ReceiptsRootMismatch);
     }

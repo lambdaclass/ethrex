@@ -11,6 +11,44 @@ use std::sync::{
 
 pub mod gen_db;
 
+thread_local! {
+    /// Storage slots this thread's reads through a [`CachingDatabase`] waited on the disk for.
+    static SLOW_SLOT_READS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    /// Diagnostics: this thread's reads beneath a [`CachingDatabase`] (accounts, slots, code):
+    /// how many, their total microseconds, and how many took over `SLOW_SLOT_READ`.
+    static DIAG_STORE_READS: std::cell::Cell<(u32, u64, u32)> = const { std::cell::Cell::new((0, 0, 0)) };
+}
+
+/// Diagnostics: this thread's reads beneath a [`CachingDatabase`] since the last call.
+pub fn diag_take_store_reads() -> (u32, u64, u32) {
+    DIAG_STORE_READS.with(|cell| cell.replace((0, 0, 0)))
+}
+
+fn diag_store_read(start: std::time::Instant) {
+    let elapsed = start.elapsed();
+    let us = u64::try_from(elapsed.as_micros()).unwrap_or(u64::MAX);
+    let slow = u32::from(elapsed > SLOW_SLOT_READ);
+    DIAG_STORE_READS.with(|cell| {
+        let (count, total, slow_count) = cell.get();
+        cell.set((
+            count.wrapping_add(1),
+            total.saturating_add(us),
+            slow_count.wrapping_add(slow),
+        ));
+    });
+}
+
+/// Read time of a storage slot from beneath a [`CachingDatabase`] above which the read is taken
+/// to have gone to the disk rather than to memory.
+const SLOW_SLOT_READ: std::time::Duration = std::time::Duration::from_micros(50);
+
+/// How many storage slots this thread's reads through a [`CachingDatabase`] have waited on the
+/// disk for so far. A warming run compares it during a transaction to notice one that walks
+/// cold storage one slot at a time.
+pub fn slow_slot_reads() -> u32 {
+    SLOW_SLOT_READS.with(std::cell::Cell::get)
+}
+
 /// Distinct-cold-key count above which a prefetch routes to the sorted, sharded
 /// batch read instead of per-key parallel point-gets. Shared by the account and
 /// storage prefetch gates here and by the merkle trie-node prefetch gate in
@@ -76,6 +114,13 @@ pub trait Database: Send + Sync {
     /// Records state changes the block's execution made, as it sends them to the
     /// merkleizer. Default: dropped.
     fn record_block_writes(&self, _updates: &[AccountUpdate]) {}
+    /// The Keccak-256 of a 64-byte input, such as a mapping's slot, that this layer kept.
+    /// Default: `None`, for layers that keep nothing.
+    fn cached_keccak64(&self, _input: &[u8; 64]) -> Option<[u8; 32]> {
+        None
+    }
+    /// Keeps the Keccak-256 of a 64-byte input for later lookups. Default: dropped.
+    fn keep_keccak64(&self, _input: [u8; 64], _hash: [u8; 32]) {}
     /// Moves out everything this layer holds in memory, leaving it empty. Default: `None`,
     /// for layers that keep nothing.
     fn take_entries(&self) -> Option<CarriedEntries> {
@@ -206,7 +251,17 @@ pub struct CachingDatabase {
     /// State changes the block's execution made, kept so the cache can be carried to the
     /// next block.
     block_writes: std::sync::Mutex<Vec<AccountUpdate>>,
+    /// Keccak-256 of 64-byte inputs (mapping slots) the block's transactions hashed, so
+    /// execution and later warming passes find the hashes warming already computed.
+    keccak64: [RwLock<SeededHashMap<[u8; 64], [u8; 32]>>; KECCAK64_SHARDS],
 }
+
+/// Shards of [`CachingDatabase::keccak64`], picked by a byte of the hashed key.
+const KECCAK64_SHARDS: usize = 16;
+
+/// Hashes each shard of [`CachingDatabase::keccak64`] keeps at most, about 2 MiB, so a block
+/// full of KECCAK256 calls cannot grow it without bound.
+const KECCAK64_SHARD_CAPACITY: usize = 16_384;
 
 impl CachingDatabase {
     pub fn new(inner: Arc<dyn Database>, precompile_cache_enabled: bool) -> Self {
@@ -219,7 +274,15 @@ impl CachingDatabase {
             precompile_cache: precompile_cache_enabled.then(PrecompileCache::new),
             chain_config: OnceLock::new(),
             block_writes: std::sync::Mutex::new(Vec::new()),
+            keccak64: std::array::from_fn(|_| RwLock::new(SeededHashMap::default())),
         }
+    }
+
+    /// The shard holding `input`'s hash: by the last byte of the key, its first word, which
+    /// varies for addresses and hashes alike. The index is reduced modulo the shard count, so
+    /// the lookup never misses; `get` only satisfies the no-indexing lint.
+    fn keccak64_shard(&self, input: &[u8; 64]) -> Option<&RwLock<SeededHashMap<[u8; 64], [u8; 32]>>> {
+        self.keccak64.get(usize::from(input[31]) % KECCAK64_SHARDS)
     }
 
     fn read_accounts(&self) -> Result<RwLockReadGuard<'_, AccountCache>, DatabaseError> {
@@ -371,7 +434,9 @@ impl Database for CachingDatabase {
         }
 
         // Cache miss: query underlying database
+        let diag_start = std::time::Instant::now();
         let state = self.inner.get_account_state(address)?;
+        diag_store_read(diag_start);
 
         // Populate cache (AccountState is Copy, no clone needed)
         self.write_accounts()?.insert(address, state);
@@ -386,7 +451,12 @@ impl Database for CachingDatabase {
         }
 
         // Cache miss: query underlying database
+        let start = std::time::Instant::now();
         let value = self.inner.get_storage_value(address, key)?;
+        diag_store_read(start);
+        if start.elapsed() > SLOW_SLOT_READ {
+            SLOW_SLOT_READS.with(|reads| reads.set(reads.get().wrapping_add(1)));
+        }
 
         // Populate cache (U256 is Copy, no clone needed)
         self.write_storage()?.insert((address, key), value);
@@ -417,7 +487,9 @@ impl Database for CachingDatabase {
         }
 
         // Cache miss: query underlying database
+        let diag_start = std::time::Instant::now();
         let code = self.inner.get_account_code(code_hash)?;
+        diag_store_read(diag_start);
 
         // Populate cache (Code contains Bytes which is ref-counted, clone is cheap)
         self.keep_code(&mut *self.write_code()?, code_hash, code.clone());
@@ -441,6 +513,19 @@ impl Database for CachingDatabase {
 
     fn precompile_cache(&self) -> Option<&PrecompileCache> {
         self.precompile_cache.as_ref()
+    }
+
+    fn cached_keccak64(&self, input: &[u8; 64]) -> Option<[u8; 32]> {
+        self.keccak64_shard(input)?.read().ok()?.get(input).copied()
+    }
+
+    fn keep_keccak64(&self, input: [u8; 64], hash: [u8; 32]) {
+        if let Some(shard) = self.keccak64_shard(&input)
+            && let Ok(mut shard) = shard.write()
+            && shard.len() < KECCAK64_SHARD_CAPACITY
+        {
+            shard.insert(input, hash);
+        }
     }
 
     fn cached_account_state(&self, address: Address) -> Option<AccountState> {
@@ -738,6 +823,37 @@ mod code_bytes_tests {
             assert_eq!(cache.read_accounts().unwrap().len(), 6);
             assert_eq!(cache.read_storage().unwrap().len(), 6);
         }
+    }
+
+    /// A kept 64-byte hash SHALL be returned for the same input only, and a full shard
+    /// SHALL keep what it holds and take no more.
+    #[test]
+    fn keccak64_returns_kept_hashes_and_stops_at_capacity() {
+        let cache = CachingDatabase::new(Arc::new(BigCodeStore), false);
+        let input = |key: u64, shard: u8| {
+            let mut input = [0u8; 64];
+            input[..8].copy_from_slice(&key.to_be_bytes());
+            input[31] = shard;
+            input
+        };
+        let hash = [7u8; 32];
+
+        assert_eq!(cache.cached_keccak64(&input(1, 0)), None);
+        cache.keep_keccak64(input(1, 0), hash);
+        assert_eq!(cache.cached_keccak64(&input(1, 0)), Some(hash));
+        assert_eq!(cache.cached_keccak64(&input(2, 0)), None);
+
+        for key in 2..=KECCAK64_SHARD_CAPACITY as u64 + 1 {
+            cache.keep_keccak64(input(key, 0), hash);
+        }
+        assert_eq!(cache.cached_keccak64(&input(1, 0)), Some(hash));
+        assert_eq!(
+            cache.cached_keccak64(&input(KECCAK64_SHARD_CAPACITY as u64 + 1, 0)),
+            None
+        );
+        // Another shard still takes hashes.
+        cache.keep_keccak64(input(1, 1), hash);
+        assert_eq!(cache.cached_keccak64(&input(1, 1)), Some(hash));
     }
 }
 

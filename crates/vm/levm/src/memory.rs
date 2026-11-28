@@ -191,6 +191,15 @@ impl Memory {
         unsafe { &mut *self.buffer.as_ptr() }
     }
 
+    /// Experiment (not for merge): this frame's first memory byte, for the fast loop's MLOAD and
+    /// MSTORE of words that are already inside `len`. Valid until the buffer is resized, which the
+    /// fast loop never does (it leaves any access that would grow memory to the handlers).
+    #[inline(always)]
+    pub(crate) fn frame_base_ptr(&self) -> *mut u8 {
+        // `current_base <= buffer.len()`: a frame's base is the buffer length when it starts.
+        self.buf_mut().as_mut_ptr().wrapping_add(self.current_base)
+    }
+
     /// Returns the len of the current memory, from the current base.
     #[inline]
     pub fn len(&self) -> usize {

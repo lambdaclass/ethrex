@@ -17,7 +17,7 @@ use crate::{
     block_data_buffer::BlockDataBuffer,
     error::StoreError,
     journal::{FlatDiff, JournalEntry},
-    layering::{Overlay, OverlayCf, TrieLayerCache, TrieWrapper},
+    layering::{Overlay, OverlayCf, PrewarmedNodes, RecordingTrieDB, TrieLayerCache, TrieWrapper},
     rlp::{BlockBodyRLP, BlockHeaderRLP, BlockRLP},
     trie::{BackendTrieDB, BackendTrieDBLocked, classify_trie_key},
     utils::{ChainDataIndex, SnapStateIndex},
@@ -499,6 +499,9 @@ pub struct Store {
     /// Signalled when an input of the node's sync status may have changed: the
     /// canonical head, the sync target, the executed head or the synced flag.
     sync_status_changed: Arc<tokio::sync::watch::Sender<()>>,
+
+    /// Trie nodes the mempool prewarmer read for the next block's parent state.
+    prewarmed_nodes: Arc<PrewarmedNodes>,
 
     background_threads: Arc<ThreadList>,
 }
@@ -2641,6 +2644,8 @@ impl Store {
             safe_commit_root,
             journal_pruning_paused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             sync_status_changed: Arc::new(tokio::sync::watch::Sender::new(())),
+
+            prewarmed_nodes: Default::default(),
             background_threads: Default::default(),
         };
         let backend_clone = store.backend.clone();
@@ -4443,8 +4448,60 @@ impl Store {
                 self.last_written()?,
             )?),
             None,
+        )
+        .with_prewarmed(self.prewarmed_nodes.frozen_for(state_root));
+        Ok(Trie::open(Box::new(trie_db), state_root))
+    }
+
+    /// Like [`Self::open_state_trie`], recording the nodes it reads from disk for the block
+    /// built on `state_root` (see [`Self::freeze_prewarmed_nodes`]).
+    pub fn open_state_trie_recording(&self, state_root: H256) -> Result<Trie, StoreError> {
+        self.prewarmed_nodes.begin(state_root);
+        let trie_db = TrieWrapper::new(
+            state_root,
+            self.gated_snapshot(state_root)?,
+            Box::new(RecordingTrieDB {
+                inner: Box::new(BackendTrieDB::new_for_accounts(
+                    self.backend.clone(),
+                    self.last_written()?,
+                )?),
+                sink: self.prewarmed_nodes.clone(),
+                root: state_root,
+            }),
+            None,
         );
         Ok(Trie::open(Box::new(trie_db), state_root))
+    }
+
+    /// Like [`Self::open_storage_trie`], recording the nodes it reads from disk for the block
+    /// built on `state_root` (see [`Self::freeze_prewarmed_nodes`]).
+    pub fn open_storage_trie_recording(
+        &self,
+        account_hash: H256,
+        state_root: H256,
+        storage_root: H256,
+    ) -> Result<Trie, StoreError> {
+        self.prewarmed_nodes.begin(state_root);
+        let trie_db = TrieWrapper::new(
+            state_root,
+            self.gated_snapshot(state_root)?,
+            Box::new(RecordingTrieDB {
+                inner: Box::new(BackendTrieDB::new_for_storages(
+                    self.backend.clone(),
+                    self.last_written()?,
+                )?),
+                sink: self.prewarmed_nodes.clone(),
+                root: state_root,
+            }),
+            Some(account_hash),
+        );
+        Ok(Trie::open(Box::new(trie_db), storage_root))
+    }
+
+    /// Makes the nodes recorded while walking tries at `state_root` readable by the tries
+    /// opened at that root from now on (the block being executed on it).
+    pub fn freeze_prewarmed_nodes(&self, state_root: H256) {
+        self.prewarmed_nodes.freeze(state_root);
     }
 
     /// Obtain a state trie from the given state root
@@ -4492,7 +4549,8 @@ impl Store {
                 self.last_written()?,
             )?),
             Some(account_hash),
-        );
+        )
+        .with_prewarmed(self.prewarmed_nodes.frozen_for(state_root));
         Ok(Trie::open(Box::new(trie_db), storage_root))
     }
 

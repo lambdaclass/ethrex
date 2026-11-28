@@ -472,6 +472,25 @@ fn run_pass(blockchain: &Blockchain, pool: &rayon::ThreadPool, req: PrewarmReque
         std::thread::sleep(Duration::from_millis(100));
     }
 
+    // Merge what the parent's execution left cached into this cache now, while no block is
+    // executing: left for the block, every entry of the smaller of the two maps is inserted
+    // into the other at the start of its execution, milliseconds after a pass that read a lot.
+    // Only while the block has not taken this cache, holding the hand-off slot so a block
+    // that arrives meanwhile waits for the merge instead of executing on a cache being written.
+    if !req.cancel.load(Ordering::Relaxed)
+        && let Ok(handoff) = blockchain.prewarmed.0.lock()
+        && handoff
+            .as_ref()
+            .is_some_and(|entry| Arc::ptr_eq(&entry.cache, &cache_dyn))
+        && let Ok(mut carried) = blockchain.carried.0.lock()
+        && let Some(state) =
+            carried.take_if(|state| state.block_hash == parent.hash() && state.fork == warmed_fork)
+    {
+        drop(carried);
+        cache_dyn.seed_entries(state.entries);
+        drop(handoff);
+    }
+
     if passes == 0 {
         debug!("Prewarm pass: nothing to warm this slot");
         return;
@@ -538,7 +557,7 @@ fn warm_merkle_paths(
         });
     let mut walked: u64 = 0;
 
-    let state_trie = match blockchain.storage.open_state_trie(parent.state_root) {
+    let state_trie = match open_walk_state_trie(blockchain, parent.state_root) {
         Ok(trie) => trie,
         Err(e) => {
             debug!("Merkle warm skipped: state trie unavailable: {e}");
@@ -576,9 +595,7 @@ fn warm_merkle_paths(
             continue;
         }
         let Ok(storage_trie) =
-            blockchain
-                .storage
-                .open_storage_trie(hashed, parent.state_root, storage_root)
+            open_walk_storage_trie(blockchain, hashed, parent.state_root, storage_root)
         else {
             continue;
         };
@@ -591,6 +608,42 @@ fn warm_merkle_paths(
         }
     }
     walked
+}
+
+/// Experiment (diag build): keep the nodes the path walks read for the block built on the walked
+/// root, `ETHREX_EXP_PREWARM_NODES` (default on; 0 = walk without recording).
+#[cfg(feature = "rayon")]
+static RECORD_WALKED_NODES: std::sync::LazyLock<bool> =
+    std::sync::LazyLock::new(|| std::env::var("ETHREX_EXP_PREWARM_NODES").as_deref() != Ok("0"));
+
+#[cfg(feature = "rayon")]
+fn open_walk_state_trie(
+    blockchain: &Blockchain,
+    state_root: ethrex_common::H256,
+) -> Result<ethrex_trie::Trie, ethrex_storage::error::StoreError> {
+    if *RECORD_WALKED_NODES {
+        blockchain.storage.open_state_trie_recording(state_root)
+    } else {
+        blockchain.storage.open_state_trie(state_root)
+    }
+}
+
+#[cfg(feature = "rayon")]
+fn open_walk_storage_trie(
+    blockchain: &Blockchain,
+    account_hash: ethrex_common::H256,
+    state_root: ethrex_common::H256,
+    storage_root: ethrex_common::H256,
+) -> Result<ethrex_trie::Trie, ethrex_storage::error::StoreError> {
+    if *RECORD_WALKED_NODES {
+        blockchain
+            .storage
+            .open_storage_trie_recording(account_hash, state_root, storage_root)
+    } else {
+        blockchain
+            .storage
+            .open_storage_trie(account_hash, state_root, storage_root)
+    }
 }
 
 #[cfg(test)]

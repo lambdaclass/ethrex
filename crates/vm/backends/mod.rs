@@ -497,6 +497,21 @@ pub struct BlockExecutionResult {
     /// re-derived data. Used by `validate_gas_used` mismatch logging to localize
     /// which tx and which dimension caused the divergence.
     pub tx_gas_breakdowns: Vec<TxGasBreakdown>,
+    /// The receipts root and aggregate logs bloom of `receipts`, when the executor computed
+    /// them alongside execution; `None` leaves them to the block's validation.
+    pub receipts_commitment: Option<(ethrex_common::H256, ethrex_common::Bloom)>,
+    /// What became of the block warmer's results at execution. All zero when the block ran
+    /// without a warmer.
+    pub warmed_results: WarmedResultCounts,
+}
+
+/// How many of a block's transactions took the warmer's result, rejected it because something
+/// it read had changed, or found none ready when execution reached them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WarmedResultCounts {
+    pub reused: usize,
+    pub rejected: usize,
+    pub missing: usize,
 }
 
 /// Per-tx gas-dimension snapshot captured at the block-execution boundary.

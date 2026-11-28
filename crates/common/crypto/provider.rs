@@ -379,11 +379,18 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
     /// [`crate::u256_div::mul_mod`].
     /// ZisK overrides with a native circuit instruction.
     fn mulmod256(&self, a: &[u8; 32], b: &[u8; 32], m: &[u8; 32]) -> [u8; 32] {
-        let a = ethereum_types::U256::from_big_endian(a);
-        let b = ethereum_types::U256::from_big_endian(b);
-        let m = ethereum_types::U256::from_big_endian(m);
-
-        crate::u256_div::mul_mod(a, b, m).to_big_endian()
+        // Reduces the 512-bit product by the 256-bit modulus directly, rather than dividing two
+        // 512-bit numbers; a zero modulus gives zero, as the EVM requires.
+        let a = ruint::aliases::U256::from_be_bytes(*a);
+        let b = ruint::aliases::U256::from_be_bytes(*b);
+        let m = ruint::aliases::U256::from_be_bytes(*m);
+        // Zero-knowledge verifiers multiply in one of BN254's two prime fields almost every time,
+        // with operands already reduced: a precomputed Barrett constant then replaces the
+        // division.
+        if let Some(product) = bn254_barrett::mulmod(a.as_limbs(), b.as_limbs(), m.as_limbs()) {
+            return ruint::aliases::U256::from_limbs(product).to_be_bytes();
+        }
+        a.mul_mod(b, m).to_be_bytes()
     }
 
     // ── Blake2 ─────────────────────────────────────────────────────────
@@ -697,4 +704,245 @@ pub(crate) fn modexp_arbitrary_precision(
 
     let res_bytes: Vec<u8> = result.to_power_of_2_digits_desc(8);
     pad_modexp_output(res_bytes, modulus.len())
+}
+
+/// MULMOD by one of BN254's two prime fields through Barrett reduction with a precomputed
+/// constant, for operands already below the prime.
+mod bn254_barrett {
+    /// Scalar field prime, little-endian limbs.
+    const FR: [u64; 4] = [
+        0x43e1_f593_f000_0001,
+        0x2833_e848_79b9_7091,
+        0xb850_45b6_8181_585d,
+        0x3064_4e72_e131_a029,
+    ];
+    /// floor(2^512 / FR).
+    const FR_MU: [u64; 5] = [
+        0x2070_3a6b_e1de_9259,
+        0x1448_5200_9e88_0ae6,
+        0xb074_a586_8073_0147,
+        0x4a47_4626_23a0_4a7a,
+        0x0000_0000_0000_0005,
+    ];
+    /// Base field prime, little-endian limbs.
+    const FQ: [u64; 4] = [
+        0x3c20_8c16_d87c_fd47,
+        0x9781_6a91_6871_ca8d,
+        0xb850_45b6_8181_585d,
+        0x3064_4e72_e131_a029,
+    ];
+    /// floor(2^512 / FQ).
+    const FQ_MU: [u64; 5] = [
+        0xf3ae_d8a1_9bf9_0e51,
+        0xe965_e176_7cd4_c086,
+        0xb074_a586_8073_013a,
+        0x4a47_4626_23a0_4a7a,
+        0x0000_0000_0000_0005,
+    ];
+
+    /// `a * b mod m` when `m` is one of the two primes and both operands are below it.
+    pub(super) fn mulmod(a: &[u64; 4], b: &[u64; 4], m: &[u64; 4]) -> Option<[u64; 4]> {
+        let mu = if *m == FR {
+            &FR_MU
+        } else if *m == FQ {
+            &FQ_MU
+        } else {
+            return None;
+        };
+        if !less(a, m) || !less(b, m) {
+            return None;
+        }
+        Some(reduce(&product(a, b), m, mu))
+    }
+
+    fn less(x: &[u64; 4], y: &[u64; 4]) -> bool {
+        x.iter().rev().cmp(y.iter().rev()) == core::cmp::Ordering::Less
+    }
+
+    fn product(a: &[u64; 4], b: &[u64; 4]) -> [u64; 8] {
+        let mut out = [0u64; 8];
+        for (i, &ai) in a.iter().enumerate() {
+            let mut carry = 0u128;
+            for (j, &bj) in b.iter().enumerate() {
+                let t = u128::from(ai) * u128::from(bj) + u128::from(out[i + j]) + carry;
+                out[i + j] = t as u64;
+                carry = t >> 64;
+            }
+            out[i + 4] = carry as u64;
+        }
+        out
+    }
+
+    /// Barrett reduction (HAC 14.42, base 2^64, four-limb modulus) of `x < m^2`.
+    fn reduce(x: &[u64; 8], m: &[u64; 4], mu: &[u64; 5]) -> [u64; 4] {
+        // q = floor(floor(x / 2^192) * mu / 2^320), at most two below floor(x / m).
+        let q1 = [x[3], x[4], x[5], x[6], x[7]];
+        let mut q2 = [0u64; 10];
+        for (i, &qi) in q1.iter().enumerate() {
+            let mut carry = 0u128;
+            for (j, &muj) in mu.iter().enumerate() {
+                let t = u128::from(qi) * u128::from(muj) + u128::from(q2[i + j]) + carry;
+                q2[i + j] = t as u64;
+                carry = t >> 64;
+            }
+            q2[i + 5] = carry as u64;
+        }
+        let q = [q2[5], q2[6], q2[7], q2[8], q2[9]];
+        // r = (x - q * m) mod 2^320, which is below 3m.
+        let mut qm = [0u64; 5];
+        for (i, &qi) in q.iter().enumerate() {
+            let mut carry = 0u128;
+            for (j, &mj) in m.iter().enumerate() {
+                if i + j >= 5 {
+                    break;
+                }
+                let t = u128::from(qi) * u128::from(mj) + u128::from(qm[i + j]) + carry;
+                qm[i + j] = t as u64;
+                carry = t >> 64;
+            }
+            if i + 4 < 5 {
+                qm[i + 4] = qm[i + 4].wrapping_add(carry as u64);
+            }
+        }
+        let mut r = sub5(&[x[0], x[1], x[2], x[3], x[4]], &qm);
+        let m5 = [m[0], m[1], m[2], m[3], 0];
+        for _ in 0..2 {
+            if r.iter().rev().cmp(m5.iter().rev()) == core::cmp::Ordering::Less {
+                break;
+            }
+            r = sub5(&r, &m5);
+        }
+        [r[0], r[1], r[2], r[3]]
+    }
+
+    fn sub5(x: &[u64; 5], y: &[u64; 5]) -> [u64; 5] {
+        let mut out = [0u64; 5];
+        let mut borrow = false;
+        for k in 0..5 {
+            let (d1, b1) = x[k].overflowing_sub(y[k]);
+            let (d2, b2) = d1.overflowing_sub(u64::from(borrow));
+            out[k] = d2;
+            borrow = b1 || b2;
+        }
+        out
+    }
+}
+
+#[cfg(test)]
+mod mulmod256_tests {
+    use super::Crypto;
+    use crate::native::NativeCrypto;
+    use num_bigint::BigUint;
+
+    fn reference(a: &[u8; 32], b: &[u8; 32], m: &[u8; 32]) -> [u8; 32] {
+        let m = BigUint::from_bytes_be(m);
+        let mut out = [0u8; 32];
+        if m == BigUint::ZERO {
+            return out;
+        }
+        let r = (BigUint::from_bytes_be(a) * BigUint::from_bytes_be(b)) % m;
+        let bytes = r.to_bytes_be();
+        out[32 - bytes.len()..].copy_from_slice(&bytes);
+        out
+    }
+
+    fn word(seed: &mut u64) -> [u8; 32] {
+        let mut out = [0u8; 32];
+        for chunk in out.chunks_mut(8) {
+            *seed ^= *seed << 13;
+            *seed ^= *seed >> 7;
+            *seed ^= *seed << 17;
+            chunk.copy_from_slice(&seed.to_be_bytes());
+        }
+        out
+    }
+
+    #[test]
+    fn both_bn254_primes_take_the_barrett_path() {
+        let fr = [
+            0x43e1_f593_f000_0001,
+            0x2833_e848_79b9_7091,
+            0xb850_45b6_8181_585d,
+            0x3064_4e72_e131_a029,
+        ];
+        let fq = [
+            0x3c20_8c16_d87c_fd47,
+            0x9781_6a91_6871_ca8d,
+            0xb850_45b6_8181_585d,
+            0x3064_4e72_e131_a029,
+        ];
+        for m in [fr, fq] {
+            assert_eq!(
+                super::bn254_barrett::mulmod(&[3, 0, 0, 0], &[5, 0, 0, 0], &m),
+                Some([15, 0, 0, 0])
+            );
+            // An operand at or above the prime goes to the general path.
+            assert_eq!(super::bn254_barrett::mulmod(&m, &[1, 0, 0, 0], &m), None);
+        }
+    }
+
+    #[test]
+    fn matches_a_bigint_reference_on_edges_and_random_words() {
+        let zero = [0u8; 32];
+        let one = {
+            let mut w = [0u8; 32];
+            w[31] = 1;
+            w
+        };
+        let max = [0xffu8; 32];
+        let edges = [zero, one, max, {
+            let mut w = max;
+            w[31] = 0xfe;
+            w
+        }];
+        for a in edges {
+            for b in edges {
+                for m in edges {
+                    assert_eq!(NativeCrypto.mulmod256(&a, &b, &m), reference(&a, &b, &m));
+                }
+            }
+        }
+        // Both BN254 primes, with reduced operands (the Barrett path) and unreduced ones.
+        let primes = [
+            "30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001",
+            "30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47",
+        ]
+        .map(|hex| {
+            let mut w = [0u8; 32];
+            for (i, byte) in w.iter_mut().enumerate() {
+                *byte = u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap_or_default();
+            }
+            w
+        });
+        let mut seed = 0x51f1_5e4c_0de0_b7a1_u64;
+        for p in primes {
+            let pm1 = {
+                let mut w = p;
+                w[31] -= 1;
+                w
+            };
+            for a in [zero, one, pm1, p, max] {
+                for b in [zero, one, pm1, p, max] {
+                    assert_eq!(NativeCrypto.mulmod256(&a, &b, &p), reference(&a, &b, &p));
+                }
+            }
+            for _ in 0..5000 {
+                let mut a = word(&mut seed);
+                let mut b = word(&mut seed);
+                // Keep most operands below the prime, so the Barrett path runs.
+                a[0] &= 0x2f;
+                b[0] &= 0x2f;
+                assert_eq!(NativeCrypto.mulmod256(&a, &b, &p), reference(&a, &b, &p));
+            }
+        }
+        let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
+        for _ in 0..2000 {
+            let (a, b) = (word(&mut seed), word(&mut seed));
+            // Moduli of every width, from one limb to four.
+            let mut m = word(&mut seed);
+            let zeros = usize::from(m[0] % 32);
+            m[..zeros].fill(0);
+            assert_eq!(NativeCrypto.mulmod256(&a, &b, &m), reference(&a, &b, &m));
+        }
+    }
 }

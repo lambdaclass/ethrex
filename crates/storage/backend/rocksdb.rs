@@ -267,7 +267,13 @@ impl RocksDBBackend {
                     cf_opts.set_max_write_buffer_number(6);
                     cf_opts.set_min_write_buffer_number_to_merge(2);
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
-                    cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
+                    // Whole-key bloom over the memtables, so the point gets that miss them
+                    // (most of them: trie and flat reads mostly hit older SSTs) skip the
+                    // skiplist search. The ratio alone does nothing: RocksDB only builds a
+                    // memtable bloom with a prefix extractor or whole-key filtering. ~10
+                    // bits per key needs about 2% of a 512MB memtable.
+                    cf_opts.set_memtable_prefix_bloom_ratio(0.02);
+                    cf_opts.set_memtable_whole_key_filtering(true);
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
@@ -280,7 +286,13 @@ impl RocksDBBackend {
                     cf_opts.set_max_write_buffer_number(6);
                     cf_opts.set_min_write_buffer_number_to_merge(2);
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
-                    cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
+                    // Whole-key bloom over the memtables, so the point gets that miss them
+                    // (most of them: trie and flat reads mostly hit older SSTs) skip the
+                    // skiplist search. The ratio alone does nothing: RocksDB only builds a
+                    // memtable bloom with a prefix extractor or whole-key filtering. ~10
+                    // bits per key needs about 2% of a 512MB memtable.
+                    cf_opts.set_memtable_prefix_bloom_ratio(0.02);
+                    cf_opts.set_memtable_whole_key_filtering(true);
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB

@@ -33,6 +33,7 @@ tokio-util.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
+secp256k1.workspace = true
 ethrex-levm.workspace = true
 tempfile.workspace = true
 

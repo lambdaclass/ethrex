@@ -24,6 +24,16 @@ use crate::{
 };
 use ethrex_common::U256;
 
+/// `a < b` for unsigned 256-bit values, limb by limb from the most significant.
+///
+/// `U256`'s `PartialOrd` is not inlined into the handlers, so every LT/GT/SLT/SGT paid a call
+/// for a four-limb compare.
+#[inline(always)]
+fn u256_lt(a: &U256, b: &U256) -> bool {
+    let (a, b) = (&a.0, &b.0);
+    (a[3], a[2], a[1], a[0]) < (b[3], b[2], b[1], b[0])
+}
+
 /// Implementation for the `LT` opcode.
 pub struct OpLtHandler;
 impl OpcodeHandler for OpLtHandler {
@@ -33,7 +43,7 @@ impl OpcodeHandler for OpLtHandler {
 
         let (&lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
         #[expect(clippy::as_conversions, reason = "safe")]
-        let res = (lhs < *rhs) as u64;
+        let res = u256_lt(&lhs, rhs) as u64;
         store_u64(rhs, res);
 
         Ok(OpcodeResult::Continue)
@@ -49,7 +59,7 @@ impl OpcodeHandler for OpGtHandler {
 
         let (&lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
         #[expect(clippy::as_conversions, reason = "safe")]
-        let res = (lhs > *rhs) as u64;
+        let res = u256_lt(rhs, &lhs) as u64;
         store_u64(rhs, res);
 
         Ok(OpcodeResult::Continue)
@@ -72,7 +82,7 @@ impl OpcodeHandler for OpSLtHandler {
             (false, true) => 0,
             (true, false) => 1,
             #[expect(clippy::as_conversions, reason = "safe")]
-            _ => (lhs < rhs) as u64,
+            _ => u256_lt(&lhs, &rhs) as u64,
         };
         store_u64(slot, res);
 
@@ -96,7 +106,7 @@ impl OpcodeHandler for OpSGtHandler {
             (false, true) => 1,
             (true, false) => 0,
             #[expect(clippy::as_conversions, reason = "safe")]
-            _ => (lhs > rhs) as u64,
+            _ => u256_lt(&rhs, &lhs) as u64,
         };
         store_u64(slot, res);
 
@@ -428,6 +438,39 @@ mod tests {
                 let expected = U256::from(value.byte(usize::from(31 - x)));
                 let got = U256::from(shift_right(&value, 8 * (31 - x), 0).0[0] & 0xff);
                 assert_eq!(got, expected, "{value:x} byte {x}");
+            }
+        }
+    }
+
+    #[test]
+    fn u256_lt_matches_ordering() {
+        let mut values = vec![
+            U256::zero(),
+            U256::one(),
+            U256::from(u64::MAX),
+            U256([0, 1, 0, 0]),
+            U256([0, 0, 1, 0]),
+            U256([0, 0, 0, 1]),
+            U256([u64::MAX, 0, 0, 1]),
+            U256([0, u64::MAX, u64::MAX, 0]),
+            U256::MAX,
+            U256::MAX - 1,
+            U256::one() << 255,
+        ];
+        // Values that differ in every limb position, from a fixed-seed LCG.
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = || {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            state >> 62
+        };
+        for _ in 0..64 {
+            values.push(U256([next(), next(), next(), next()]));
+        }
+        for a in &values {
+            for b in &values {
+                assert_eq!(u256_lt(a, b), a < b, "{a:#x} < {b:#x}");
             }
         }
     }

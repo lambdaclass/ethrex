@@ -50,9 +50,12 @@ impl OpcodeHandler for OpGasHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::GAS)?;
 
+        // The charge above succeeded, so `gas_remaining` is non-negative and the unsigned
+        // reinterpretation is exact (and inlines, unlike `U256: From<i64>`).
+        let gas_remaining = vm.current_call_frame.gas_remaining.cast_unsigned();
         vm.current_call_frame
             .stack
-            .push(vm.current_call_frame.gas_remaining.into())?;
+            .push(U256::from(gas_remaining))?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -482,7 +485,7 @@ impl OpcodeHandler for OpJumpIHandler {
 /// `synthesize_step` after the gas is charged — including when that charge is
 /// what runs the frame out of gas, so the trace keeps the step an unfused
 /// dispatch would have logged.
-fn jump(vm: &mut VM<'_>, target: usize, parent_gas_cost: u64) -> Result<(), VMError> {
+pub(crate) fn jump(vm: &mut VM<'_>, target: usize, parent_gas_cost: u64) -> Result<(), VMError> {
     // Check target address validity: the target has to be a JUMPDEST that is not part
     // of a literal (aka. a PUSH immediate). Both are answered by the bitmap, which only
     // has bits set for JUMPDESTs reached by the opcode walk.

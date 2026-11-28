@@ -85,6 +85,7 @@ pub mod vm;
 pub use environment::*;
 pub mod account;
 pub mod execute_precompile;
+mod fast_loop;
 #[cfg(feature = "perf_opcode_timings")]
 pub mod timings;
 

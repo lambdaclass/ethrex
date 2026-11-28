@@ -209,6 +209,27 @@ pub fn get_authorized_address_from_code(code: &[u8]) -> Result<Address, VMError>
     }
 }
 
+/// Authorization lists at least this long have their authorities recovered in parallel before
+/// they are processed: each recovery is a signature recovery, tens of microseconds on its own.
+#[cfg(feature = "rayon")]
+const PARALLEL_AUTHORITY_RECOVERY_MIN: usize = 8;
+
+/// Threads that recover authorization lists' authorities. A pool of their own, not rayon's global
+/// one: the thread processing a transaction waits for the recoveries, and the global pool's workers
+/// may be busy with work that itself waits on that thread, which would never finish. These threads
+/// only run signature recoveries, so they always make progress. `None` if the pool could not be
+/// built; the authorities are then recovered one by one.
+#[cfg(feature = "rayon")]
+static AUTHORITY_RECOVERY_POOL: std::sync::LazyLock<Option<rayon::ThreadPool>> =
+    std::sync::LazyLock::new(|| {
+        let threads = std::thread::available_parallelism().map_or(4, |n| n.get().min(8));
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .thread_name(|i| format!("authority-recovery-{i}"))
+            .build()
+            .ok()
+    });
+
 pub fn eip7702_recover_address(
     auth_tuple: &AuthorizationTuple,
     crypto: &dyn ethrex_crypto::Crypto,
@@ -386,7 +407,29 @@ impl<'a> VM<'a> {
         // IMPORTANT:
         // If any of the below steps fail, immediately stop processing that tuple and continue to the next tuple in the list. It will in the case of multiple tuples for the same authority, set the code using the address in the last valid occurrence.
         // If transaction execution results in failure (any exceptional condition or code reverting), setting delegation designations is not rolled back (unless the atomic prepare region OOGs, which rolls back everything).
-        for auth_tuple in self.tx.authorization_list().cloned().unwrap_or_default() {
+        let authorization_list = self.tx.authorization_list().cloned().unwrap_or_default();
+        // Each tuple's recovery result, in list order, when the list is long enough to recover
+        // them all at once in parallel. A result is only used, and its error only returned, where
+        // the loop below would have recovered that tuple itself.
+        #[cfg(feature = "rayon")]
+        let mut recovered = (authorization_list.len() >= PARALLEL_AUTHORITY_RECOVERY_MIN)
+            .then_some(())
+            .and(AUTHORITY_RECOVERY_POOL.as_ref())
+            .map(|pool| {
+                use rayon::prelude::*;
+                let crypto = self.crypto;
+                pool.install(|| {
+                    authorization_list
+                        .par_iter()
+                        .map(|auth_tuple| eip7702_recover_address(auth_tuple, crypto))
+                        .collect::<Vec<_>>()
+                })
+                .into_iter()
+            });
+        #[cfg(not(feature = "rayon"))]
+        let mut recovered: Option<std::vec::IntoIter<Result<Option<Address>, VMError>>> = None;
+        for auth_tuple in authorization_list {
+            let precomputed = recovered.as_mut().and_then(Iterator::next);
             let chain_id_not_equals_this_chain_id = auth_tuple.chain_id != self.env.chain_id;
             let chain_id_not_zero = !auth_tuple.chain_id.is_zero();
 
@@ -403,7 +446,11 @@ impl<'a> VM<'a> {
 
             // 3. authority = ecrecover(keccak(MAGIC || rlp([chain_id, address, nonce])), y_parity, r, s)
             //      s value must be less than or equal to secp256k1n/2, as specified in EIP-2.
-            let Some(authority_address) = eip7702_recover_address(&auth_tuple, self.crypto)? else {
+            let authority = match precomputed {
+                Some(result) => result?,
+                None => eip7702_recover_address(&auth_tuple, self.crypto)?,
+            };
+            let Some(authority_address) = authority else {
                 continue;
             };
 
@@ -440,6 +487,7 @@ impl<'a> VM<'a> {
             // 6. Verify the nonce of authority is equal to nonce. In case authority does not exist in the trie, verify that nonce is equal to 0.
             // If it doesn't exist, it means the nonce is zero. The get_account() function will return Account::default()
             // If it has nonce, the account.info.nonce should equal auth_tuple.nonce
+            self.db.observe_nonce(authority_address);
             if authority_info.nonce != auth_tuple.nonce {
                 continue;
             }
