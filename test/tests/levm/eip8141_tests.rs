@@ -1669,7 +1669,7 @@ mod frame_tx_7702_delegation_tests {
     use ethrex_levm::db::{Database, gen_db::GeneralizedDatabase};
     use ethrex_levm::errors::DatabaseError;
     use ethrex_levm::utils::eip7702_get_code;
-    use ethrex_levm::vm::Substate;
+    use ethrex_levm::vm::{Substate, VMType};
     use rustc_hash::FxHashMap;
     use std::sync::Arc;
 
@@ -1776,7 +1776,7 @@ mod frame_tx_7702_delegation_tests {
         let mut substate = Substate::default();
 
         let (is_delegation, _access_cost, code_address, code) =
-            eip7702_get_code(&mut db, &mut substate, delegator, Fork::Hegota).unwrap();
+            eip7702_get_code(&mut db, &mut substate, delegator, Fork::Hegota, VMType::L1).unwrap();
 
         assert!(
             is_delegation,
@@ -1816,7 +1816,7 @@ mod frame_tx_7702_delegation_tests {
         let mut substate = Substate::default();
 
         let (is_delegation, _access_cost, code_address, code) =
-            eip7702_get_code(&mut db, &mut substate, delegator, Fork::Hegota).unwrap();
+            eip7702_get_code(&mut db, &mut substate, delegator, Fork::Hegota, VMType::L1).unwrap();
 
         assert!(is_delegation, "delegation indicator must still be detected");
         assert_eq!(code_address, delegatee);
@@ -1847,7 +1847,7 @@ mod frame_tx_7702_delegation_tests {
         let mut substate = Substate::default();
 
         let (is_delegation, _access_cost, code_address, code) =
-            eip7702_get_code(&mut db, &mut substate, eoa_addr, Fork::Hegota).unwrap();
+            eip7702_get_code(&mut db, &mut substate, eoa_addr, Fork::Hegota, VMType::L1).unwrap();
 
         assert!(!is_delegation, "plain EOA has no delegation indicator");
         assert_eq!(
@@ -1877,8 +1877,14 @@ mod frame_tx_7702_delegation_tests {
         let mut db = build_db(vec![(contract_addr, contract_account)]);
         let mut substate = Substate::default();
 
-        let (is_delegation, _access_cost, code_address, code) =
-            eip7702_get_code(&mut db, &mut substate, contract_addr, Fork::Hegota).unwrap();
+        let (is_delegation, _access_cost, code_address, code) = eip7702_get_code(
+            &mut db,
+            &mut substate,
+            contract_addr,
+            Fork::Hegota,
+            VMType::L1,
+        )
+        .unwrap();
 
         assert!(
             !is_delegation,

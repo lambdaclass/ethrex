@@ -1906,6 +1906,7 @@ impl<'a> VM<'a> {
                     &mut self.substate,
                     target,
                     self.env.config.fork,
+                    self.vm_type,
                 )?;
 
             // Mirror default_hook::set_bytecode_and_code_address: when delegation was
@@ -2635,6 +2636,7 @@ impl<'a> VM<'a> {
                     &mut self.substate,
                     target,
                     self.env.config.fork,
+                    self.vm_type,
                 )?;
 
             self.substate.push_backup();
@@ -3165,6 +3167,7 @@ impl<'a> VM<'a> {
                 &mut self.substate,
                 target,
                 self.env.config.fork,
+                self.vm_type,
             )?;
         self.validation_check_call_target(target, is_delegation_7702)
     }

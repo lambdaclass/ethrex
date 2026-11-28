@@ -1968,4 +1968,91 @@ mod integration_tests {
              {identity_in_block_2}"
         );
     }
+
+    /// SHA-256 precompile, and an account the tests below point at it with an
+    /// EIP-7702 delegation designator.
+    const SHA256: &str = "0x0000000000000000000000000000000000000002";
+    const DELEGATOR: &str = "0xc300000000000000000000000000000000000000";
+
+    /// An override on a precompile address lasts one block, but the code it wrote
+    /// stays in the accumulated state. In a later block the precompile is active
+    /// again, and EIP-7702 says a delegation to a precompile runs empty code, so the
+    /// delegation must return nothing instead of the stale block-1 bytecode
+    /// (ethereum/execution-apis#981). Reproduces issue #7588.
+    #[tokio::test]
+    async fn delegation_to_restored_precompile_runs_empty_code() {
+        let result = simulate(json!([{
+            "blockStateCalls": [
+                {
+                    "stateOverrides": {
+                        // PUSH1 0x2a PUSH1 0 MSTORE PUSH1 32 PUSH1 0 RETURN
+                        SHA256: { "code": "0x602a60005260206000f3" },
+                        DELEGATOR: { "code": "0xef01000000000000000000000000000000000000000002" },
+                    },
+                    "calls": [{"from": RICH, "to": DELEGATOR, "input": "0x1234"}],
+                },
+                {
+                    "calls": [
+                        {"from": RICH, "to": DELEGATOR, "input": "0x1234"},
+                        {"from": RICH, "to": SHA256, "input": "0x1234"},
+                    ],
+                },
+            ],
+        }, "latest"]))
+        .await
+        .expect("the simulation itself should succeed");
+        let blocks = result.as_array().unwrap();
+
+        let delegated_in_block_1 = &blocks[0]["calls"][0];
+        assert_eq!(
+            delegated_in_block_1["returnData"],
+            json!("0x000000000000000000000000000000000000000000000000000000000000002a"),
+            "the override code should run while 0x02 is overridden: {delegated_in_block_1}"
+        );
+
+        let delegated_in_block_2 = &blocks[1]["calls"][0];
+        assert_eq!(delegated_in_block_2["status"], json!("0x1"));
+        assert_eq!(
+            delegated_in_block_2["returnData"],
+            json!("0x"),
+            "a delegation to the restored precompile ran the stale override code: \
+             {delegated_in_block_2}"
+        );
+
+        let direct_in_block_2 = &blocks[1]["calls"][1];
+        assert_eq!(
+            direct_in_block_2["returnData"],
+            json!("0x3a103a4e5729ad68c02a678ae39accfbc0ae208096437401b7ceab63cca0622f"),
+            "0x02 should run SHA-256 again in block 2: {direct_in_block_2}"
+        );
+    }
+
+    /// Control for the test above: when a later block overrides the precompile again
+    /// (here by moving it away), it is out of the active set in that block, so the
+    /// delegation runs the code the address holds.
+    #[tokio::test]
+    async fn delegation_to_overridden_precompile_runs_its_code_in_later_block() {
+        let result = simulate(json!([{
+            "blockStateCalls": [
+                {
+                    "stateOverrides": {
+                        SHA256: { "code": "0x602a60005260206000f3" },
+                        DELEGATOR: { "code": "0xef01000000000000000000000000000000000000000002" },
+                    },
+                },
+                {
+                    "stateOverrides": { SHA256: { "movePrecompileToAddress": RELOCATED } },
+                    "calls": [{"from": RICH, "to": DELEGATOR, "input": "0x1234"}],
+                },
+            ],
+        }, "latest"]))
+        .await
+        .expect("the simulation itself should succeed");
+        let call = &result.as_array().unwrap()[1]["calls"][0];
+        assert_eq!(
+            call["returnData"],
+            json!("0x000000000000000000000000000000000000000000000000000000000000002a"),
+            "0x02 is overridden in block 2, so the delegation should run its code: {call}"
+        );
+    }
 }
