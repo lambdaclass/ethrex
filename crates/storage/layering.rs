@@ -670,7 +670,7 @@ impl TrieWrapper {
 }
 
 /// Encoded trie nodes by their full (prefixed) path.
-pub type PrewarmedNodeMap = FxHashMap<Vec<u8>, Vec<u8>>;
+pub type PrewarmedNodeMap = SeededHashMap<Vec<u8>, Vec<u8>>;
 
 /// Trie nodes the mempool prewarmer reads from disk while it walks the paths of the next block's
 /// likely keys, kept for that block's merkleization: its tries are opened at the same parent root

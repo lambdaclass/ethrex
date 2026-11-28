@@ -1267,12 +1267,12 @@ impl WarmedTxs {
 #[cfg(feature = "rayon")]
 #[derive(Default)]
 struct WarmedWrites {
-    slots: FxHashMap<(Address, H256), Vec<(usize, U256)>>,
-    accounts: FxHashMap<Address, Vec<(usize, AccountSnapshot)>>,
-    codes: FxHashMap<H256, Code>,
+    slots: SeededHashMap<(Address, H256), Vec<(usize, U256)>>,
+    accounts: SeededHashMap<Address, Vec<(usize, AccountSnapshot)>>,
+    codes: SeededHashMap<H256, Code>,
     /// The positions whose result read each key: the results a write to it may invalidate.
-    slot_readers: FxHashMap<(Address, H256), Vec<usize>>,
-    account_readers: FxHashMap<Address, Vec<usize>>,
+    slot_readers: SeededHashMap<(Address, H256), Vec<usize>>,
+    account_readers: SeededHashMap<Address, Vec<usize>>,
     /// The keys each position's result wrote and read, dropped when the result is replaced.
     by_position: FxHashMap<usize, PositionKeys>,
 }

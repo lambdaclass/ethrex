@@ -1793,7 +1793,7 @@ impl Blockchain {
             // updates; withdrawal recipients are written after the last transaction.
             let hint_ahead = (*MERKLE_HINT_AHEAD).filter(|_| warmed.is_some_and(|w| !w.is_empty()));
             let mut hinted = vec![false; warmed.map_or(0, |w| w.len())];
-            let mut hint_hashes: FxHashMap<Address, H256> = Default::default();
+            let mut hint_hashes: SeededHashMap<Address, H256> = Default::default();
             let mut diag_hint_keys = 0usize;
             let mut send_hints = |accounts: &[Address],
                                   slots: &[(Address, H256)],
