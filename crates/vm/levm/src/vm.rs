@@ -2926,39 +2926,17 @@ impl<'a> VM<'a> {
         // pass `self` mutably to the handler without reloading the pointer each iteration.
         let opcode_table = self.opcode_table;
 
-        // Experiment (not for merge): `ETHREX_EXP_FAST_LOOP=1` runs straight sequences of simple
-        // opcodes in `fast_loop::run_simple_ops`, with pc, gas and the stack offset in locals.
-        // Off for the tracer and the validation observer (they see every opcode as a step) and
-        // before Shanghai (PUSH0). The opcode it stops at always runs through the table below,
-        // so every pass makes progress.
-        // `ETHREX_EXP_FAST_LOOP=2` also runs MUL and MLOAD/MSTORE of words already in memory
-        // (MSTORE stays on the handler in debug mode, which can intercept it).
-        static FAST_LOOP: std::sync::LazyLock<u8> =
-            std::sync::LazyLock::new(|| match std::env::var("ETHREX_EXP_FAST_LOOP").as_deref() {
-                Ok("0") => 0,
-                Ok("1") => 1,
-                // diag build: level 2 unless the variable says otherwise.
-                _ => 2,
-            });
+        // Straight sequences of simple opcodes run in `fast_loop::run_simple_ops`, with pc, gas
+        // and the stack offset in locals. Off for the tracer and the validation observer (they
+        // see every opcode as a step) and before Shanghai (PUSH0). The opcode it stops at always
+        // runs through the table below, so every pass makes progress.
         let fast_loop = !TRACED
             && !VALIDATING
             && !cfg!(feature = "perf_opcode_timings")
-            && *FAST_LOOP > 0
             && self.env.config.fork >= Fork::Shanghai;
-        // How many simple opcodes in a row it takes to enter (`ETHREX_EXP_FAST_LOOP_RUN`, default 2).
-        // The check walks that many opcodes before every table-dispatched one, so a longer run
-        // costs more than it saves: `PUSH PUSH PUSH CALLDATACOPY` loops were -2% at 2, +7% at 3
-        // and +31% at 4 (never entering). The run-of-2 case it lets in, a lone simple op before
-        // an MLOAD, is covered by level 2.
-        static FAST_LOOP_RUN: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
-            std::env::var("ETHREX_EXP_FAST_LOOP_RUN")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(2)
-                .clamp(1, 8)
-        });
-        let fast_loop_run = *FAST_LOOP_RUN;
-        let memory_ops = *FAST_LOOP >= 2 && !self.debug_mode.enabled;
+        // MUL, the frame reads and MLOAD/MSTORE of words already in memory run there too, except
+        // in debug mode, whose MSTORE handler can intercept the store.
+        let memory_ops = !self.debug_mode.enabled;
         let simple_ops = if memory_ops {
             &crate::fast_loop::SIMPLE_OPS_MEM
         } else {
@@ -2967,13 +2945,7 @@ impl<'a> VM<'a> {
 
         loop {
             #[allow(clippy::indexing_slicing, clippy::as_conversions)]
-            if fast_loop
-                && crate::fast_loop::worth_entering(
-                    &self.current_call_frame,
-                    simple_ops,
-                    fast_loop_run,
-                )
-            {
+            if fast_loop && crate::fast_loop::worth_entering(&self.current_call_frame, simple_ops) {
                 crate::fast_loop::run_simple_ops(&mut self.current_call_frame, memory_ops);
             }
 

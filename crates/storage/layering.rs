@@ -654,18 +654,7 @@ impl TrieWrapper {
     }
 
     fn prewarmed_node(&self, key: &[u8]) -> Option<Vec<u8>> {
-        use std::sync::atomic::Ordering::Relaxed;
-        let nodes = self.prewarmed.as_ref()?;
-        match nodes.get(key) {
-            Some(value) => {
-                DIAG_PREWARMED_HITS.fetch_add(1, Relaxed);
-                Some(value.clone())
-            }
-            None => {
-                DIAG_PREWARMED_MISSES.fetch_add(1, Relaxed);
-                None
-            }
-        }
+        self.prewarmed.as_ref()?.get(key).cloned()
     }
 }
 
@@ -729,7 +718,6 @@ impl PrewarmedNodes {
         if taken.is_empty() && matches!(&*frozen, Some((frozen_root, _)) if *frozen_root == root) {
             return;
         }
-        DIAG_PREWARMED_NODES.store(taken.len() as u64, std::sync::atomic::Ordering::Relaxed);
         *frozen = Some((root, Arc::new(taken)));
     }
 
@@ -794,34 +782,6 @@ pub fn apply_prefix(prefix: Option<H256>, path: Nibbles) -> Nibbles {
     }
 }
 
-/// Diagnostic counters (diag/trie-reads-only, not for merge): trie-node reads by where they were
-/// served, taken and reset once per block.
-pub static DIAG_LAYER_HITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-pub static DIAG_DISK_GETS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-pub static DIAG_DISK_MULTI_KEYS: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
-/// Disk misses of tries with prewarmed nodes attached: served from them / still read from disk.
-pub static DIAG_PREWARMED_HITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-pub static DIAG_PREWARMED_MISSES: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
-/// Nodes in the last frozen prewarmed map.
-pub static DIAG_PREWARMED_NODES: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
-
-/// Takes and resets the diagnostic counters: (layer hits, disk gets, disk multi-get keys,
-/// prewarmed hits, prewarmed misses, prewarmed nodes).
-pub fn take_trie_read_counters() -> [u64; 6] {
-    use std::sync::atomic::Ordering::Relaxed;
-    [
-        DIAG_LAYER_HITS.swap(0, Relaxed),
-        DIAG_DISK_GETS.swap(0, Relaxed),
-        DIAG_DISK_MULTI_KEYS.swap(0, Relaxed),
-        DIAG_PREWARMED_HITS.swap(0, Relaxed),
-        DIAG_PREWARMED_MISSES.swap(0, Relaxed),
-        DIAG_PREWARMED_NODES.load(Relaxed),
-    ]
-}
-
 impl TrieDB for TrieWrapper {
     fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
         // While a deep-reorg overlay serves this root, flat-KV leaf reads must not
@@ -854,10 +814,8 @@ impl TrieDB for TrieWrapper {
         // An overlay hit pre-empts disk because disk still reflects the OLD chain's
         // edge `D`, not the pivot.
         if let Some(value) = self.inner.get_in_chain(&self.chain, key.as_ref()) {
-            DIAG_LAYER_HITS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             return Ok(Some(value));
         }
-        DIAG_DISK_GETS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         // Overlay gate: the overlay reconstructs the pivot's state and the new-chain
         // layers built on top of it. Only a reader at a consuming root (the pivot or one
         // of those layer roots) may see it; an eth_call/getProof at the old cache-edge
@@ -908,8 +866,6 @@ impl TrieDB for TrieWrapper {
         }
 
         if !miss_keys.is_empty() {
-            DIAG_DISK_MULTI_KEYS
-                .fetch_add(miss_keys.len() as u64, std::sync::atomic::Ordering::Relaxed);
             let db_results = self.db.multi_get(&miss_keys);
             for (idx, res) in miss_indices.into_iter().zip(db_results) {
                 results[idx] = Some(res);
@@ -1675,7 +1631,7 @@ mod overlay_tests {
 
         sink.freeze(root);
         assert!(sink.frozen_for(other).is_none());
-        let reader = TrieWrapper::new(root, cache.clone(), Box::new(TaggedDb(b"disk-")), None)
+        let reader = TrieWrapper::new(root, cache, Box::new(TaggedDb(b"disk-")), None)
             .with_prewarmed(sink.frozen_for(root));
         let not_walked_node = [b"disk-".as_slice(), not_walked.as_ref()].concat();
         assert_eq!(
@@ -1687,7 +1643,7 @@ mod overlay_tests {
             Some(not_walked_node.clone())
         );
         let batched: Vec<_> = reader
-            .multi_get(&[walked.clone(), not_walked])
+            .multi_get(&[walked, not_walked])
             .into_iter()
             .map(|r| r.unwrap())
             .collect();

@@ -557,7 +557,12 @@ fn warm_merkle_paths(
         });
     let mut walked: u64 = 0;
 
-    let state_trie = match open_walk_state_trie(blockchain, parent.state_root) {
+    // The walks record the nodes they read from disk, so the block built on this parent finds
+    // them in memory when it merkleizes (see `Store::freeze_prewarmed_nodes`).
+    let state_trie = match blockchain
+        .storage
+        .open_state_trie_recording(parent.state_root)
+    {
         Ok(trie) => trie,
         Err(e) => {
             debug!("Merkle warm skipped: state trie unavailable: {e}");
@@ -595,7 +600,9 @@ fn warm_merkle_paths(
             continue;
         }
         let Ok(storage_trie) =
-            open_walk_storage_trie(blockchain, hashed, parent.state_root, storage_root)
+            blockchain
+                .storage
+                .open_storage_trie_recording(hashed, parent.state_root, storage_root)
         else {
             continue;
         };
@@ -608,42 +615,6 @@ fn warm_merkle_paths(
         }
     }
     walked
-}
-
-/// Experiment (diag build): keep the nodes the path walks read for the block built on the walked
-/// root, `ETHREX_EXP_PREWARM_NODES` (default on; 0 = walk without recording).
-#[cfg(feature = "rayon")]
-static RECORD_WALKED_NODES: std::sync::LazyLock<bool> =
-    std::sync::LazyLock::new(|| std::env::var("ETHREX_EXP_PREWARM_NODES").as_deref() != Ok("0"));
-
-#[cfg(feature = "rayon")]
-fn open_walk_state_trie(
-    blockchain: &Blockchain,
-    state_root: ethrex_common::H256,
-) -> Result<ethrex_trie::Trie, ethrex_storage::error::StoreError> {
-    if *RECORD_WALKED_NODES {
-        blockchain.storage.open_state_trie_recording(state_root)
-    } else {
-        blockchain.storage.open_state_trie(state_root)
-    }
-}
-
-#[cfg(feature = "rayon")]
-fn open_walk_storage_trie(
-    blockchain: &Blockchain,
-    account_hash: ethrex_common::H256,
-    state_root: ethrex_common::H256,
-    storage_root: ethrex_common::H256,
-) -> Result<ethrex_trie::Trie, ethrex_storage::error::StoreError> {
-    if *RECORD_WALKED_NODES {
-        blockchain
-            .storage
-            .open_storage_trie_recording(account_hash, state_root, storage_root)
-    } else {
-        blockchain
-            .storage
-            .open_storage_trie(account_hash, state_root, storage_root)
-    }
 }
 
 #[cfg(test)]

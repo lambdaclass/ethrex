@@ -1,4 +1,4 @@
-//! Experiment (not for merge): an inner dispatch loop for simple opcodes.
+//! An inner dispatch loop for simple opcodes.
 //!
 //! Each opcode the table dispatch runs stores `pc`, the remaining gas and the stack offset
 //! back to the call frame and the next opcode loads them again. Those three store/load chains
@@ -60,8 +60,8 @@ pub(crate) static SIMPLE_OPS: [bool; 256] = {
 };
 
 /// [`SIMPLE_OPS`] plus MUL, MLOAD/MSTORE of words already inside the frame's memory, and the
-/// frame reads ADDRESS, CALLER, CALLVALUE, CALLDATASIZE, RETURNDATASIZE and MSIZE
-/// (`ETHREX_EXP_FAST_LOOP=2`).
+/// frame reads ADDRESS, CALLER, CALLVALUE, CALLDATASIZE, RETURNDATASIZE and MSIZE. Debug mode
+/// uses [`SIMPLE_OPS`] instead: its MSTORE handler can intercept the store.
 pub(crate) static SIMPLE_OPS_MEM: [bool; 256] = {
     let mut table = SIMPLE_OPS;
     table[0x02] = true; // MUL
@@ -76,9 +76,17 @@ pub(crate) static SIMPLE_OPS_MEM: [bool; 256] = {
     table
 };
 
-/// Whether the next `run` opcodes from the frame's `pc` are all simple. Entering and leaving the
-/// loop costs about as much as a few simple opcodes, so a short run between other opcodes
-/// (`RETURNDATASIZE POP RETURNDATASIZE ...`, `POP PUSH0 MLOAD ...`) stays on the table dispatch.
+/// Simple opcodes in a row from the frame's `pc` that [`worth_entering`] requires before the
+/// fast loop runs. The check walks this many opcodes before every table-dispatched one, so a
+/// longer run costs more than it saves: on a loop of three PUSHes and a CALLDATACOPY, a run of
+/// three was slower than two, and a run of four, which never enters there, slower still. Two
+/// still lets in a lone simple opcode before an MLOAD or MSTORE, which [`SIMPLE_OPS_MEM`]
+/// counts as simple.
+const ENTRY_RUN: usize = 2;
+
+/// Whether the next [`ENTRY_RUN`] opcodes from the frame's `pc` are all simple. Entering and
+/// leaving the loop costs about as much as a few simple opcodes, so a lone simple opcode between
+/// other opcodes stays on the table dispatch.
 #[inline(always)]
 #[expect(unsafe_code, reason = "every read is inside the padded bytecode")]
 #[expect(
@@ -86,10 +94,10 @@ pub(crate) static SIMPLE_OPS_MEM: [bool; 256] = {
     clippy::indexing_slicing,
     reason = "opcode bytes index a 256-entry table"
 )]
-pub(crate) fn worth_entering(frame: &CallFrame, simple_ops: &[bool; 256], run: usize) -> bool {
+pub(crate) fn worth_entering(frame: &CallFrame, simple_ops: &[bool; 256]) -> bool {
     let code = frame.bytecode.dispatch_buf();
     let mut pc = frame.pc;
-    for _ in 0..run {
+    for _ in 0..ENTRY_RUN {
         // SAFETY: the first read is at `pc`, inside the padded bytecode (see
         // `CallFrame::next_opcode`); each later one moves past one opcode and its immediates. A
         // read can land in the zero padding only after a run of STOPs (not simple) or past a

@@ -588,157 +588,20 @@ struct CollectedStateMsg {
     subroot: Box<BranchNode>,
     state_nodes: Vec<TrieNode>,
     storage_nodes: Vec<(H256, Vec<TrieNode>)>,
-    diag: Drain2,
 }
-
-/// Diagnostics: one merkle worker's drain with direct slot routing.
-#[derive(Default, Clone, Copy)]
-struct Drain2 {
-    gate_seen_at: Option<Instant>,
-    finish_routing_at: Option<Instant>,
-    collect_done_at: Option<Instant>,
-    state_start_at: Option<Instant>,
-    sent_at: Option<Instant>,
-    early_slots: usize,
-    batch_slots: usize,
-    final_slots: usize,
-    final_flush: Duration,
-    tries: usize,
-    /// Busy time by kind (see `DIAG_KIND_NAMES`) over the window from the end of routing to this
-    /// worker's FinishRouting, the events started in it, and busy time in the 2 ms before it.
-    window_us: u32,
-    window_busy_us: [u32; DIAG_KINDS],
-    window_events: [u16; DIAG_KINDS],
-    before_busy_us: [u32; DIAG_KINDS],
-}
-
-/// Diagnostics: kinds of merkle-worker work in the per-worker timeline.
-const DIAG_KINDS: usize = 12;
-const DIAG_KIND_NAMES: [&str; DIAG_KINDS] = [
-    "acct",
-    "slot",
-    "del",
-    "shard",
-    "noslot",
-    "collreq",
-    "flush",
-    "readahead",
-    "precollect",
-    "collect",
-    "final",
-    "prefetch",
-];
 
 /// Upper bound on the keys the merkle coordinator hints per block.
 const MAX_HINT_KEYS_PER_BLOCK: usize = 4096;
 
-/// Experiment (diag build): only the block's last `ETHREX_EXP_MERKLE_HINT_TAIL` positions are
-/// hinted (default 32): their writes reach the workers in the burst at the end of the block,
-/// while earlier writes arrive when the workers are idle anyway.
-static MERKLE_HINT_TAIL: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
-    std::env::var("ETHREX_EXP_MERKLE_HINT_TAIL")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(32)
-});
+/// The merkle coordinator hands each worker the keys that warmed results published for
+/// positions at least this many transactions ahead of execution, to load into its tries while
+/// idle. The writes of closer positions reach the workers as real updates soon after, leaving a
+/// hint no time to save a read.
+const MERKLE_HINT_AHEAD: usize = 16;
 
-/// Experiment (diag build): the merkle coordinator hands each worker the keys that warmed results
-/// published for positions at least this far ahead of execution, to load into its tries while
-/// idle. `ETHREX_EXP_MERKLE_HINTS` = margin in transactions (default 16), `off` disables.
-static MERKLE_HINT_AHEAD: std::sync::LazyLock<Option<usize>> =
-    std::sync::LazyLock::new(
-        || match std::env::var("ETHREX_EXP_MERKLE_HINTS").as_deref() {
-            Ok("off") => None,
-            Ok(value) => Some(value.parse().unwrap_or(16)),
-            Err(_) => Some(16),
-        },
-    );
-static DIAG_BASE: std::sync::LazyLock<Instant> = std::sync::LazyLock::new(Instant::now);
-/// When the coordinator finished routing the current block's updates.
-static DIAG_CLOSE_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-fn diag_ns(at: Instant) -> u64 {
-    u64::try_from(at.saturating_duration_since(*DIAG_BASE).as_nanos()).unwrap_or(u64::MAX)
-}
-
-/// The last busy intervals of one merkle worker: (kind, start ns, end ns).
-#[derive(Default)]
-struct DiagTimeline {
-    events: std::collections::VecDeque<(u8, u64, u64)>,
-}
-
-impl DiagTimeline {
-    fn push(&mut self, kind: usize, start: Instant) {
-        let end = diag_ns(Instant::now());
-        if self.events.len() >= 2048 {
-            self.events.pop_front();
-        }
-        self.events
-            .push_back((u8::try_from(kind).unwrap_or(u8::MAX), diag_ns(start), end));
-    }
-
-    fn summarize(&self, close_ns: u64, at_ns: u64, diag: &mut Drain2) {
-        let clip =
-            |start: u64, end: u64, from: u64, to: u64| end.min(to).saturating_sub(start.max(from));
-        let before = close_ns.saturating_sub(2_000_000);
-        let mut window = [0u64; DIAG_KINDS];
-        let mut earlier = [0u64; DIAG_KINDS];
-        for &(kind, start, end) in &self.events {
-            let k = usize::from(kind);
-            if k >= DIAG_KINDS {
-                continue;
-            }
-            window[k] += clip(start, end, close_ns, at_ns);
-            earlier[k] += clip(start, end, before, close_ns);
-            if start >= close_ns && start < at_ns {
-                diag.window_events[k] = diag.window_events[k].saturating_add(1);
-            }
-        }
-        diag.window_us = u32::try_from(at_ns.saturating_sub(close_ns) / 1000).unwrap_or(u32::MAX);
-        for k in 0..DIAG_KINDS {
-            diag.window_busy_us[k] = u32::try_from(window[k] / 1000).unwrap_or(u32::MAX);
-            diag.before_busy_us[k] = u32::try_from(earlier[k] / 1000).unwrap_or(u32::MAX);
-        }
-    }
-}
-
-/// Records the enclosing message's handling in the timeline when dropped.
-struct DiagSpan<'a> {
-    timeline: &'a mut DiagTimeline,
-    kind: usize,
-    start: Instant,
-}
-
-impl Drop for DiagSpan<'_> {
-    fn drop(&mut self) {
-        self.timeline.push(self.kind, self.start);
-    }
-}
-
-fn diag_timeline_text(worker: &Drain2) -> String {
-    let busy: u32 = worker.window_busy_us.iter().sum();
-    let mut text = format!(
-        "win {} gap {}",
-        worker.window_us,
-        worker.window_us.saturating_sub(busy)
-    );
-    for (k, name) in DIAG_KIND_NAMES.iter().enumerate() {
-        if worker.window_busy_us[k] > 0 || worker.window_events[k] > 0 {
-            text.push_str(&format!(
-                " {} {}/{}",
-                name, worker.window_busy_us[k], worker.window_events[k]
-            ));
-        }
-    }
-    let before: u32 = worker.before_busy_us.iter().sum();
-    text.push_str(&format!(" | before2ms busy {before}"));
-    for (k, name) in DIAG_KIND_NAMES.iter().enumerate() {
-        if worker.before_busy_us[k] > 0 {
-            text.push_str(&format!(" {} {}", name, worker.before_busy_us[k]));
-        }
-    }
-    text
-}
+/// Only the block's last this many positions are hinted: their writes reach the workers in the
+/// burst at the end of the block, while earlier writes arrive when the workers are idle anyway.
+const MERKLE_HINT_TAIL: usize = 32;
 
 #[derive(Default)]
 struct PreMerkelizedAccountState {
@@ -1451,7 +1314,6 @@ impl Blockchain {
                         // ownership, but the header-commitment check below still needs
                         // the input BAL on the parallel path (produced_bal == None).
                         let header_bal = bal.clone();
-                        let diag_inner_start = Instant::now();
                         let result = vm.execute_block_pipeline(
                             block,
                             tx,
@@ -1460,7 +1322,6 @@ impl Blockchain {
                             bal_parallel_exec_enabled,
                             warmed,
                         );
-                        let diag_inner_end = Instant::now();
                         cancelled_ref.store(true, Ordering::Relaxed);
                         let (execution_result, produced_bal) = result?;
 
@@ -1546,15 +1407,6 @@ impl Blockchain {
                         }
 
                         let exec_end_instant = Instant::now();
-                        ::tracing::info!(
-                            "[METRIC] EXECOUTER {} | setup_us {} | inner_us {} | post_us {}",
-                            block.header.number,
-                            diag_inner_start
-                                .duration_since(exec_merkle_start)
-                                .as_micros(),
-                            diag_inner_end.duration_since(diag_inner_start).as_micros(),
-                            exec_end_instant.duration_since(diag_inner_end).as_micros(),
-                        );
                         Ok((execution_result, produced_bal, exec_end_instant))
                     })
                     .map_err(|e| {
@@ -1791,17 +1643,17 @@ impl Blockchain {
 
             // Keys warmed results predict the block writes, handed to the workers ahead of their
             // updates; withdrawal recipients are written after the last transaction.
-            let hint_ahead = (*MERKLE_HINT_AHEAD).filter(|_| warmed.is_some_and(|w| !w.is_empty()));
+            let hinting = warmed.filter(|warmed| !warmed.is_empty());
             let mut hinted = vec![false; warmed.map_or(0, |w| w.len())];
             let mut hint_hashes: SeededHashMap<Address, H256> = Default::default();
-            let mut diag_hint_keys = 0usize;
+            let mut hinted_keys = 0usize;
             let mut send_hints = |accounts: &[Address],
                                   slots: &[(Address, H256)],
-                                  diag_hint_keys: &mut usize|
+                                  hinted_keys: &mut usize|
              -> Result<(), StoreError> {
                 // Bounded per block: a block with far more writes would queue more speculative
                 // reads than the workers have idle time for.
-                if *diag_hint_keys >= MAX_HINT_KEYS_PER_BLOCK {
+                if *hinted_keys >= MAX_HINT_KEYS_PER_BLOCK {
                     return Ok(());
                 }
                 let mut by_worker: [FxHashMap<Option<H256>, Vec<H256>>; 16] = Default::default();
@@ -1825,7 +1677,7 @@ impl Blockchain {
                 }
                 for (worker, groups) in by_worker.into_iter().enumerate() {
                     for (prefix, keys) in groups {
-                        *diag_hint_keys += keys.len();
+                        *hinted_keys += keys.len();
                         workers_tx[worker]
                             .send(WorkerRequest::Prefetch { prefix, keys })
                             .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
@@ -1833,18 +1685,18 @@ impl Blockchain {
                 }
                 Ok(())
             };
-            if hint_ahead.is_some() && !withdrawal_recipients.is_empty() {
-                send_hints(withdrawal_recipients, &[], &mut diag_hint_keys)?;
+            if hinting.is_some() && !withdrawal_recipients.is_empty() {
+                send_hints(withdrawal_recipients, &[], &mut hinted_keys)?;
             }
             loop {
-                let updates = match (hint_ahead, warmed) {
-                    (Some(ahead), Some(warmed)) => {
+                let updates = match hinting {
+                    Some(warmed) => {
                         let from = warmed
                             .executed_transactions()
-                            .saturating_add(ahead)
-                            .max(warmed.len().saturating_sub(*MERKLE_HINT_TAIL));
+                            .saturating_add(MERKLE_HINT_AHEAD)
+                            .max(warmed.len().saturating_sub(MERKLE_HINT_TAIL));
                         for (accounts, slots) in warmed.take_published_writes(from, &mut hinted) {
-                            send_hints(&accounts, &slots, &mut diag_hint_keys)?;
+                            send_hints(&accounts, &slots, &mut hinted_keys)?;
                         }
                         match rx.recv_timeout(Duration::from_micros(250)) {
                             Ok(updates) => updates,
@@ -1852,7 +1704,7 @@ impl Blockchain {
                             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
                         }
                     }
-                    _ => match rx.recv() {
+                    None => match rx.recv() {
                         Ok(updates) => updates,
                         Err(_) => break,
                     },
@@ -1935,8 +1787,6 @@ impl Blockchain {
                 }
             }
 
-            let diag_close = Instant::now();
-            DIAG_CLOSE_NS.store(diag_ns(diag_close), std::sync::atomic::Ordering::Release);
             // Send FinishRouting: each worker has every slot routed to it once it reads this.
             for tx in &workers_tx {
                 tx.send(WorkerRequest::FinishRouting)
@@ -1973,16 +1823,13 @@ impl Blockchain {
 
             let mut root = BranchNode::default();
             let mut state_updates = Vec::new();
-            let mut diag_workers: Vec<Drain2> = Vec::with_capacity(16);
             for CollectedStateMsg {
                 index,
                 subroot,
                 state_nodes,
                 storage_nodes,
-                diag,
             } in gatherer_rx
             {
-                diag_workers.push(diag);
                 storage_updates.extend(storage_nodes);
                 state_updates.extend(state_nodes);
                 root.choices[index as usize] = subroot.choices[index as usize].clone();
@@ -2000,55 +1847,6 @@ impl Blockchain {
             };
 
             let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
-            {
-                // Diagnostics: milliseconds relative to execution's last update (negative: before).
-                let rel = |at: Option<Instant>| -> Option<f64> {
-                    at.map(|at| {
-                        if at >= diag_close {
-                            at.duration_since(diag_close).as_secs_f64() * 1000.0
-                        } else {
-                            -(diag_close.duration_since(at).as_secs_f64() * 1000.0)
-                        }
-                    })
-                };
-                let span = |from: Option<Instant>, to: Option<Instant>| -> f64 {
-                    match (from, to) {
-                        (Some(from), Some(to)) if to >= from => {
-                            to.duration_since(from).as_secs_f64() * 1000.0
-                        }
-                        _ => 0.0,
-                    }
-                };
-                let max = |values: &mut dyn Iterator<Item = f64>| values.fold(0.0_f64, f64::max);
-                let gate_first = diag_workers
-                    .iter()
-                    .filter_map(|w| rel(w.gate_seen_at))
-                    .fold(f64::INFINITY, f64::min);
-                info!(
-                    "[METRIC] DRAIN2 {} | gate_first {:.3} | finish_routing max {:.3} | final_flush max {:.3} slots sum {} max {} | collect max {:.3} | shard_wait max {:.3} | state max {:.3} | sent max {:.3} | early_slots {} | batch_slots {} | tries {} | root {:.3} | hint_keys {} | tl {}",
-                    parent_header.number + 1,
-                    if gate_first.is_finite() { gate_first } else { 999.0 },
-                    max(&mut diag_workers.iter().filter_map(|w| rel(w.finish_routing_at))),
-                    max(&mut diag_workers.iter().map(|w| w.final_flush.as_secs_f64() * 1000.0)),
-                    diag_workers.iter().map(|w| w.final_slots).sum::<usize>(),
-                    diag_workers.iter().map(|w| w.final_slots).max().unwrap_or(0),
-                    max(&mut diag_workers.iter().map(|w| span(w.finish_routing_at, w.collect_done_at))),
-                    max(&mut diag_workers.iter().map(|w| span(w.collect_done_at, w.state_start_at))),
-                    max(&mut diag_workers.iter().map(|w| span(w.state_start_at, w.sent_at))),
-                    max(&mut diag_workers.iter().filter_map(|w| rel(w.sent_at))),
-                    diag_workers.iter().map(|w| w.early_slots).sum::<usize>(),
-                    diag_workers.iter().map(|w| w.batch_slots).sum::<usize>(),
-                    diag_workers.iter().map(|w| w.tries).sum::<usize>(),
-                    rel(Some(Instant::now())).unwrap_or(0.0),
-                    diag_hint_keys,
-                    diag_workers
-                        .iter()
-                        .filter(|w| w.finish_routing_at.is_some())
-                        .max_by_key(|w| w.finish_routing_at)
-                        .map(diag_timeline_text)
-                        .unwrap_or_default(),
-                );
-            }
 
             Ok((
                 AccountUpdatesList {
@@ -3597,18 +3395,6 @@ impl Blockchain {
             (gas_used as f64 / gas_limit as f64 * 100.0).round() as u64
         );
 
-        let [
-            layer_hits,
-            disk_gets,
-            disk_multi_keys,
-            prewarmed_hits,
-            prewarmed_misses,
-            prewarmed_nodes,
-        ] = ethrex_storage::take_trie_read_counters();
-        info!(
-            "[METRIC] TRIEREADS {block_number} | layer {layer_hits} | disk_get {disk_gets} | disk_multi_keys {disk_multi_keys} | prewarmed hit {prewarmed_hits} miss {prewarmed_misses} nodes {prewarmed_nodes}"
-        );
-
         let bottleneck_marker = |name: &str| {
             if name == bottleneck {
                 " << BOTTLENECK"
@@ -5013,22 +4799,18 @@ fn collect_and_send(
     pre_collected_state: &mut Vec<TrieNode>,
     storage_nodes: &mut Vec<(H256, Vec<TrieNode>)>,
     tx: Sender<CollectedStateMsg>,
-    mut diag: Drain2,
 ) -> Result<(), StoreError> {
-    diag.state_start_at = Some(Instant::now());
     let (subroot, mut state_nodes) = collect_trie(index, std::mem::take(state_trie))?;
     if !pre_collected_state.is_empty() {
         let mut pre = std::mem::take(pre_collected_state);
         pre.extend(state_nodes);
         state_nodes = pre;
     }
-    diag.sent_at = Some(Instant::now());
     tx.send(CollectedStateMsg {
         index,
         subroot,
         state_nodes,
         storage_nodes: std::mem::take(storage_nodes),
-        diag,
     })
     .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
     Ok(())
@@ -5181,9 +4963,6 @@ fn handle_subtrie(
     // Per buffered storage trie, how many of its buffered slots already had their trie
     // paths read ahead (see the idle branch below).
     let mut read_ahead: FxHashMap<H256, usize> = Default::default();
-    let mut diag2 = Drain2::default();
-    let mut diag_timeline = DiagTimeline::default();
-    let mut diag_finish_routing_at: Option<Instant> = None;
 
     // Held until collection finishes to keep cross-worker channels open.
     let mut worker_senders: Option<Vec<cb::Sender<WorkerRequest>>> = Some(worker_senders);
@@ -5195,13 +4974,6 @@ fn handle_subtrie(
     let mut storage_to_collect: Vec<(H256, Trie)> = vec![];
 
     loop {
-        if let Some(at) = diag_finish_routing_at.take() {
-            diag_timeline.summarize(
-                DIAG_CLOSE_NS.load(std::sync::atomic::Ordering::Acquire),
-                diag_ns(at),
-                &mut diag2,
-            );
-        }
         // When collecting storages, finalize one trie per iteration so that
         // incoming StorageShard messages can be processed in between.
         if collecting_storages {
@@ -5209,9 +4981,7 @@ fn handle_subtrie(
                 let senders = worker_senders
                     .as_ref()
                     .expect("collecting after senders dropped");
-                let diag_start = Instant::now();
                 let (root, mut nodes) = collect_trie(index, trie)?;
-                diag_timeline.push(9, diag_start);
                 if let Some(mut pre_nodes) = pre_collected_storage.remove(&prefix) {
                     pre_nodes.extend(nodes);
                     nodes = pre_nodes;
@@ -5227,7 +4997,6 @@ fn handle_subtrie(
                     .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
             } else {
                 // All storage tries finalized
-                diag2.collect_done_at = Some(Instant::now());
                 worker_senders = None;
                 collecting_storages = false;
                 // Check if deferred collect can resolve now
@@ -5240,7 +5009,6 @@ fn handle_subtrie(
                         &mut pre_collected_state,
                         &mut storage_nodes,
                         tx,
-                        diag2,
                     )?;
                     break;
                 }
@@ -5263,17 +5031,7 @@ fn handle_subtrie(
                         // still runs, so the drain after its last update only has what
                         // arrived since. Batches of one trie apply in arrival order, so the
                         // last write still wins.
-                        let diag_start = Instant::now();
-                        let diag_kind;
                         if !collecting_storages && warming_done.load(Ordering::Relaxed) {
-                            diag_kind = 6;
-                            if diag2.gate_seen_at.is_none() {
-                                diag2.gate_seen_at = Some(Instant::now());
-                            }
-                            diag2.early_slots += storage_buffer
-                                .values()
-                                .map(|(_, slots)| slots.len())
-                                .sum::<usize>();
                             read_ahead.clear();
                             for (prefix, (root, slots)) in storage_buffer.drain() {
                                 flush_storage_buffer(
@@ -5286,7 +5044,6 @@ fn handle_subtrie(
                                 )?;
                             }
                         } else if !collecting_storages {
-                            diag_kind = 7;
                             // While warming runs, read ahead the trie paths of the slots
                             // buffered since the last pass, without applying them: the
                             // inserts stay behind the gate, but their node reads (disk
@@ -5318,11 +5075,7 @@ fn handle_subtrie(
                                 )?;
                                 trie.prefetch_sorted(&paths)?;
                             }
-                        } else {
-                            diag_kind = 6;
                         }
-                        diag_timeline.push(diag_kind, diag_start);
-                        let diag_start = Instant::now();
                         // Pre-collect state trie — safe during storage
                         // collection too, since StorageShard resolution only
                         // dirties specific paths that get re-committed later.
@@ -5342,12 +5095,10 @@ fn handle_subtrie(
                                 }
                             }
                         }
-                        diag_timeline.push(8, diag_start);
                         dirty = false;
                     } else if !routing_complete
                         && let Some((prefix, keys)) = pending_prefetch.pop_front()
                     {
-                        let diag_start = Instant::now();
                         prefetch_hinted_paths(
                             &mut state_trie,
                             &mut storage_tries,
@@ -5358,7 +5109,6 @@ fn handle_subtrie(
                             prefix,
                             keys,
                         )?;
-                        diag_timeline.push(11, diag_start);
                     }
                     continue;
                 }
@@ -5375,21 +5125,6 @@ fn handle_subtrie(
             }
         };
 
-        let diag_kind = match &msg {
-            WorkerRequest::ProcessAccount { .. } => 0,
-            WorkerRequest::MerklizeStorage { .. } => 1,
-            WorkerRequest::DeleteStorage(_) => 2,
-            WorkerRequest::StorageShard { .. } => 3,
-            WorkerRequest::MerklizeAccounts { .. } => 4,
-            WorkerRequest::CollectState { .. } => 5,
-            WorkerRequest::FinishRouting => 10,
-            WorkerRequest::Prefetch { .. } => 11,
-        };
-        let _diag_span = DiagSpan {
-            timeline: &mut diag_timeline,
-            kind: diag_kind,
-            start: Instant::now(),
-        };
         match msg {
             WorkerRequest::ProcessAccount {
                 prefix,
@@ -5483,7 +5218,6 @@ fn handle_subtrie(
                     let (root, slots) = storage_buffer
                         .remove(&prefix)
                         .expect("buffer just inserted");
-                    diag2.batch_slots += slots.len();
                     flush_storage_buffer(
                         &mut storage_tries,
                         &storage,
@@ -5512,14 +5246,6 @@ fn handle_subtrie(
             WorkerRequest::FinishRouting => {
                 if !collecting_storages && !routing_complete {
                     pending_prefetch.clear();
-                    let diag_now = Instant::now();
-                    diag2.finish_routing_at = Some(diag_now);
-                    diag_finish_routing_at = Some(diag_now);
-                    diag2.final_slots = storage_buffer
-                        .values()
-                        .map(|(_, slots)| slots.len())
-                        .sum::<usize>();
-                    let diag_flush_start = Instant::now();
                     // Every slot routed to this worker came before this message: flush every
                     // remaining buffer into its storage trie before draining for collection.
                     // Missing this would silently drop buffered slots.
@@ -5533,7 +5259,6 @@ fn handle_subtrie(
                             slots,
                         )?;
                     }
-                    diag2.final_flush = diag_flush_start.elapsed();
                     collecting_storages = true;
                     routing_complete = true;
                     // Tries opened only for hinted paths have nothing to send: no worker expects
@@ -5545,7 +5270,6 @@ fn handle_subtrie(
                             let _ = DROP_SENDER.send(Box::new(trie));
                         }
                     }
-                    diag2.tries = storage_to_collect.len();
                 }
             }
             WorkerRequest::MerklizeAccounts { accounts: batch } => {
@@ -5620,7 +5344,6 @@ fn handle_subtrie(
                             &mut pre_collected_state,
                             &mut storage_nodes,
                             tx,
-                            diag2,
                         )?;
                         break;
                     }
@@ -5634,7 +5357,6 @@ fn handle_subtrie(
                         &mut pre_collected_state,
                         &mut storage_nodes,
                         tx,
-                        diag2,
                     )?;
                     break;
                 }

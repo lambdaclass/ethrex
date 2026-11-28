@@ -14,28 +14,6 @@ pub mod gen_db;
 thread_local! {
     /// Storage slots this thread's reads through a [`CachingDatabase`] waited on the disk for.
     static SLOW_SLOT_READS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-    /// Diagnostics: this thread's reads beneath a [`CachingDatabase`] (accounts, slots, code):
-    /// how many, their total microseconds, and how many took over `SLOW_SLOT_READ`.
-    static DIAG_STORE_READS: std::cell::Cell<(u32, u64, u32)> = const { std::cell::Cell::new((0, 0, 0)) };
-}
-
-/// Diagnostics: this thread's reads beneath a [`CachingDatabase`] since the last call.
-pub fn diag_take_store_reads() -> (u32, u64, u32) {
-    DIAG_STORE_READS.with(|cell| cell.replace((0, 0, 0)))
-}
-
-fn diag_store_read(start: std::time::Instant) {
-    let elapsed = start.elapsed();
-    let us = u64::try_from(elapsed.as_micros()).unwrap_or(u64::MAX);
-    let slow = u32::from(elapsed > SLOW_SLOT_READ);
-    DIAG_STORE_READS.with(|cell| {
-        let (count, total, slow_count) = cell.get();
-        cell.set((
-            count.wrapping_add(1),
-            total.saturating_add(us),
-            slow_count.wrapping_add(slow),
-        ));
-    });
 }
 
 /// Read time of a storage slot from beneath a [`CachingDatabase`] above which the read is taken
@@ -281,7 +259,10 @@ impl CachingDatabase {
     /// The shard holding `input`'s hash: by the last byte of the key, its first word, which
     /// varies for addresses and hashes alike. The index is reduced modulo the shard count, so
     /// the lookup never misses; `get` only satisfies the no-indexing lint.
-    fn keccak64_shard(&self, input: &[u8; 64]) -> Option<&RwLock<SeededHashMap<[u8; 64], [u8; 32]>>> {
+    fn keccak64_shard(
+        &self,
+        input: &[u8; 64],
+    ) -> Option<&RwLock<SeededHashMap<[u8; 64], [u8; 32]>>> {
         self.keccak64.get(usize::from(input[31]) % KECCAK64_SHARDS)
     }
 
@@ -434,9 +415,7 @@ impl Database for CachingDatabase {
         }
 
         // Cache miss: query underlying database
-        let diag_start = std::time::Instant::now();
         let state = self.inner.get_account_state(address)?;
-        diag_store_read(diag_start);
 
         // Populate cache (AccountState is Copy, no clone needed)
         self.write_accounts()?.insert(address, state);
@@ -453,7 +432,6 @@ impl Database for CachingDatabase {
         // Cache miss: query underlying database
         let start = std::time::Instant::now();
         let value = self.inner.get_storage_value(address, key)?;
-        diag_store_read(start);
         if start.elapsed() > SLOW_SLOT_READ {
             SLOW_SLOT_READS.with(|reads| reads.set(reads.get().wrapping_add(1)));
         }
@@ -487,9 +465,7 @@ impl Database for CachingDatabase {
         }
 
         // Cache miss: query underlying database
-        let diag_start = std::time::Instant::now();
         let code = self.inner.get_account_code(code_hash)?;
-        diag_store_read(diag_start);
 
         // Populate cache (Code contains Bytes which is ref-counted, clone is cheap)
         self.keep_code(&mut *self.write_code()?, code_hash, code.clone());
