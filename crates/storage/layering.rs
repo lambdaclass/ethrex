@@ -118,14 +118,6 @@ struct TrieLayer {
     block_hash: H256,
 }
 
-/// In-memory cache of trie diff-layers, one per block (or batch in full sync), forming a
-/// newest->oldest chain via `parent` down to the on-disk state.
-///
-/// Disk commits are gated on a canonical safe-commit root (`safe_commit_root`): a layer is
-/// flushed only when that root is canonical and deep enough that it lands on the ancestor
-/// walk. `H256::zero()` means "no safe commit point yet", so nothing is flushed and the
-/// on-disk genesis state is never pruned. A global bloom filter short-circuits lookups for
-/// keys absent from every layer.
 /// Newest-first layers a read starting at one state root walks.
 type LayerChain = Arc<[Arc<TrieLayer>]>;
 
@@ -141,6 +133,14 @@ impl Clone for LayerChains {
     }
 }
 
+/// In-memory cache of trie diff-layers, one per block (or batch in full sync), forming a
+/// newest->oldest chain via `parent` down to the on-disk state.
+///
+/// Disk commits are gated on a canonical safe-commit root (`safe_commit_root`): a layer is
+/// flushed only when that root is canonical and deep enough that it lands on the ancestor
+/// walk. `H256::zero()` means "no safe commit point yet", so nothing is flushed and the
+/// on-disk genesis state is never pruned. A global bloom filter short-circuits lookups for
+/// keys absent from every layer.
 #[derive(Clone)]
 pub struct TrieLayerCache {
     /// Monotonically increasing ID for layers, starting at 1.
