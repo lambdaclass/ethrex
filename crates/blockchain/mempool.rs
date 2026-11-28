@@ -914,6 +914,12 @@ impl Mempool {
         broadcast: bool,
     ) -> Result<(), MempoolError> {
         let mut inner = self.write()?;
+        // Two admissions of one transaction can both pass the callers' unlocked
+        // presence check. The later one must not replace the pooled copy: the
+        // removal below would drop the sidecar it stored just before this insert.
+        if inner.transaction_pool.contains_key(&hash) {
+            return Ok(());
+        }
         let is_frame = matches!(transaction.tx_type(), TxType::Frame);
         let is_blob = matches!(transaction.tx_type(), TxType::EIP4844);
 
